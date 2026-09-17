@@ -2882,6 +2882,8 @@ impl SettingsDialog {
 			Key::MinimapWidth => settings.minimap_width,
 			Key::Columns => settings.columns as f32,
 			Key::Rows => settings.rows as f32,
+			Key::IdleHiddenMin => settings.idle_release_hidden_min as f32,
+			Key::IdleMin => settings.idle_release_min as f32,
 			_ => 0.0,
 		}
 	}
@@ -2932,6 +2934,10 @@ impl SettingsDialog {
 			Key::MinimapWidth => settings.minimap_width = value,
 			Key::Columns => settings.columns = value.round().max(1.0) as usize,
 			Key::Rows => settings.rows = value.round().max(1.0) as usize,
+			Key::IdleHiddenMin => {
+				settings.idle_release_hidden_min = value.round().max(1.0) as usize;
+			}
+			Key::IdleMin => settings.idle_release_min = value.round().max(1.0) as usize,
 			_ => {}
 		}
 	}
@@ -3003,6 +3009,7 @@ impl SettingsDialog {
 			Key::CursorScrim => s.cursor_scrim,
 			Key::CursorOutline => s.cursor_outline,
 			Key::RememberSize => s.remember_size,
+			Key::IdleRelease => s.idle_release,
 			Key::CopyOnSelect => s.copy_on_select,
 			Key::ShellIntegration => s.shell_integration,
 			Key::BashPrompt => s.bash_prompt,
@@ -3039,6 +3046,7 @@ impl SettingsDialog {
 			Key::CursorScrim => self.edited.cursor_scrim = on,
 			Key::CursorOutline => self.edited.cursor_outline = on,
 			Key::RememberSize => self.edited.remember_size = on,
+			Key::IdleRelease => self.edited.idle_release = on,
 			Key::CopyOnSelect => self.edited.copy_on_select = on,
 			Key::ShellIntegration => self.edited.shell_integration = on,
 			Key::BashPrompt => self.edited.bash_prompt = on,
@@ -3280,6 +3288,7 @@ impl SettingsDialog {
 			Key::SystemFont => edited.use_system_font == defaults.use_system_font,
 			Key::SystemFontSize => edited.use_system_font_size == defaults.use_system_font_size,
 			Key::RememberSize => edited.remember_size == defaults.remember_size,
+			Key::IdleRelease => edited.idle_release == defaults.idle_release,
 			Key::CopyOnSelect => edited.copy_on_select == defaults.copy_on_select,
 			Key::ShellIntegration => edited.shell_integration == defaults.shell_integration,
 			Key::BashPrompt => edited.bash_prompt == defaults.bash_prompt,
@@ -3378,6 +3387,8 @@ impl SettingsDialog {
 			Key::MinimapWidth => defaults.minimap_width,
 			Key::Columns => defaults.columns as f32,
 			Key::Rows => defaults.rows as f32,
+			Key::IdleHiddenMin => defaults.idle_release_hidden_min as f32,
+			Key::IdleMin => defaults.idle_release_min as f32,
 			_ => 0.0,
 		}
 	}
@@ -3393,6 +3404,7 @@ impl SettingsDialog {
 			| Key::SystemFont
 			| Key::SystemFontSize
 			| Key::RememberSize
+			| Key::IdleRelease
 			| Key::CopyOnSelect
 			| Key::ShellIntegration
 			| Key::BashPrompt
@@ -3433,6 +3445,7 @@ impl SettingsDialog {
 					Key::Scrollbar => self.defaults.scrollbar,
 					Key::ScrollbarAutoHide => self.defaults.scrollbar_auto_hide,
 					Key::Minimap => self.defaults.minimap,
+					Key::IdleRelease => self.defaults.idle_release,
 					_ => self.defaults.remember_size,
 				};
 				self.set_toggle(key, default_val);

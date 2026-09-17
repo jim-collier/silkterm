@@ -39,6 +39,7 @@
 	- [Output notices under a flood](#output-notices-under-a-flood)
 	- [Environment](#environment)
 	- [Startup and slow external resources](#startup-and-slow-external-resources)
+	- [Letting the GPU go on a long idle (2026-09-17)](#letting-the-gpu-go-on-a-long-idle-2026-09-17)
 	- [Configuration format](#configuration-format)
 	- [Variables in a setting (2026-08-30)](#variables-in-a-setting-2026-08-30)
 	- [Command-line options](#command-line-options)
@@ -649,6 +650,28 @@ Three defects came out of building it, all fixed with it: a program could put co
 - The config file itself is a deliberate exception. Window size, font metrics and theme all come from it, and the window is held hidden until it can open at its final size. Reading it later would only trade a small local read for a visible resize flash.
 
 - The same shape is intended for shell discovery when that arrives: draw first, scan for installed shells afterwards, fold in what was found.
+
+### Letting the GPU go on a long idle (2026-09-17)
+
+- Off by default. Switched on, a window that has sat unused lets its GPU device go, with everything uploaded to it, and takes it back the moment it is used again. The shells run on and the grid keeps up; only drawing stops. The case is many windows open for days, each holding a device, a swapchain, two glyph atlases, the scrim's textures and a wallpaper the whole time.
+
+- Unused means no input, no focus change and no output from any pane. Two waits, both in minutes on the Window tab: a shorter one for a window that is minimized, or covered where the desktop reports it, and a longer one for a window that is only unfocused, since that one may be on a second screen being read. A window with focus and on screen never lets go.
+
+- It comes back on any sign of life: a key, a click, the pointer entering, focus, a hidden window being shown, a shell printing, or the desktop asking for a repaint. Output into a hidden window does not bring it back; that waits for the reveal, the way the frozen-window rule already works.
+
+- Held off while a dialog is open, since on X11 the dialog's context cannot outlive the terminal's, and while a hardware rating is owed or running.
+
+- What is kept is what a rebuild starts from: the wgpu instance, and on X11 the GL framebuffer config the window was made with. The instance rather than a fresh one, because a GL instance's teardown terminates an EGL display the glutin context may share, and because on the other backends the adapter enumeration it holds is the slow part of a cold start. The dialogs' warm context keeps its instance and adapter the same way and lets only its device go: on NVIDIA, every Vulkan instance destroyed left two descriptors open.
+
+- The fonts and metrics stay, since layout and input still need them. Gone with the device: the rasterized glyphs, the shaped chrome and the wallpaper, which is decoded again on the way back, as after a VT switch.
+
+- Measured on the Linux box under software GL, on a private display: about 3 ms to let go, about 25 ms to take back, and no CPU at all while released. Under the NVIDIA driver, on Wayland and on Windows the numbers are not taken yet.
+
+- Memory found on the way: glibc lets its mmap threshold rise with each large buffer freed, after which a wallpaper's decode is carved out of the worker thread's arena and stays resident there once freed, and `malloc_trim` never shrinks an arena that is not the main one. Every window kept the first decode's 50 MB for life, and each rebuild kept 40 MB more. The threshold is pinned at 4 MB now, so an image buffer comes from the OS and goes back to it. Launch memory dropped by about 60 MB with a wallpaper.
+
+- Rejected: dropping the uploads and keeping the device. The device and its context are the fixed cost the feature exists to remove, and the uploads are the smaller half.
+
+- Rejected: disabling the feature under transparency. The X11 GL path survives the teardown, since the ARGB visual belongs to the window and a new context on the kept config binds to it.
 
 ### Configuration format
 

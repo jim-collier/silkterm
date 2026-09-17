@@ -367,22 +367,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 - 🔘 Make text scrim falloff "Exponential" more agressive. E.g., increase the exponent.
 
-- 🔘 Release the GPU device after a long idle (e.g. 60 minutes).
-	- Drop the wgpu device and everything uploaded on it once the window has been idle long enough, and rebuild it when needed again. This is to lower total GPU memory footprint, esp. with multiple terminals open (e.g. for days).
-	- Idle = unfocused plus no PTY output, not `State::hidden()`. Occlusion is not reported by every WM, so `hidden()` only means minimized on the reference box. `TermInstance::note_activity` is the freshness signal.
-	- Deadline goes in the `about_to_wait` wake chain as one more `Option<Instant>` arm, beside `wp_next` and `vram_next`.
-	- Rebuild triggers on `Focused(true)` / `Occluded(false)` / pointer entering, which is where the GL `vram_next` probe already fires `recover_gpu`. Both render entry points need it, the way `freeze_sync` is reached from both.
-	- Vetoed while a dialog is open (main window holds the GL/EGL context), and while a rating run is in flight.
-	- First step is measuring the rebuild through the existing `recover_gpu` path. Extrapolating from the cold dialog context gives ~300-500ms, unmeasured.
-	- Need to figure out whether the X11 transparent path can survive a teardown at all - the ARGB visual belongs to the window, so it may be native-backend only.
-		- If not, may need to disable the feature when transparency is enabled in the program, with flyover text explaining why.
-	- Also figure out a way to reduce CPU and memory usage, when this happens
-	- Opened: 20260905-181131.
-	- Settings (in "Window" tab):
-		- "Temporarily free resources when idle" checkbox. (Disabled by default.)
-		- Idle minutes when definitely hidden (default 30).
-		- Idle minutes otherwise (default 240).
-
 - 🔘 Tab flyover help text: Make a different color than the tabs. Maybe slightly lighter background and sublty different, complimentary shade, and a different font color. Maybe flyover help needs its own theme colors.
 
 - 🔘 Themes:
@@ -1663,6 +1647,27 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Release the GPU device after a long idle.
+	- Drop the wgpu device and everything uploaded on it once the window has been idle long enough, and rebuild it when needed again. This is to lower total GPU memory footprint, esp. with multiple terminals open (e.g. for days).
+	- Idle = unfocused plus no PTY output, not `State::hidden()`. Occlusion is not reported by every WM, so `hidden()` only means minimized on the reference box. `TermInstance::note_activity` is the freshness signal.
+	- Deadline goes in the `about_to_wait` wake chain as one more `Option<Instant>` arm, beside `wp_next` and `vram_next`.
+	- Rebuild triggers on `Focused(true)` / `Occluded(false)` / pointer entering, which is where the GL `vram_next` probe already fires `recover_gpu`. Both render entry points need it, the way `freeze_sync` is reached from both.
+	- Vetoed while a dialog is open (main window holds the GL/EGL context), and while a rating run is in flight.
+	- First step is measuring the rebuild through the existing `recover_gpu` path. Extrapolating from the cold dialog context gives ~300-500ms, unmeasured.
+	- Need to figure out whether the X11 transparent path can survive a teardown at all - the ARGB visual belongs to the window, so it may be native-backend only.
+		- If not, may need to disable the feature when transparency is enabled in the program, with flyover text explaining why.
+	- Also figure out a way to reduce CPU and memory usage, when this happens
+	- Settings (in "Window" tab):
+		- "Temporarily free resources when idle" checkbox. (Disabled by default.)
+		- Idle minutes when definitely hidden (default 30).
+		- Idle minutes otherwise (default 240).
+	- Done: the device, the swapchain, the atlases, the scrim, the minimap and the wallpaper all go, and the dialogs' warm device with them. What stays is the wgpu instance and, on X11, the GL config, which is enough to build it all again on the same window. The X11 path survives it, so nothing is disabled under transparency.
+	- Measured on the Linux box under software GL: about 3 ms to let go, about 25 ms to take back, no CPU while released. Not yet measured under the NVIDIA driver, on Wayland or on Windows.
+	- Found on the way and fixed: glibc kept each wallpaper decode's buffers resident in the worker's arena, about 50 MB per window from the first decode alone. The mmap threshold is pinned now, which cut launch memory by about 60 MB with a wallpaper. And every Vulkan instance destroyed on NVIDIA left two file descriptors open, so the warm dialog context keeps its instance across a release.
+	- Rows on the Window tab: "Free resources when idle", "Minutes when hidden" (30), "Minutes otherwise" (240). Config keys `window.idle_release`, `window.idle_release_hidden_min`, `window.idle_release_min`.
+	- Opened: 20260905-181131.
+	- Closed: 20260917
 
 - ✅ Docs: `README.md` and `style-guide.md` run consecutive top-level bullets with no blank line between them.
 	- Every other `.md` in the project is clean. The style guide is the worse of the two, and it also still wants the markdownlint-disable block and a table of contents that `glossary.md` needs as well.

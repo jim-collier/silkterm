@@ -749,6 +749,30 @@ rows:
 		setting: window.margin
 		help: "Clear space between the text and the window edge."
 
+	IdleRelease:
+		label: Free resources when idle
+		kind: toggle
+		setting: window.idle_release
+		help: "Give the graphics card's memory back after the window has sat unused for a while, and take it back the moment the window is used again. Nothing running in the window is affected."
+
+	IdleHiddenMin:
+		label: Minutes when hidden
+		kind: slider
+		range: 1, 1440
+		whole: true
+		indent: 1
+		setting: window.idle_release_hidden_min
+		help: "How long a minimized or covered window waits."
+
+	IdleMin:
+		label: Minutes otherwise
+		kind: slider
+		range: 1, 1440
+		whole: true
+		indent: 1
+		setting: window.idle_release_min
+		help: "How long a window that is only unfocused, with nothing printing, waits. Longer, since it may be on a second screen being read."
+
 	Hyperlinks:
 		kind: heading
 		label: Hyperlinks
@@ -864,6 +888,9 @@ gates:
 	CursorOutline: Outline    ## an outline to join, before it can join one
 
 	FontFamily: !SystemFont
+
+	IdleHiddenMin: IdleRelease
+	IdleMin: IdleRelease
 	FontSize: !SystemFontSize
 
 	Columns: !RememberSize

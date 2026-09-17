@@ -40,6 +40,9 @@ enum Backend {
 	Gl {
 		ctx: PossiblyCurrentContext,
 		surface: GlWindowSurface<WindowSurface>,
+		// the framebuffer config the window was made with, which a later context
+		// on the same window has to match (see `Rebirth`)
+		config: glutin::config::Config,
 		fb: wgpu::Texture,
 		// views of fb/offscreen, rebuilt on resize only (both textures are
 		// persistent, so creating fresh views per frame was waste)
@@ -303,6 +306,9 @@ impl Sentinel {
 }
 
 pub struct Gfx {
+	// Kept across a release (see `Rebirth`): the device and everything on it
+	// go, the instance is what they are rebuilt from.
+	instance: wgpu::Instance,
 	pub device: wgpu::Device,
 	pub queue: wgpu::Queue,
 	pub config: wgpu::SurfaceConfiguration,
@@ -314,9 +320,77 @@ pub struct Gfx {
 	_window: Arc<Window>,
 }
 
+// What is kept of a released `Gfx`, enough to build the device again on the
+// same window. The instance is kept rather than made afresh because on the GL
+// path its teardown terminates an EGL display that the glutin context may
+// share, and because the adapter enumeration it holds is the slow part of a
+// cold start on the others.
+pub enum Rebirth {
+	Native(wgpu::Instance),
+	Gl(wgpu::Instance, glutin::config::Config),
+}
+
 impl Gfx {
 	pub fn new(window: Arc<Window>) -> anyhow::Result<Self> {
 		Self::with_backends(window, wgpu::Backends::all())
+	}
+
+	// Let the device and everything on it go. Every other wgpu object made on
+	// this device must be gone already, or the device outlives this call: the
+	// handles are refcounted, and the last one standing is what frees it.
+	// Ordered by hand, since the GL objects are deleted through a context that
+	// has to be current while it happens and glutin destroys one without
+	// unbinding it first.
+	pub fn release(self) -> Rebirth {
+		let Self {
+			instance,
+			device,
+			queue,
+			backend,
+			sentinel,
+			..
+		} = self;
+		drop(sentinel);
+		match backend {
+			Backend::Native(surface) => {
+				drop(surface);
+				let _ = device.poll(wgpu::PollType::wait_indefinitely());
+				drop(queue);
+				drop(device);
+				Rebirth::Native(instance)
+			}
+			Backend::Gl {
+				ctx,
+				surface,
+				config,
+				fb,
+				fb_view,
+				offscreen,
+				offscreen_view,
+				blit,
+			} => {
+				drop((blit, offscreen_view, offscreen, fb_view, fb));
+				let _ = device.poll(wgpu::PollType::wait_indefinitely());
+				drop(queue);
+				drop(device);
+				drop(surface);
+				drop(ctx);
+				Rebirth::Gl(instance, config)
+			}
+		}
+	}
+
+	// The device again, on the window it was released from. A kept instance that
+	// can no longer serve the window (a driver that went away in the meantime)
+	// falls back to a cold start.
+	pub fn rebuild(rebirth: &Rebirth, window: &Arc<Window>) -> anyhow::Result<Self> {
+		match rebirth {
+			Rebirth::Native(instance) => Self::on(instance.clone(), window.clone(), false)
+				.or_else(|_| Self::new(window.clone())),
+			Rebirth::Gl(instance, config) => {
+				Self::gl_on(instance.clone(), window.clone(), config.clone(), false)
+			}
+		}
 	}
 
 	// Windows per-pixel transparency. A swapchain made straight from the HWND
@@ -365,6 +439,13 @@ impl Gfx {
 			backend_options,
 			display: None,
 		});
+		Self::on(instance, window, true)
+	}
+
+	// Surface, adapter and device on an instance that already exists: the cold
+	// start above and a rebuild after a release (`log` is the difference, since
+	// the adapter was reported the first time).
+	fn on(instance: wgpu::Instance, window: Arc<Window>, log: bool) -> anyhow::Result<Self> {
 		let surface = instance.create_surface(window.clone())?;
 
 		// Prefer a real GPU; if none can be acquired, retry forcing a software
@@ -382,10 +463,13 @@ impl Gfx {
 		let (device, queue) = pollster::block_on(request_device(&adapter))?;
 		let (config, format, transparent) = surface_config(&surface, &adapter, &window)
 			.ok_or_else(|| anyhow::anyhow!("adapter cannot present to this window"))?;
-		log_renderer(&adapter_info, transparent);
+		if log {
+			log_renderer(&adapter_info, transparent);
+		}
 		surface.configure(&device, &config);
 
 		Ok(Self {
+			instance,
 			device,
 			queue,
 			config,
@@ -416,6 +500,7 @@ impl Gfx {
 		surface.configure(&gpu.device, &config);
 
 		Some(Self {
+			instance: gpu.instance.clone(),
 			device: gpu.device.clone(),
 			queue: gpu.queue.clone(),
 			config,
@@ -465,6 +550,29 @@ impl Gfx {
 			));
 		}
 		let window = Arc::new(window.ok_or_else(|| anyhow::anyhow!("glutin made no window"))?);
+		// empty flags: no indirect-validation (needs compute the GL 3.3 context
+		// lacks; we never use indirect draws).
+		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+			backends: wgpu::Backends::GL,
+			flags: wgpu::InstanceFlags::empty(),
+			memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+			backend_options: wgpu::BackendOptions::default(),
+			display: None,
+		});
+		let gfx = Self::gl_on(instance, window.clone(), config, true)?;
+		Ok((gfx, window))
+	}
+
+	// The GL context, its surface and the wgpu device over them, on a window
+	// glutin made. Shared by the cold start above and a rebuild after a release:
+	// the window and its ARGB visual outlive the context, so a new one is built
+	// from the same config.
+	fn gl_on(
+		instance: wgpu::Instance,
+		window: Arc<Window>,
+		config: glutin::config::Config,
+		log: bool,
+	) -> anyhow::Result<Self> {
 		let raw = window.window_handle()?.as_raw();
 		let gl_display = config.display();
 
@@ -524,18 +632,11 @@ impl Gfx {
 		}
 		.ok_or_else(|| anyhow::anyhow!("wgpu GL external adapter init failed"))?;
 
-		// empty flags: no indirect-validation (needs compute the GL 3.3 context
-		// lacks; we never use indirect draws).
-		let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-			backends: wgpu::Backends::GL,
-			flags: wgpu::InstanceFlags::empty(),
-			memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
-			backend_options: wgpu::BackendOptions::default(),
-			display: None,
-		});
 		let adapter = unsafe { instance.create_adapter_from_hal::<Gles>(exposed) };
 		let adapter_info = adapter.get_info();
-		log_renderer(&adapter_info, true);
+		if log {
+			log_renderer(&adapter_info, true);
+		}
 		let (device, queue) =
 			pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
 				label: Some("silkterm gl device"),
@@ -551,7 +652,7 @@ impl Gfx {
 		// Rgba16Float gives a linear intermediate with no banding; the blit then
 		// does the single linear->sRGB encode (+ dither) into the 8-bit fbo 0.
 		let format = wgpu::TextureFormat::Rgba16Float;
-		let config = wgpu::SurfaceConfiguration {
+		let surface_cfg = wgpu::SurfaceConfiguration {
 			usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
 			format,
 			width: size.width.max(1),
@@ -561,35 +662,34 @@ impl Gfx {
 			view_formats: vec![],
 			desired_maximum_frame_latency: 2,
 		};
-		let fb = default_fb(&device, FB_FORMAT, config.width, config.height);
+		let fb = default_fb(&device, FB_FORMAT, surface_cfg.width, surface_cfg.height);
 		let fb_view = fb.create_view(&Default::default());
-		let offscreen = offscreen_tex(&device, format, config.width, config.height);
+		let offscreen = offscreen_tex(&device, format, surface_cfg.width, surface_cfg.height);
 		let offscreen_view = offscreen.create_view(&Default::default());
 		let blit = Blit::new(&device, FB_FORMAT, &offscreen_view);
 
 		let sentinel = Some(Sentinel::new(&device, &queue));
-		Ok((
-			Self {
-				device,
-				queue,
+		Ok(Self {
+			instance,
+			device,
+			queue,
+			config: surface_cfg,
+			format,
+			transparent: true,
+			adapter_info,
+			backend: Backend::Gl {
+				ctx,
+				surface,
 				config,
-				format,
-				transparent: true,
-				adapter_info,
-				backend: Backend::Gl {
-					ctx,
-					surface,
-					fb,
-					fb_view,
-					offscreen,
-					offscreen_view,
-					blit,
-				},
-				sentinel,
-				_window: window.clone(),
+				fb,
+				fb_view,
+				offscreen,
+				offscreen_view,
+				blit,
 			},
-			window,
-		))
+			sentinel,
+			_window: window,
+		})
 	}
 
 	// Acquire the frame's render target. None -> skip this frame (surface lost).
@@ -686,6 +786,7 @@ impl Gfx {
 				offscreen,
 				offscreen_view,
 				blit,
+				config: _,
 			} => {
 				surface.resize(
 					ctx,
@@ -964,6 +1065,17 @@ pub struct DialogGpu {
 	adapter_info: wgpu::AdapterInfo,
 }
 
+// The instance and adapter of a `DialogGpu` whose device has been let go: what
+// a rebuild starts from, since the device is the memory and the instance is
+// the part a driver may not fully give back (file descriptors stayed open on
+// NVIDIA's after every instance destroyed).
+#[derive(Clone, Debug)]
+pub struct DialogSeed {
+	instance: wgpu::Instance,
+	adapter: wgpu::Adapter,
+	adapter_info: wgpu::AdapterInfo,
+}
+
 impl DialogGpu {
 	// Runs off the winit thread, so there is no window to check the adapter
 	// against - `Gfx::with_dialog_gpu` does that later against the real surface.
@@ -986,14 +1098,31 @@ impl DialogGpu {
 		};
 		let adapter = pick(false).or_else(|_| pick(true))?;
 		let adapter_info = adapter.get_info();
-		let (device, queue) = pollster::block_on(request_device(&adapter))?;
-		Ok(Self {
+		Self::on(DialogSeed {
 			instance,
 			adapter,
-			device,
-			queue,
 			adapter_info,
 		})
+	}
+
+	// A device on an instance and adapter that already exist.
+	fn on(seed: DialogSeed) -> anyhow::Result<Self> {
+		let (device, queue) = pollster::block_on(request_device(&seed.adapter))?;
+		Ok(Self {
+			instance: seed.instance,
+			adapter: seed.adapter,
+			device,
+			queue,
+			adapter_info: seed.adapter_info,
+		})
+	}
+
+	fn seed(&self) -> DialogSeed {
+		DialogSeed {
+			instance: self.instance.clone(),
+			adapter: self.adapter.clone(),
+			adapter_info: self.adapter_info.clone(),
+		}
 	}
 }
 
@@ -1026,40 +1155,66 @@ impl<T> Warm<T> {
 }
 
 #[derive(Debug)]
-pub struct GpuWarm(Warm<DialogGpu>);
+pub struct GpuWarm {
+	state: Warm<DialogGpu>,
+	// what the last context was built on, once its device has been let go
+	seed: Option<DialogSeed>,
+}
 
 impl GpuWarm {
 	pub const fn idle() -> Self {
-		Self(Warm::Idle)
+		Self {
+			state: Warm::Idle,
+			seed: None,
+		}
 	}
 
 	// Start warming. Called once the terminal is actually on screen, so the
 	// device build happens in dead time rather than competing with startup.
-	// Repeat calls are no-ops.
+	// Repeat calls are no-ops. After a release the device is asked of the
+	// adapter that was kept, and a cold build is the fallback when that adapter
+	// no longer answers.
 	pub fn start(&mut self) {
-		if !matches!(self.0, Warm::Idle) {
+		if !matches!(self.state, Warm::Idle) {
 			return;
 		}
-		self.0 = Warm::Building(std::thread::spawn(|| match DialogGpu::build() {
-			Ok(gpu) => Some(gpu),
-			// A dialog can still be opened without this - it just pays the old
-			// cost - so a failure here is a note, not an error.
-			Err(e) => {
-				eprintln!(
-					"{}: dialog GPU warm-up failed ({e}); dialogs will open more slowly",
-					crate::config::APP_NAME
-				);
-				None
+		let seed = self.seed.take();
+		self.state = Warm::Building(std::thread::spawn(move || {
+			let built = match seed {
+				Some(seed) => DialogGpu::on(seed).or_else(|_| DialogGpu::build()),
+				None => DialogGpu::build(),
+			};
+			match built {
+				Ok(gpu) => Some(gpu),
+				// A dialog can still be opened without this - it just pays the old
+				// cost - so a failure here is a note, not an error.
+				Err(e) => {
+					eprintln!(
+						"{}: dialog GPU warm-up failed ({e}); dialogs will open more slowly",
+						crate::config::APP_NAME
+					);
+					None
+				}
 			}
 		}));
+	}
+
+	// Let the device go, keeping the instance and adapter it was built on for
+	// the next `start`. The idle release calls this beside the terminal's own.
+	pub fn release(&mut self) {
+		self.state = std::mem::replace(&mut self.state, Warm::Failed).settled();
+		if let Warm::Ready(gpu) = &self.state {
+			self.seed = Some(gpu.seed());
+		}
+		self.state = Warm::Idle;
 	}
 
 	// The warm context, waiting on the worker if it is still going. That wait can
 	// never cost more than building one here would have, since the work is
 	// already under way - and normally it finished seconds ago.
 	pub fn get(&mut self) -> Option<DialogGpu> {
-		self.0 = std::mem::replace(&mut self.0, Warm::Failed).settled();
-		match &self.0 {
+		self.state = std::mem::replace(&mut self.state, Warm::Failed).settled();
+		match &self.state {
 			Warm::Ready(gpu) => Some(gpu.clone()),
 			_ => None,
 		}

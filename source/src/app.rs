@@ -21,7 +21,7 @@ use glyphon::{Buffer, Color as GColor, Shaping, TextArea, TextBounds};
 use crate::bgimage::{ImageRenderer, WpProbe};
 use crate::clipboard::Clipboard;
 use crate::config;
-use crate::gfx::{Gfx, RectInstance, RectRenderer, VramProbe};
+use crate::gfx::{Gfx, Rebirth, RectInstance, RectRenderer, VramProbe};
 use crate::input;
 use crate::pane::{BarHit, CopyKind, Dir, Pane, PaneManager, Rect};
 use crate::term::{PaneId, UserEvent};
@@ -1398,6 +1398,99 @@ fn pace_frame(next: &mut Option<Instant>, ivl: Duration) -> ControlFlow {
 	ControlFlow::WaitUntil(at)
 }
 
+// What the idle release reads of the window (see `release_deadline`).
+struct Idle {
+	focused: bool,
+	hidden: bool,     // minimized, or covered where the desktop says so
+	revealed: bool,   // shown at all yet
+	bench_busy: bool, // a rating owed or running
+	since: Instant,   // the last sign of life
+}
+
+// When an idle window may let its device go, or None while something keeps
+// it: the switch off, the window not yet shown, a rating owed or running, or a
+// window that has focus and is on screen. Two waits, because a hidden window is
+// known to be out of sight while a merely unfocused one may be on a second
+// monitor being read.
+fn release_deadline(cfg: &config::Settings, idle: &Idle) -> Option<Instant> {
+	let (on, when_hidden, otherwise) = idle_rule(cfg);
+	if !on || !idle.revealed || idle.bench_busy || (idle.focused && !idle.hidden) {
+		return None;
+	}
+	Some(idle.since + if idle.hidden { when_hidden } else { otherwise })
+}
+
+// The setting's answer, unless SILK_IDLE_SECS names one wait in seconds for
+// both cases - which is how the release is exercised without leaving a window
+// alone for half an hour.
+fn idle_rule(cfg: &config::Settings) -> (bool, Duration, Duration) {
+	if let Some(secs) = std::env::var("SILK_IDLE_SECS")
+		.ok()
+		.and_then(|raw| raw.parse::<f32>().ok())
+		.filter(|secs| secs.is_finite() && *secs >= 0.0)
+	{
+		let wait = Duration::from_secs_f32(secs);
+		return (true, wait, wait);
+	}
+	let minutes = |m: usize| Duration::from_secs(m as u64 * 60);
+	(
+		cfg.idle_release,
+		minutes(cfg.idle_release_hidden_min),
+		minutes(cfg.idle_release_min),
+	)
+}
+
+// SILK_IDLEDBG=1: the idle release's comings and goings on stderr, stamped
+// with seconds since the first call so a log can be read against a timeline.
+fn idledbg(msg: &str) {
+	use std::sync::OnceLock;
+	static T0: OnceLock<Instant> = OnceLock::new();
+	if !env_flag("SILK_IDLEDBG") {
+		return;
+	}
+	let t = T0.get_or_init(Instant::now).elapsed().as_secs_f32();
+	eprintln!("[idle {t:7.2}s] {msg}");
+}
+
+// Hand freed heap back to the OS. glibc keeps what it was given unless asked,
+// so a release that dropped tens of MB would still show them as resident.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn trim_heap() {
+	// SAFETY: no arguments to get wrong, and it only touches the allocator's
+	// own free lists.
+	unsafe {
+		libc::malloc_trim(0);
+	}
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn trim_heap() {}
+
+// A big buffer comes straight from the OS and goes straight back. glibc's
+// mmap threshold starts at 128 KB but moves: freeing a mapped buffer raises it
+// to that buffer's size, after which a wallpaper's decode (several buffers of
+// megabytes each) is carved out of the thread's own arena and stays resident
+// there once freed, because `malloc_trim` never shrinks an arena that is not
+// the main one. Measured on a 1920x993 wallpaper: about 40 MB kept per decode,
+// one per rebuild after an idle release, and the first decode's 50 MB kept for
+// the life of every window. Setting the threshold pins it. 4 MB keeps a
+// frame's own vectors in the arena on any grid and puts only the image buffers
+// on the mapping path. Pinning it also stops the trim threshold moving, so
+// that is set too, high enough that the main heap's top is not given back and
+// asked for again around every frame. Called before the first thread exists,
+// like the environment fixes.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub(crate) fn tune_heap() {
+	// SAFETY: plain allocator parameters, set before any other thread runs.
+	unsafe {
+		libc::mallopt(libc::M_MMAP_THRESHOLD, 4 << 20);
+		libc::mallopt(libc::M_TRIM_THRESHOLD, 8 << 20);
+	}
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+pub(crate) fn tune_heap() {}
+
 // VT-switch field diagnostics: `touch ~/silk_vramdbg.on` (no relaunch needed)
 // makes the sentinel probes append their results to ~/silk_vramdbg.txt, so a
 // desktop repro can show whether loss detection fired. The marker is re-checked
@@ -1622,16 +1715,43 @@ enum Caret {
 const MENU_BAR: [&str; 6] = ["File", "Edit", "View", "Tabs", "Panes", "Help"];
 const COPYBOX_LABELS: [&str; 3] = ["Copy on:", "select", "output"]; // menu-bar auto-copy checkboxes
 
-struct State {
-	window: Arc<Window>,
+// Everything that lives on the GPU device, held together so an idle window can
+// let the whole lot go at once and take it back later (see `release_gpu`).
+struct Gpu {
 	gfx: Gfx,
-	text: TextCtx,
 	rects: RectRenderer,
 	minimap: crate::minimap::MapRenderer,
-	// posts worker results (wallpaper) back into this event loop
-	proxy: EventLoopProxy<UserEvent>,
 	wallpaper_img: Option<ImageRenderer>,
 	scrim: crate::scrim::Scrim, // text readability scrim (used only when config.text_scrim)
+}
+
+impl Gpu {
+	// The renderers first and the device last: `Gfx::release` needs every
+	// handle on the device gone before it runs.
+	fn release(self) -> Rebirth {
+		let Self {
+			gfx,
+			rects,
+			minimap,
+			wallpaper_img,
+			scrim,
+		} = self;
+		drop((wallpaper_img, minimap, scrim, rects));
+		gfx.release()
+	}
+}
+
+struct State {
+	window: Arc<Window>,
+	// None while the window has let its device go after a long idle, with what
+	// is needed to build it again waiting in `rebirth` (see `release_gpu`).
+	// `render` takes it out for the length of a frame, so nothing a frame calls
+	// may ask for it.
+	gpu: Option<Gpu>,
+	rebirth: Option<Rebirth>,
+	text: TextCtx,
+	// posts worker results (wallpaper) back into this event loop
+	proxy: EventLoopProxy<UserEvent>,
 	tabs: Tabs,
 	mods: ModifiersState,
 	mouse: (f32, f32),
@@ -1760,6 +1880,17 @@ struct State {
 	shell_scan_cap: Option<Instant>,
 	vram_next: Instant, // next GL VRAM sentinel probe (VT-switch content-loss detection)
 	vramloss_test: bool, // SILK_VRAMLOSS one-shot: fake a loss to exercise the rebuild path
+	// The surface's size, kept here because layout still needs it while there
+	// is no surface to ask.
+	surface_px: (u32, u32),
+	gl: bool, // born on the glutin GL path (X11): the one with a VT watcher and sentinels
+	adapter_info: wgpu::AdapterInfo, // for the About dialog, which may open before a rebuild
+	// When the window last saw a person or a shell: input, focus either way, or
+	// PTY output. The idle release counts from here (see `release_deadline`).
+	idle_since: Instant,
+	// Something wants the window back since it let its device go, so the device
+	// is owed as soon as the window is on screen to draw in.
+	wake_owed: bool,
 }
 
 impl State {
@@ -1778,7 +1909,7 @@ impl State {
 	// everything else goes through `tab_layout`, which rebuilds only when one of
 	// the inputs in `tab_layout_key` moved.
 	fn rebuild_tab_layout(&mut self) {
-		let total = self.gfx.config.width as f32;
+		let total = self.surface_px.0 as f32;
 		let scale = self.text.scale;
 		// what a tab spends on itself rather than on its label
 		let chrome = 2.0 * config::dip(TAB_TITLE_PAD, scale) + config::dip(TAB_CLOSE_W, scale);
@@ -1844,7 +1975,7 @@ impl State {
 	// is the point of having one.
 	fn tab_layout_key(&self) -> (u32, usize, usize, usize, u32) {
 		(
-			self.gfx.config.width,
+			self.surface_px.0,
 			self.tabs.len(),
 			self.tabs.active,
 			self.tab_first,
@@ -1931,8 +2062,8 @@ impl State {
 		Rect {
 			x: 0.0,
 			y: bar,
-			w: self.gfx.config.width as f32,
-			h: (self.gfx.config.height as f32 - bar).max(1.0),
+			w: self.surface_px.0 as f32,
+			h: (self.surface_px.1 as f32 - bar).max(1.0),
 		}
 	}
 
@@ -2416,7 +2547,7 @@ impl State {
 		});
 		let w = text_w + 2.0 * pad;
 		let h = line_h * lines.len() as f32 + 2.0 * pad;
-		let win = (self.gfx.config.width as f32, self.gfx.config.height as f32);
+		let win = (self.surface_px.0 as f32, self.surface_px.1 as f32);
 		let (x, y) = crate::tip::beside(anchor, (w, h), win, self.text.dip(MENU_TIP_GAP), pad);
 		let placed = lines
 			.into_iter()
@@ -2441,7 +2572,7 @@ impl State {
 		});
 		let w = text_w + 2.0 * pad;
 		let h = line_h * lines.len() as f32 + 2.0 * pad;
-		let (win_w, win_h) = (self.gfx.config.width as f32, self.gfx.config.height as f32);
+		let (win_w, win_h) = (self.surface_px.0 as f32, self.surface_px.1 as f32);
 		let (x, y) = (
 			((win_w - w) / 2.0).max(0.0).round(),
 			((win_h - h) / 2.0).max(0.0).round(),
@@ -2550,7 +2681,7 @@ impl State {
 		let line_h = self.text.cell_h;
 		let w = text_w + 2.0 * pad;
 		let h = line_h * lines.len() as f32 + 2.0 * pad;
-		let win_w = self.gfx.config.width as f32;
+		let win_w = self.surface_px.0 as f32;
 		// A tab paged off the strip while its tip was up takes the tip with it -
 		// a tip hanging off nothing would sit at the bar's left end, pointing at
 		// whichever tab happened to be there.
@@ -2737,8 +2868,8 @@ impl State {
 			hover: None,
 			sub: None,
 		};
-		let sw = self.gfx.config.width as f32;
-		let sh = self.gfx.config.height as f32;
+		let sw = self.surface_px.0 as f32;
+		let sh = self.surface_px.1 as f32;
 		let x = mx.min((sw - w).max(0.0));
 		let y = my.min((sh - menu.height()).max(0.0));
 		ContextMenu { x, y, ..menu }
@@ -2767,7 +2898,7 @@ impl State {
 		// measured against a provisional build, since the width is what decides
 		// which side it goes on
 		let mut popup = self.build_popup(menu.target, items, px + pw, top - pad_y);
-		if px + pw + popup.w > self.gfx.config.width as f32 {
+		if px + pw + popup.w > self.surface_px.0 as f32 {
 			popup = self.build_popup(
 				popup.target,
 				popup.entries,
@@ -3010,7 +3141,7 @@ impl State {
 		}
 		let box_sz = (self.text.ui_line_h * 0.6).round();
 		let metrics = CopyMetrics {
-			right: self.gfx.config.width as f32 - self.text.dip(MENU_BAR_PAD),
+			right: self.surface_px.0 as f32 - self.text.dip(MENU_BAR_PAD),
 			label_w,
 			box_sz,
 			box_y: (self.menu_bar_h() - box_sz) / 2.0,
@@ -3258,8 +3389,8 @@ impl State {
 		let area = Rect {
 			x: 0.0,
 			y: bar,
-			w: self.gfx.config.width as f32,
-			h: (self.gfx.config.height as f32 - bar).max(1.0),
+			w: self.surface_px.0 as f32,
+			h: (self.surface_px.1 as f32 - bar).max(1.0),
 		};
 		// inherit shell + directory from the pane that was active when the tab
 		// was opened; a default-shell pane carries None -> still the default
@@ -3450,6 +3581,106 @@ impl State {
 		self.dirty = true;
 	}
 
+	// The surface's new size, and the device's copies of it where there is one.
+	fn resize_surface(&mut self, w: u32, h: u32) {
+		if w == 0 || h == 0 {
+			return;
+		}
+		self.surface_px = (w, h);
+		if let Some(gpu) = self.gpu.as_mut() {
+			gpu.gfx.resize(w, h);
+			gpu.scrim.resize(&gpu.gfx.device, w, h);
+		}
+	}
+
+	// A sign of life: the idle clock starts over, and a window that let its
+	// device go is owed it back.
+	fn note_active(&mut self, why: &'static str) {
+		self.idle_since = Instant::now();
+		if self.gpu.is_none() {
+			if !self.wake_owed {
+				idledbg(&format!("wake: {why}"));
+			}
+			self.wake_owed = true;
+		}
+	}
+
+	fn release_deadline(&self, cfg: &config::Settings, hidden: bool) -> Option<Instant> {
+		release_deadline(
+			cfg,
+			&Idle {
+				focused: self.focused,
+				hidden,
+				revealed: self.revealed,
+				bench_busy: self.bench.is_some() || self.bench_at.is_some(),
+				since: self.idle_since,
+			},
+		)
+	}
+
+	// Let the device and everything on it go. The window stays, the shells run
+	// on and the grid keeps up; only drawing stops, and `rebuild_gpu` is the
+	// way back. What the CPU held only for the device's sake goes too: the
+	// rasterized glyphs, the shaped chrome.
+	fn release_gpu(&mut self) {
+		let Some(gpu) = self.gpu.take() else {
+			return;
+		};
+		let start = Instant::now();
+		self.text.detach_gpu();
+		self.chrome = None;
+		self.invalidate_prepared();
+		self.rebirth = Some(gpu.release());
+		self.wake_owed = false;
+		trim_heap();
+		idledbg(&format!("device released in {:?}", start.elapsed()));
+	}
+
+	// The device again, on the same window, and everything that lived on it
+	// built afresh. The wallpaper is decoded again rather than having been kept,
+	// as after a VT switch (recover_gpu). A failure leaves the window released
+	// and the next sign of life tries again.
+	fn rebuild_gpu(&mut self) {
+		let Some(rebirth) = self.rebirth.as_ref() else {
+			return;
+		};
+		let start = Instant::now();
+		let gfx = match Gfx::rebuild(rebirth, &self.window) {
+			Ok(gfx) => gfx,
+			Err(e) => {
+				eprintln!(
+					"{}: could not bring the GPU device back ({e}); trying again on the next input",
+					config::APP_NAME
+				);
+				self.wake_owed = false;
+				return;
+			}
+		};
+		self.rebirth = None;
+		let (w, h) = (gfx.config.width, gfx.config.height);
+		self.surface_px = (w, h);
+		self.text.attach_gpu(&gfx.device, &gfx.queue, gfx.format);
+		let rects = RectRenderer::new(&gfx.device, gfx.format);
+		let minimap = crate::minimap::MapRenderer::new(&gfx.device, gfx.format);
+		let scrim = crate::scrim::Scrim::new(&gfx.device, gfx.format, w, h);
+		self.gpu = Some(Gpu {
+			gfx,
+			rects,
+			minimap,
+			wallpaper_img: None,
+			scrim,
+		});
+		self.wake_owed = false;
+		self.idle_since = Instant::now();
+		self.vram_next = Instant::now() + VRAM_CHECK_IVL;
+		// the window may have been resized while there was no surface to follow
+		self.relayout_all();
+		self.request_wallpaper(false);
+		// the grid moved while nothing drew: one hard-cut catch-up frame
+		self.freeze_catchup();
+		idledbg(&format!("device rebuilt in {:?}", start.elapsed()));
+	}
+
 	// Every piece of chrome off at once, and back the way it was. Only what is
 	// still off is put back, so a bar switched on in the meantime stays on.
 	fn toggle_bare(&mut self) {
@@ -3631,20 +3862,24 @@ impl State {
 					.then(|| Instant::now() + Duration::from_secs_f32(ivl));
 			}
 		}
-		self.wallpaper_img = loaded.image.map(|img| {
-			let (w, h) = img.rgba.dimensions();
-			ImageRenderer::new(
-				&self.gfx.device,
-				&self.gfx.queue,
-				self.gfx.format,
-				&img.rgba,
-				w,
-				h,
-				img.opacity,
-				img.fit,
-				img.anchor,
-			)
-		});
+		// A window without a device drops the pixels: the rebuild asks for the
+		// wallpaper again, and decoding it twice beats holding a copy of it.
+		if let Some(gpu) = self.gpu.as_mut() {
+			gpu.wallpaper_img = loaded.image.map(|img| {
+				let (w, h) = img.rgba.dimensions();
+				ImageRenderer::new(
+					&gpu.gfx.device,
+					&gpu.gfx.queue,
+					gpu.gfx.format,
+					&img.rgba,
+					w,
+					h,
+					img.opacity,
+					img.fit,
+					img.anchor,
+				)
+			});
+		}
 		// Answered either way: an empty result is the news that there is no
 		// wallpaper to wait for, which settles the question just as well.
 		self.wp_answered = true;
@@ -3694,7 +3929,11 @@ impl State {
 	}
 
 	fn rebuild_text(&mut self, scale: f32) {
-		self.text = TextCtx::new(&self.gfx.device, &self.gfx.queue, self.gfx.format, scale);
+		self.text = TextCtx::new_cpu(scale);
+		if let Some(gpu) = &self.gpu {
+			self.text
+				.attach_gpu(&gpu.gfx.device, &gpu.gfx.queue, gpu.gfx.format);
+		}
 		self.chrome = None; // cached chrome buffers are tied to the old FontSystem
 		self.invalidate_prepared(); // fresh atlases hold nothing to reuse
 		for pm in &mut self.tabs.list {
@@ -3754,15 +3993,16 @@ impl State {
 				self.text.margin,
 				self.chrome_h(),
 			);
-			let (w, h) = fit_px(w, h, self.gfx.device.limits().max_texture_dimension_2d);
+			let max_dim = self.gpu.as_ref().map_or(SAFE_MAX_DIM, |gpu| {
+				gpu.gfx.device.limits().max_texture_dimension_2d
+			});
+			let (w, h) = fit_px(w, h, max_dim);
 			let want = winit::dpi::PhysicalSize::new(w, h);
 			// A size the window can honor straight away answers here and sends no
 			// `Resized`, so this is the only chance to move everything the window
 			// event moves - the scrim included, which was left at the old size.
 			if let Some(applied) = self.window.request_inner_size(want) {
-				self.gfx.resize(applied.width, applied.height);
-				self.scrim
-					.resize(&self.gfx.device, applied.width, applied.height);
+				self.resize_surface(applied.width, applied.height);
 				self.invalidate_prepared();
 			}
 		}
@@ -3842,6 +4082,9 @@ impl State {
 	// the prepared/scrim signatures, so the next frame rebuilds the scrim source
 	// instead of reusing a texture that no longer holds anything.
 	fn recover_gpu(&mut self) {
+		if self.gpu.is_none() {
+			return; // nothing uploaded to lose; the rebuild starts from nothing anyway
+		}
 		self.rebuild_text(config::display_scale(self.window.scale_factor()));
 		// re-decoded rather than kept resident: a large wallpaper is tens of MB, and
 		// a VT switch is rare enough not to trade that for a moment without one
@@ -3852,7 +4095,18 @@ impl State {
 	// returns true while any pane is still animating (caller keeps frames coming).
 	// `force_rebuild` = the frame changed content/scroll/bell (not a pure cursor
 	// animation), so panes re-shape text; false lets them reuse the cached frame.
+	// A frame, on the device the window has. No device means nothing drawn and
+	// no animation to keep frames coming for.
 	fn render(&mut self, force_rebuild: bool) -> bool {
+		let Some(mut gpu) = self.gpu.take() else {
+			return false;
+		};
+		let animating = self.render_with(&mut gpu, force_rebuild);
+		self.gpu = Some(gpu);
+		animating
+	}
+
+	fn render_with(&mut self, gpu: &mut Gpu, force_rebuild: bool) -> bool {
 		// once a frame has been drawn, later resizes are user-driven and may update
 		// the remembered window size (startup/programmatic ones happen before this)
 		self.size_tracked = true;
@@ -3899,7 +4153,7 @@ impl State {
 
 		// translucent background only when the surface supports it AND the user has
 		// Transparency on - and it only ever affects the bg, never text/chrome.
-		let bg_alpha = if self.gfx.transparent && cfg.transparent_background {
+		let bg_alpha = if gpu.gfx.transparent && cfg.transparent_background {
 			self.opacity()
 		} else {
 			1.0
@@ -3920,7 +4174,7 @@ impl State {
 		let scrim_on = halo_on || cfg.text_outline > 0.0;
 		// With both off nothing here draws, and its five full-screen textures have
 		// no business being allocated. Turning either on grows them back.
-		if self.scrim.set_enabled(&self.gfx.device, scrim_on) {
+		if gpu.scrim.set_enabled(&gpu.gfx.device, scrim_on) {
 			self.invalidate_prepared();
 		}
 		let mut scrim_cells: Vec<RectInstance> = Vec::new();
@@ -4034,11 +4288,11 @@ impl State {
 		// Column images: one texture per pane, uploaded only when the compose
 		// behind them moved. Direct field access - `tabs.cur()` would borrow the
 		// whole of self and the renderer needs it mutably.
-		self.minimap.begin_frame();
+		gpu.minimap.begin_frame();
 		if cfg.minimap {
-			let mm = &mut self.minimap;
-			let (device, queue) = (&self.gfx.device, &self.gfx.queue);
-			let res = (self.gfx.config.width as f32, self.gfx.config.height as f32);
+			let mm = &mut gpu.minimap;
+			let (device, queue) = (&gpu.gfx.device, &gpu.gfx.queue);
+			let res = (gpu.gfx.config.width as f32, gpu.gfx.config.height as f32);
 			for (id, p) in &self.tabs.list[self.tabs.active].panes {
 				if let Some(g) = p.minimap(&self.text, &cfg) {
 					mm.prepare(device, queue, *id, g.preview, res, p.map_cache());
@@ -4081,7 +4335,7 @@ impl State {
 			cursor_ranges.push((rect, start, instances.len() as u32));
 		}
 
-		let win_w = self.gfx.config.width as f32;
+		let win_w = gpu.gfx.config.width as f32;
 		let menu_h = self.menu_bar_h();
 		let tab_h = self.tab_bar_h();
 
@@ -4393,7 +4647,7 @@ impl State {
 				if bench_banner.is_some() {
 					instances.push(RectInstance {
 						pos: [0.0, 0.0],
-						size: [self.gfx.config.width as f32, self.gfx.config.height as f32],
+						size: [gpu.gfx.config.width as f32, gpu.gfx.config.height as f32],
 						color: [0.0, 0.0, 0.0, BENCH_SCRIM_ALPHA],
 						..Default::default()
 					});
@@ -4541,8 +4795,8 @@ impl State {
 			use std::hash::{Hash, Hasher};
 			let mut h = std::collections::hash_map::DefaultHasher::new();
 			self.chrome_rev.hash(&mut h);
-			self.gfx.config.width.hash(&mut h);
-			self.gfx.config.height.hash(&mut h);
+			gpu.gfx.config.width.hash(&mut h);
+			gpu.gfx.config.height.hash(&mut h);
 			margin.to_bits().hash(&mut h);
 			for w in &tab_widths {
 				w.to_bits().hash(&mut h);
@@ -4589,18 +4843,15 @@ impl State {
 		// framebuffer pixels (matching the glyphon viewport), so the resolution
 		// is the whole window - NOT the content `area`, which is shorter by the
 		// menu/tab bars and would shift cell bg + cursor down relative to text.
-		let (frame_w, frame_h) = (self.gfx.config.width as f32, self.gfx.config.height as f32);
-		self.text.update_viewport(
-			&self.gfx.queue,
-			self.gfx.config.width,
-			self.gfx.config.height,
-		);
-		self.rects.set_resolution(&self.gfx.queue, frame_w, frame_h);
-		if let Some(img) = &self.wallpaper_img {
-			img.set_resolution(&self.gfx.queue, frame_w, frame_h);
+		let (frame_w, frame_h) = (gpu.gfx.config.width as f32, gpu.gfx.config.height as f32);
+		self.text
+			.update_viewport(&gpu.gfx.queue, gpu.gfx.config.width, gpu.gfx.config.height);
+		gpu.rects.set_resolution(&gpu.gfx.queue, frame_w, frame_h);
+		if let Some(img) = &gpu.wallpaper_img {
+			img.set_resolution(&gpu.gfx.queue, frame_w, frame_h);
 		}
-		self.rects
-			.upload(&self.gfx.device, &self.gfx.queue, &instances);
+		gpu.rects
+			.upload(&gpu.gfx.device, &gpu.gfx.queue, &instances);
 
 		// Nothing that feeds the text changed, so glyphon's prepared buffers from
 		// the last frame still describe this one exactly. Skipping the whole area
@@ -4732,7 +4983,7 @@ impl State {
 				x += tab_w;
 			}
 
-			if let Err(e) = self.text.prepare(&self.gfx.device, &self.gfx.queue, areas) {
+			if let Err(e) = self.text.prepare(&gpu.gfx.device, &gpu.gfx.queue, areas) {
 				// Atlas full (after a long session of varied glyphs). The normal per-frame
 				// trim is at the END of render, below this early return - so without
 				// trimming here the atlas never recovers and ALL text goes black for good
@@ -4793,7 +5044,7 @@ impl State {
 				}
 				if let Err(e) =
 					self.text
-						.prepare_scrim(&self.gfx.device, &self.gfx.queue, scrim_areas)
+						.prepare_scrim(&gpu.gfx.device, &gpu.gfx.queue, scrim_areas)
 				{
 					eprintln!(
 						"{}: scrim prepare failed; trimming atlas to recover: {e:?}",
@@ -4823,8 +5074,8 @@ impl State {
 			let overlay_sig = {
 				use std::hash::{Hash, Hasher};
 				let mut h = std::collections::hash_map::DefaultHasher::new();
-				self.gfx.config.width.hash(&mut h);
-				self.gfx.config.height.hash(&mut h);
+				gpu.gfx.config.width.hash(&mut h);
+				gpu.gfx.config.height.hash(&mut h);
 				self.chrome_rev.hash(&mut h); // covers a menu color change
 				for (_, placed) in tip_layout
 					.iter()
@@ -4935,7 +5186,7 @@ impl State {
 						}
 					}
 				}
-				let (sw, sh) = (self.gfx.config.width as i32, self.gfx.config.height as i32);
+				let (sw, sh) = (gpu.gfx.config.width as i32, gpu.gfx.config.height as i32);
 				let menu_color = GColor::rgb(fg[0], fg[1], fg[2]);
 				let areas: Vec<TextArea> = specs
 					.iter()
@@ -4956,19 +5207,19 @@ impl State {
 					.collect();
 				let _ = self
 					.text
-					.prepare_overlay(&self.gfx.device, &self.gfx.queue, areas);
+					.prepare_overlay(&gpu.gfx.device, &gpu.gfx.queue, areas);
 			}
 		}
 
 		crate::perf::since(&crate::perf::PREP_NS, prep);
 		let acquire = crate::perf::mark();
-		let Some(frame) = self.gfx.begin_frame() else {
+		let Some(frame) = gpu.gfx.begin_frame() else {
 			return animating;
 		};
 		crate::perf::since(&crate::perf::ACQUIRE_NS, acquire);
 		let encode = crate::perf::mark();
-		let view = self.gfx.frame_view(&frame);
-		let mut encoder = self
+		let view = gpu.gfx.frame_view(&frame);
+		let mut encoder = gpu
 			.gfx
 			.device
 			.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -5010,23 +5261,23 @@ impl State {
 		let blur_cached = scrim_cached && !cfg.cursor_scrim;
 		if scrim_on {
 			if !scrim_cached {
-				self.scrim.render_bgcolor(
-					&self.gfx.device,
-					&self.gfx.queue,
+				gpu.scrim.render_bgcolor(
+					&gpu.gfx.device,
+					&gpu.gfx.queue,
 					&mut encoder,
 					&scrim_cells,
 					config::srgb_f32(cfg.bg),
 				);
 			}
 			if cfg.cursor_scrim || cfg.cursor_outline {
-				self.scrim
-					.upload_cursors(&self.gfx.device, &self.gfx.queue, &scrim_cursor_quads);
+				gpu.scrim
+					.upload_cursors(&gpu.gfx.device, &gpu.gfx.queue, &scrim_cursor_quads);
 			}
 			if !scrim_cached {
 				let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 					label: Some("scrim text"),
 					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-						view: self.scrim.text_view(),
+						view: gpu.scrim.text_view(),
 						resolve_target: None,
 						depth_slice: None,
 						ops: wgpu::Operations {
@@ -5048,7 +5299,7 @@ impl State {
 				let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
 					label: Some("scrim cursor"),
 					color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-						view: self.scrim.cursor_view(),
+						view: gpu.scrim.cursor_view(),
 						resolve_target: None,
 						depth_slice: None,
 						ops: wgpu::Operations {
@@ -5061,11 +5312,11 @@ impl State {
 					occlusion_query_set: None,
 					multiview_mask: None,
 				});
-				self.scrim.draw_cursors(&mut pass);
+				gpu.scrim.draw_cursors(&mut pass);
 			}
 			if halo_on && !blur_cached {
-				self.scrim.blur(
-					&self.gfx.queue,
+				gpu.scrim.blur(
+					&gpu.gfx.queue,
 					&mut encoder,
 					cfg.text_scrim_radius,
 					scrim_ext,
@@ -5087,7 +5338,7 @@ impl State {
 			// ARGB visual, so any alpha<1 pixel (the 1px divider slits, AA edges
 			// of fractional pane rects) lets the compositor blend the desktop
 			// through as bright speckles along the split lines.
-			let clear = if self.gfx.transparent && cfg.transparent_background {
+			let clear = if gpu.gfx.transparent && cfg.transparent_background {
 				wgpu::Color::TRANSPARENT
 			} else {
 				wgpu::Color {
@@ -5114,11 +5365,11 @@ impl State {
 				multiview_mask: None,
 			});
 
-			let (sw, sh) = (self.gfx.config.width, self.gfx.config.height);
+			let (sw, sh) = (gpu.gfx.config.width, gpu.gfx.config.height);
 			// pane backgrounds (exactly pane-sized, no clip needed)
-			self.rects.draw(&mut pass, 0..under_len);
+			gpu.rects.draw(&mut pass, 0..under_len);
 			// background image over the pane fill, under cells/text
-			if let Some(img) = &self.wallpaper_img {
+			if let Some(img) = &gpu.wallpaper_img {
 				img.draw(&mut pass);
 			}
 			// per-pane cell bg + cursor, clipped to the pane
@@ -5128,30 +5379,30 @@ impl State {
 					continue;
 				}
 				pass.set_scissor_rect(x, y, w, h);
-				self.rects.draw(&mut pass, *start..*end);
+				gpu.rects.draw(&mut pass, *start..*end);
 			}
 			pass.set_scissor_rect(0, 0, sw, sh);
 			// minimap previews over the pane fill and the wallpaper, under the
 			// marker and thumb (which ride with the scrollbars, after the text)
 			if cfg.minimap {
 				for id in self.tabs.cur().panes.keys() {
-					self.minimap.draw(&mut pass, *id);
+					gpu.minimap.draw(&mut pass, *id);
 				}
 			}
 			// menu/tab-bar quads before the text so their titles draw on top
 			if let Some((start, end)) = menubar_range {
-				self.rects.draw(&mut pass, start..end);
+				gpu.rects.draw(&mut pass, start..end);
 			}
 			if let Some((start, end)) = tabbar_range {
-				self.rects.draw(&mut pass, start..end);
+				gpu.rects.draw(&mut pass, start..end);
 			}
 			// scrim goes under the crisp text, over the cell backgrounds. Clip it to
 			// the content area so the halo only affects terminal text, never the
 			// menu bar / tab titles above it.
 			if scrim_on {
 				// frame-invariant composite args: upload the uniform once, not per pane
-				self.scrim.write_comp_uniform(
-					&self.gfx.queue,
+				gpu.scrim.write_comp_uniform(
+					&gpu.gfx.queue,
 					scrim_intensity,
 					cfg.text_outline,
 					if cfg.cursor_outline { 1.0 } else { 0.0 },
@@ -5204,7 +5455,7 @@ impl State {
 						continue;
 					}
 					pass.set_scissor_rect(cx, cy, cw, ch);
-					self.scrim.composite(&mut pass);
+					gpu.scrim.composite(&mut pass);
 				}
 				pass.set_scissor_rect(0, 0, sw, sh);
 			}
@@ -5215,7 +5466,7 @@ impl State {
 					continue;
 				}
 				pass.set_scissor_rect(x, y, w, h);
-				self.rects.draw(&mut pass, *start..*end);
+				gpu.rects.draw(&mut pass, *start..*end);
 			}
 			// cursor above the scrim (halo can't obscure it), still under the crisp text
 			for (rect, start, end) in &cursor_ranges {
@@ -5224,13 +5475,13 @@ impl State {
 					continue;
 				}
 				pass.set_scissor_rect(x, y, w, h);
-				self.rects.draw(&mut pass, *start..*end);
+				gpu.rects.draw(&mut pass, *start..*end);
 			}
 			pass.set_scissor_rect(0, 0, sw, sh);
 			if let Err(e) = self.text.render(&mut pass) {
 				eprintln!("{}: text render failed: {e:?}", config::APP_NAME);
 			}
-			self.rects.draw(&mut pass, ring_start..ring_end);
+			gpu.rects.draw(&mut pass, ring_start..ring_end);
 		}
 
 		// second pass: context menu / menu-bar dropdown on top (preserves main pass)
@@ -5251,15 +5502,15 @@ impl State {
 				occlusion_query_set: None,
 				multiview_mask: None,
 			});
-			self.rects.draw(&mut pass, mstart..mend);
+			gpu.rects.draw(&mut pass, mstart..mend);
 			let _ = self.text.render_overlay(&mut pass);
 		}
 
-		self.minimap.end_frame();
+		gpu.minimap.end_frame();
 		crate::perf::since(&crate::perf::ENCODE_NS, encode);
 		let submit = crate::perf::mark();
-		self.gfx.queue.submit(Some(encoder.finish()));
-		self.gfx.end_frame(frame);
+		gpu.gfx.queue.submit(Some(encoder.finish()));
+		gpu.gfx.end_frame(frame);
 		crate::perf::since(&crate::perf::SUBMIT_NS, submit);
 		crate::perf::painted();
 		// The window was created hidden; reveal it once a real frame is on screen at
@@ -5268,7 +5519,7 @@ impl State {
 		// fallback so a WM that grants a different size can't leave it stuck hidden.
 		if !self.revealed {
 			let settled = self.reveal_want.is_none_or(|w| {
-				self.gfx.config.width == w.width && self.gfx.config.height == w.height
+				gpu.gfx.config.width == w.width && gpu.gfx.config.height == w.height
 			});
 			if settled || Instant::now() >= self.reveal_deadline {
 				self.revealed = true;
@@ -5300,7 +5551,7 @@ impl State {
 			}
 		}
 		if env_flag("SILK_DUMP") {
-			self.gfx.dump_offscreen("/tmp/silk_offscreen.png");
+			gpu.gfx.dump_offscreen("/tmp/silk_offscreen.png");
 		}
 		// Trim only on a frame that prepared. The trim clears glyphon's in-use set,
 		// and a later allocation evicts whatever isn't in it - so trimming after a
@@ -6041,17 +6292,23 @@ impl ApplicationHandler<UserEvent> for App {
 		};
 		let list = build_layout(&self.cli, &mut text, &self.proxy, area);
 		let frame_budget_ms = crate::profile::budget_ms(refresh_hz(&window));
+		let surface_px = (gfx.config.width, gfx.config.height);
+		let gl = gfx.is_gl();
+		let adapter_info = gfx.adapter_info.clone();
 
 		self.state = Some(State {
 			window,
-			gfx,
+			gpu: Some(Gpu {
+				gfx,
+				rects,
+				minimap,
+				// filled in when the worker answers; the window is not held up for it
+				wallpaper_img: None,
+				scrim,
+			}),
+			rebirth: None,
 			text,
-			rects,
-			minimap,
 			proxy: self.proxy.clone(),
-			// filled in when the worker answers; the window is not held up for it
-			wallpaper_img: None,
-			scrim,
 			tabs: Tabs { list, active: 0 },
 			mods: ModifiersState::empty(),
 			mouse: (0.0, 0.0),
@@ -6129,6 +6386,11 @@ impl ApplicationHandler<UserEvent> for App {
 			shell_scan_cap: None,
 			vram_next: Instant::now() + VRAM_CHECK_IVL,
 			vramloss_test: std::env::var_os("SILK_VRAMLOSS").is_some(),
+			surface_px,
+			gl,
+			adapter_info,
+			idle_since: Instant::now(),
+			wake_owed: false,
 		});
 		// A wallpaper given on the command line (--wallpaper-file, incl. an explicit
 		// clear) owns this session: rotation is skipped entirely, whatever the config
@@ -6138,7 +6400,7 @@ impl ApplicationHandler<UserEvent> for App {
 			state.init_wallpaper(cli_wallpaper);
 		}
 		// GL path only: the native path's swapchain reports loss itself
-		if !self.vt_watch && self.state.as_ref().is_some_and(|s| s.gfx.is_gl()) {
+		if !self.vt_watch && self.state.as_ref().is_some_and(|s| s.gl) {
 			self.vt_watch = spawn_vt_watch(self.proxy.clone());
 		}
 	}
@@ -6173,6 +6435,7 @@ impl ApplicationHandler<UserEvent> for App {
 						p.note_history();
 					}
 				});
+				state.note_active("output"); // a shell that prints is not idle
 			}
 			UserEvent::PtyWrite(id, bytes) => {
 				// a reply the terminal owes the program (cursor position, device
@@ -6273,14 +6536,26 @@ impl ApplicationHandler<UserEvent> for App {
 			) {
 			return;
 		}
+		// Anything a person does to the window is a sign of life (see
+		// `release_deadline`); the hidden-to-shown edge is one too, in its arm.
+		if matches!(
+			event,
+			WindowEvent::KeyboardInput { .. }
+				| WindowEvent::MouseInput { .. }
+				| WindowEvent::MouseWheel { .. }
+				| WindowEvent::CursorMoved { .. }
+				| WindowEvent::CursorEntered { .. }
+				| WindowEvent::Touch(_)
+				| WindowEvent::Ime(_)
+				| WindowEvent::Focused(_)
+		) {
+			state.note_active("input or focus");
+		}
 		match event {
 			WindowEvent::CloseRequested => event_loop.exit(),
 
 			WindowEvent::Resized(size) => {
-				state.gfx.resize(size.width, size.height);
-				state
-					.scrim
-					.resize(&state.gfx.device, size.width, size.height);
+				state.resize_surface(size.width, size.height);
 				state.relayout_all();
 				state.save_window_size(size.width, size.height);
 				state.invalidate_prepared(); // scrim textures were just recreated
@@ -6318,7 +6593,7 @@ impl ApplicationHandler<UserEvent> for App {
 				state.dirty = true;
 				// Regaining focus is the likely first moment back from a VT
 				// switch/suspend - probe the GPU uploads now, not at the slow tick.
-				if focused && state.gfx.is_gl() {
+				if focused && state.gl {
 					state.vram_next = Instant::now();
 					vramdbg("focus regained -> immediate probe");
 				}
@@ -6331,7 +6606,8 @@ impl ApplicationHandler<UserEvent> for App {
 				if !occluded {
 					// nothing was drawn while hidden, so catch up in one frame
 					state.dirty = true;
-					if state.gfx.is_gl() {
+					state.note_active("shown");
+					if state.gl {
 						state.vram_next = Instant::now();
 						vramdbg("unoccluded -> immediate probe");
 					}
@@ -7210,6 +7486,13 @@ impl ApplicationHandler<UserEvent> for App {
 				if state.freeze_sync() {
 					return; // frozen - nothing on screen to paint
 				}
+				// The desktop wants pixels from a window that let its device go:
+				// the rebuild is done where every other wake is (about_to_wait),
+				// and the frame with it.
+				if state.gpu.is_none() {
+					state.note_active("redraw request");
+					return;
+				}
 				let _ = state.render(true);
 			}
 
@@ -7253,7 +7536,12 @@ impl ApplicationHandler<UserEvent> for App {
 
 		// Warm the dialogs' GPU context once the terminal is genuinely on screen,
 		// so building it can't slow the path to the first frame. Idempotent.
-		if WARM_DIALOG_GPU && self.state.as_ref().is_some_and(|state| state.revealed) {
+		if WARM_DIALOG_GPU
+			&& self
+				.state
+				.as_ref()
+				.is_some_and(|state| state.revealed && state.gpu.is_some())
+		{
 			self.gpu_warm.start();
 		}
 
@@ -7297,11 +7585,7 @@ impl ApplicationHandler<UserEvent> for App {
 			.then(|| self.gpu_warm.get())
 			.flatten();
 		if open_about {
-			if let Some(info) = self
-				.state
-				.as_ref()
-				.map(|state| state.gfx.adapter_info.clone())
-			{
+			if let Some(info) = self.state.as_ref().map(|state| state.adapter_info.clone()) {
 				match crate::dialog::DialogWin::new_about(event_loop, &info, parent, warm.as_ref())
 				{
 					Ok(d) => {
@@ -7416,19 +7700,19 @@ impl ApplicationHandler<UserEvent> for App {
 		state.poll_output_copy();
 		// wallpaper rotation: swap to the next image when its interval elapses
 		// (sets state.dirty so the change renders this cycle)
-		if state.wp_next.is_some_and(|next| Instant::now() >= next) {
+		if state.wp_next.is_some_and(|next| Instant::now() >= next) && state.gpu.is_some() {
 			state.advance_wallpaper();
 		}
 		// GL path: the VT watcher (spawn_vt_watch) is the real loss trigger; the
 		// readback probes below stay as field evidence + a fallback for a missed
 		// switch, since a real purge read back "intact" (driver restores readback
 		// contents while sampled copies stay garbage).
-		if state.gfx.is_gl() {
+		if let Some(gpu) = state.gpu.as_mut().filter(|gpu| gpu.gfx.is_gl()) {
 			if state.vramloss_test && state.revealed {
 				state.vramloss_test = false;
-				state.gfx.vram_clobber();
-				if let Some(wp) = &state.wallpaper_img {
-					wp.vram_clobber(&state.gfx.queue);
+				gpu.gfx.vram_clobber();
+				if let Some(wp) = &gpu.wallpaper_img {
+					wp.vram_clobber(&gpu.gfx.queue);
 				}
 				vramdbg("SILK_VRAMLOSS: sentinels + wallpaper clobbered");
 			}
@@ -7438,7 +7722,7 @@ impl ApplicationHandler<UserEvent> for App {
 			// purge that blacked the window, so readback cannot be the primary
 			// detector. Kept for the diagnostic trail and as a fallback.
 			let mut lost = None;
-			match state.gfx.vram_check_poll() {
+			match gpu.gfx.vram_check_poll() {
 				Some(VramProbe::Lost { uploaded, rendered }) => {
 					lost = Some(format!(
 						"sentinel uploaded={} rendered={}",
@@ -7452,8 +7736,8 @@ impl ApplicationHandler<UserEvent> for App {
 				}
 				None => {}
 			}
-			if let Some(wp) = state.wallpaper_img.as_mut() {
-				match wp.vram_check_poll(&state.gfx.device) {
+			if let Some(wp) = gpu.wallpaper_img.as_mut() {
+				match wp.vram_check_poll(&gpu.gfx.device) {
 					Some(WpProbe::Lost) => lost = Some("wallpaper block gone".into()),
 					Some(WpProbe::Intact) => vramdbg("probe: wallpaper intact"),
 					Some(WpProbe::MapFailed) => {
@@ -7462,6 +7746,13 @@ impl ApplicationHandler<UserEvent> for App {
 					None => {}
 				}
 			}
+			if Instant::now() >= state.vram_next {
+				gpu.gfx.vram_check_start();
+				if let Some(wp) = gpu.wallpaper_img.as_mut() {
+					wp.vram_check_start(&gpu.gfx.device, &gpu.gfx.queue);
+				}
+				state.vram_next = Instant::now() + VRAM_CHECK_IVL;
+			}
 			if let Some(what) = lost {
 				eprintln!(
 					"{}: GPU texture contents lost (VT switch or resume?) - rebuilding",
@@ -7469,13 +7760,6 @@ impl ApplicationHandler<UserEvent> for App {
 				);
 				vramdbg(&format!("probe: LOST ({what}) -> recover_gpu"));
 				state.recover_gpu();
-			}
-			if Instant::now() >= state.vram_next {
-				state.gfx.vram_check_start();
-				if let Some(wp) = state.wallpaper_img.as_mut() {
-					wp.vram_check_start(&state.gfx.device, &state.gfx.queue);
-				}
-				state.vram_next = Instant::now() + VRAM_CHECK_IVL;
 			}
 		}
 		let bell_anim = state.bell_flash > 0.0;
@@ -7526,9 +7810,32 @@ impl ApplicationHandler<UserEvent> for App {
 		// Fully hidden window: don't build a frame nobody can see. PTY reading
 		// never stops, so the grid keeps up and the reveal is one catch-up frame.
 		let hidden = state.freeze_sync();
+		// A window that let its device go takes it back the moment it is wanted
+		// on screen, and not before: output into a hidden one waits for the
+		// reveal. One left alone for long enough lets it go, unless a dialog is
+		// up (on X11 the dialog's context cannot outlive the terminal's).
+		let idle_wake = if state.gpu.is_none() {
+			if state.wake_owed && !hidden {
+				state.rebuild_gpu();
+			}
+			None
+		} else if self.dialog.is_none() {
+			let due = state.release_deadline(&config::settings(), hidden);
+			if due.is_some_and(|due| Instant::now() >= due) {
+				state.release_gpu();
+				// the dialogs' warm context is a second device; it comes back
+				// with the first (see the warm-up at the top of this pass)
+				self.gpu_warm.release();
+				None
+			} else {
+				due
+			}
+		} else {
+			None
+		};
 		// A pass that draws nothing pauses the watch too, or the next ease's first
 		// period would be the whole idle gap before it.
-		let flow = if hidden {
+		let flow = if hidden || state.gpu.is_none() {
 			state.rating.pause();
 			ControlFlow::Wait
 		} else if state.dirty || content || scroll_anim || cursor_anim || bell_anim {
@@ -7632,8 +7939,15 @@ impl ApplicationHandler<UserEvent> for App {
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,
 		};
+		// wake to let the device go once the window has sat idle long enough
+		let flow = match (flow, idle_wake) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
 		// wake to rotate the wallpaper when its interval is up, even when idle
-		let flow = match (flow, state.wp_next) {
+		// (not while the device is gone: the rebuild picks up where it left off)
+		let flow = match (flow, state.wp_next.filter(|_| state.gpu.is_some())) {
 			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,
@@ -7671,7 +7985,10 @@ impl ApplicationHandler<UserEvent> for App {
 			(other_flow, _) => other_flow,
 		};
 		// slow-tick wake so the VRAM sentinel probe runs even while fully idle
-		let flow = match (flow, state.gfx.is_gl().then_some(state.vram_next)) {
+		let flow = match (
+			flow,
+			(state.gl && state.gpu.is_some()).then_some(state.vram_next),
+		) {
 			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,
@@ -7731,12 +8048,12 @@ impl State {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Caret, CloseScope, ContextMenu, CopyMetrics, Entry, MenuAction, TAB_CLOSE_M, TabEdit,
+		Caret, CloseScope, ContextMenu, CopyMetrics, Entry, Idle, MenuAction, TAB_CLOSE_M, TabEdit,
 		ViewState, accel_at, accel_clash, close_scope, copybox_fit, copybox_place, fit_px,
 		focus_ring, is_copy_chord, key_is_typed, menu_metrics, mia, msub, mta, needs_folder_read,
-		new_window_command, pace_frame, rating_step, remember_resize, rotation_next,
-		settings_after_reload, tab_close_box, tab_command_line, tab_title_w, typed_title,
-		view_menu_items, window_px,
+		new_window_command, pace_frame, rating_step, release_deadline, remember_resize,
+		rotation_next, settings_after_reload, tab_close_box, tab_command_line, tab_title_w,
+		typed_title, view_menu_items, window_px,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
@@ -7776,6 +8093,59 @@ mod tests {
 		let hidden = window_px(80, 24, 8.0, 17.0, 4.0, 20.0);
 		assert_eq!(shown.0, hidden.0);
 		assert_eq!(shown.1 - hidden.1, 24);
+	}
+
+	// The idle release: off by default, never while the window has focus on
+	// screen, and a hidden window waits the shorter of the two times. Everything
+	// that vetoes it is a None, since a deadline that then had to be checked
+	// again elsewhere is how a veto gets forgotten.
+	#[test]
+	fn the_idle_release_waits_on_the_window_and_only_an_unwatched_one() {
+		let since = Instant::now();
+		let idle = |focused, hidden| Idle {
+			focused,
+			hidden,
+			revealed: true,
+			bench_busy: false,
+			since,
+		};
+		let mut cfg = config::Settings::default();
+		assert!(
+			release_deadline(&cfg, &idle(false, true)).is_none(),
+			"off by default"
+		);
+		cfg.idle_release = true;
+		cfg.idle_release_hidden_min = 30;
+		cfg.idle_release_min = 240;
+		assert!(
+			release_deadline(&cfg, &idle(true, false)).is_none(),
+			"focused and on screen"
+		);
+		assert_eq!(
+			release_deadline(&cfg, &idle(false, false)),
+			Some(since + Duration::from_secs(240 * 60))
+		);
+		assert_eq!(
+			release_deadline(&cfg, &idle(false, true)),
+			Some(since + Duration::from_secs(30 * 60))
+		);
+		// minimized with focus still nominally on it: out of sight is what counts
+		assert_eq!(
+			release_deadline(&cfg, &idle(true, true)),
+			Some(since + Duration::from_secs(30 * 60))
+		);
+		let mut owed = idle(false, true);
+		owed.bench_busy = true;
+		assert!(
+			release_deadline(&cfg, &owed).is_none(),
+			"a rating in flight"
+		);
+		let mut unshown = idle(false, true);
+		unshown.revealed = false;
+		assert!(
+			release_deadline(&cfg, &unshown).is_none(),
+			"not on screen yet"
+		);
 	}
 
 	// --fullscreen asks for fullscreen before the first frame, and the window
