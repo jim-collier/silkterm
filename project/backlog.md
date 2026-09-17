@@ -71,21 +71,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
-- 🛠️ nano:
-	- Holding the cursor down to scroll down in a long document (which makes text move up) works well. But,
-	- Holding the cursor up to scroll up in a long document (which makes text move down), is jumpy. Seems to jump ~2 lines at a time.
-		- 20260915-150037: Still jumpy.
-		- 20260917-055036: Still jumpy.
-	- Cause, read off the 20260917 trace: the slide is thrown away and restarted about every other step. Scrolling down, 1 of 77 steps was capped at a single line and the slide ran out to 15.9 lines. Scrolling up, 37 of 79 were capped and it never got past 6.4. A cap lands the view three or four lines forward in one frame, which is the jump.
-	- Why it caps: the reveal strip is dropped whenever the recorded scroll region is not the one it was built for, and the offset is then held to what a single step can fill. nano uses a different region for each direction - rows 2 to 46 scrolling down, 2 to 45 scrolling up, confirmed from its own bytes - and during an up run the recorded region alternates between the two.
-	- Both earlier attempts to reproduce it here missed for the same reason: this box renders nano fast enough to see one step per frame, where the headless rig under software GL swallows five to seven, so the rig never catches two regions in a row and its slide runs clean.
-	- The two regions are named now, off the 20260917-135300 trace: rows 1 to 45 and rows 1 to 46, alternating all the way through an up run. Scrolling down stays on 1 to 46 the whole time and the strip grows to 29 rows. On the up run the strip is back to 1 row on every 1-to-46 frame, which is the restart.
-	- It reproduces on this box now, with no GPU and no nano. Feed a 48-line alt-screen term `ESC[2;45r ESC[2;1H ESC M ESC[1;48r` a few times and the ledger counts up as it should - 1 line, 2, 3. Feed the same thing once with `2;46r` instead and the count drops back to 1, and the next `2;45r` step drops to 1 again. One odd step costs two frames, which is the pattern in the trace.
-	- Where it comes from: `ScrollLedger::note` in the fork treats the region as the scroll's identity and starts over when it changes, and the region it stores is `origin..scroll_region.end` - so a `DECSTBM` ending one row lower reads as a different region. `OffStrip::push_step` then drops the strip for the same reason, and `app_scroll` holds the offset to what the one-row strip can cover.
-	- Not yet explained: what sets the 1-to-46 region partway through an up run. It is the region nano uses for its downward scrolls, but a pty capture of a pure up run shows only `ESC[2;45r`, seventeen times, and never `ESC[2;46r`. This does not block the fix - the slide has to survive an odd step whoever sends it - but it is worth knowing before calling the item closed.
-	- The fix is a judgment about when a region change should invalidate a slide in flight, which is the same question the deferred stacked-tmux item answers with a ledger per region. Worth taking the two together.
-	- Opened: 20260911-124508.
-
 - 🔬 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
 	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even muffer's autocopy doesn't work.)
 	- CTRL+shift+C on selected text doesn't work.
@@ -499,6 +484,20 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ nano:
+	- Holding the cursor down to scroll down in a long document (which makes text move up) works well. But,
+	- Holding the cursor up to scroll up in a long document (which makes text move down), is jumpy. Seems to jump ~2 lines at a time.
+		- 20260915-150037: Still jumpy.
+		- 20260917-055036: Still jumpy.
+	- Reproduced: from the trace, an up run threw the slide away and restarted it about every other step, and each restart put the view three or four lines on in one frame. A down run ran clean.
+	- Cause: nano's edit window is rows 2 to 45 of 48. Whenever the line leaving it is blank, ncurses scrolls rows 2 to 46 instead, taking the blank status row along because it can. The engine's ledger took any region change as a new scroll and started over, the reveal strip did the same, and the offset was then held to the one row the fresh strip could fill. Confirmed from nano's own bytes: no `2;46r` at all on a file without blank lines, four in seventeen steps with a blank line in five.
+	- Why it never showed here: the headless rig renders slowly enough to take five or more steps per frame, so two regions never met between frames. A real GPU sees one step per frame.
+	- Fixed: a scroll of a region sharing rows with the one in flight carries on. The ledger narrows to the rows both scrolls moved and keeps the rows that cross that edge, whether the grid dropped them or they only stopped moving. While a slide is in flight the pane takes the record with the region and direction left open instead of clearing it each frame, and the strip keeps its rows across such a step. A region sharing no rows still starts over, so stacked tmux panes stay their own item.
+	- Pinned by: `a_slide_survives_nanos_odd_region_step` in the pane and `scroll_ledger_carries_on_across_an_overlapping_region` in the engine fork, both watched failing under the old rule.
+	- Not yet seen by eye: a run on the real desktop with a file that has blank lines. The trace should show no `strip=1` frames mid-run.
+	- Opened: 20260911-124508
+	- Closed: 20260917-143700
 
 - ✅ Cursor blink doesn't seem to pause after in inactivity timeout. (Only on focus lost.)
 	- Reproduced: on the rig, a program that moved the cursor every 2.5s kept the animation running for as long as it ran, with nothing typed. A quiet pane stopped on time, which is why this only showed with something on screen doing its own thing.
@@ -4177,6 +4176,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Side-by-side panes are not affected.
 	- Split from the smooth scrolling seams item. It shows on builds from before the scroll ledger too.
 	- The fix is section 5 of `private/panoplia/20260911-113647_scroll-seams.md`: a ledger per region in the engine fork, and one slide per region. That is design work across the fork, the pane and the renderer, so it is deferred until it can be given a run of its own.
+	- Since 20260917 the ledger carries on across a region that shares rows with the one in flight (the nano fix), so only regions sharing none still start it over. Stacked panes are that case: they still need a ledger entry and a slide per region, as section 5 says.
 	- Opened: 20260911-113647
 
 - ✋ Detach a tab into a new window, and dock a tab into an existing window, both with the mouse.

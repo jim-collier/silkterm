@@ -159,13 +159,18 @@ impl OffStrip {
 	}
 
 	// Append the rows a step pushed off `region` (`chunk` in visual order). A
-	// direction flip or another region discards the old strip.
+	// direction flip or a region sharing no row with this one discards the old
+	// strip. A region that overlaps carries on with the rows it has: the ledger
+	// narrows its region to what both scrolls moved and records what crossed
+	// that edge, so the strip stays welded where it was (nano's edit window,
+	// which ncurses extends over the blank status row every so often).
 	fn push_step(&mut self, dir: i8, region: (usize, usize), chunk: Vec<Vec<StripCell>>) {
-		if self.dir != dir || self.region != region {
+		let overlap = region.0 < self.region.1 && self.region.0 < region.1;
+		if self.dir != dir || !overlap {
 			self.clear();
 			self.dir = dir;
-			self.region = region;
 		}
+		self.region = region;
 		if dir > 0 {
 			// content moved up: rows left off the top of the region, the newest
 			// chunk nearest the content = at the strip's bottom
@@ -1303,7 +1308,14 @@ impl Pane {
 				&settings,
 			)
 		});
-		guard.scroll_ledger_mut().clear();
+		// While a slide is in flight the ledger keeps its region and direction, so
+		// a scroll of an overlapping region next frame carries on from it rather
+		// than starting the strip over (nano's odd status-row step).
+		if !cut && (gesture_active || step.is_some()) {
+			guard.scroll_ledger_mut().drain();
+		} else {
+			guard.scroll_ledger_mut().clear();
+		}
 		let step = step.filter(|&step| {
 			slide_is_visible(
 				step,
@@ -5932,6 +5944,70 @@ mod tests {
 		assert!(strip_rows(term.scroll_ledger().rows(), cols, term.colors(), &settings).is_empty());
 	}
 
+	#[test]
+	fn a_slide_survives_nanos_odd_region_step() {
+		// nano scrolling up: ncurses scrolls the edit window (rows 2 to 45 of 48)
+		// and, whenever the line leaving it is blank, the blank status row under
+		// it as well (2 to 46). Each frame the pane reads the ledger, adds its rows
+		// to the strip and grows the slide by the step. The odd step used to start
+		// the ledger and the strip over, and the offset was then held to the one
+		// row the fresh strip could cover: a jump of the whole lag, every other
+		// step. The run opens on the wider region so the strip is also seen
+		// keeping its rows when the ledger narrows.
+		let _g = config::test_store_lock();
+		config::update(config::Settings::default());
+		let (cols, lines) = (12usize, 48usize);
+		let mut term = term_fed(cols, lines, 1000, "\x1b[?1049h");
+		term.set_scroll_ledger_rows(crate::scroll::SLIDE_ROWS);
+		for i in 0..lines {
+			feed(&mut term, &format!("\x1b[{};1Hrow {i}", i + 1));
+		}
+		let settings = config::Settings::default();
+		let mut strip = OffStrip::new();
+		let mut scroll = crate::scroll::Scroll::new();
+		let mut offsets = Vec::new();
+		let ends = [46, 45, 45, 46, 45, 45, 46, 46, 45];
+		for end in ends {
+			feed(&mut term, &format!("\x1b[2;{end}r\x1b[2;1H\x1bM\x1b[1;48r"));
+			let ledger = term.scroll_ledger();
+			let region = ledger.region().start.0 as usize..ledger.region().end.0 as usize;
+			let step = ledger.lines();
+			let chunk = strip_rows(ledger.rows(), cols, term.colors(), &settings);
+			term.scroll_ledger_mut().drain(); // a slide is in flight from here on
+			assert_eq!(step, -1);
+			let want = if offsets.is_empty() { end } else { 45 };
+			assert_eq!(region, 1..want, "narrowed to what both moved");
+			strip.push_step(-1, (region.start, region.end), chunk);
+			let rows = (region.end - region.start) as f32;
+			scroll.app_scroll(step as f32, strip.len() as f32, rows);
+			offsets.push(scroll.app_offset());
+		}
+		// every step grew the slide by its line; none pulled it back toward rest
+		let expect: Vec<f32> = (1..=ends.len()).map(|n| -(n as f32)).collect();
+		assert_eq!(offsets, expect);
+		// the strip holds the rows in the order they sat, nearest the content first:
+		// the row that left row 44 each step, plus the one row 45 gave up when the
+		// region narrowed
+		let text: Vec<String> = strip
+			.rows
+			.iter()
+			.map(|r| {
+				r.iter()
+					.map(|c| c.c)
+					.collect::<String>()
+					.trim_end()
+					.to_string()
+			})
+			.collect();
+		assert_eq!(text.len(), ends.len() + 1);
+		assert_eq!(text.first().map(String::as_str), Some("row 36"));
+		assert_eq!(text.last().map(String::as_str), Some("row 45"));
+		assert!(
+			text.windows(2).all(|w| w[0] < w[1]),
+			"screen order: {text:?}"
+		);
+	}
+
 	fn cells(text: &str, cols: usize) -> Vec<StripCell> {
 		(0..cols)
 			.map(|i| StripCell {
@@ -6310,9 +6386,17 @@ mod tests {
 		s.push_step(-1, (0, 10), vec![strip_row('c')]);
 		assert_eq!(strip_tags(&s), "c");
 		assert_eq!(s.dir, -1);
-		// so does a step from another region
+		// Until the ledger merged overlapping regions, so did a step from any
+		// other region:
+		//   s.push_step(-1, (1, 9), vec![strip_row('d')]);
+		//   assert_eq!(strip_tags(&s), "d");
+		// Now one that shares rows carries on (the ledger has narrowed to what
+		// both moved), and only one sharing none starts over.
 		s.push_step(-1, (1, 9), vec![strip_row('d')]);
-		assert_eq!(strip_tags(&s), "d");
+		assert_eq!(strip_tags(&s), "dc");
+		assert_eq!(s.region, (1, 9));
+		s.push_step(-1, (9, 12), vec![strip_row('e')]);
+		assert_eq!(strip_tags(&s), "e");
 		// the cap trims the rows farthest from the content (oldest)
 		let mut long = OffStrip::new();
 		for i in 0..(OffStrip::CAP + 3) {
