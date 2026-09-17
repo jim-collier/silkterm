@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+
+##	- Purpose:
+##		CARGO_TARGET_DIR may be set, and may be absolute. A stage that assumes
+##		'target' builds and then looks for its binary where it was never put -
+##		the Windows installer step did exactly that, warned, and went on, so a
+##		release could go out with no installers in it.
+##		build_packages() is lifted out of cicd.bash and run against the real
+##		template and makensis, once with each shape of target directory.
+##	- History: At bottom of file.
+
+##	Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
+##	SPDX-License-Identifier: GPL-2.0-or-later
+
+set -euo pipefail
+meDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+realRoot="$(cd "${meDir}/../../.." && pwd)"
+
+failures=0
+fCheck(){ local -r what="${1}"; shift; if "${@}"; then echo "  ok   ${what}"; else echo "  FAIL ${what}"; failures=$((failures + 1)); fi; }
+
+if ! command -v makensis >/dev/null 2>&1; then
+	echo "  skip installer step (no makensis)"
+else
+	work="$(mktemp -d)"
+	trap 'rm -rf "${work}"' EXIT
+
+	## A stand-in repository holding nothing but the template the step reads.
+	fakeRoot="${work}/repo"
+	mkdir -p "${fakeRoot}/cicd/packaging/windows"
+	cp "${realRoot}/cicd/packaging/windows/installer.nsi.in" "${fakeRoot}/cicd/packaging/windows/"
+
+	## The step's world, as cicd.bash sets it up around the call.
+	PACKAGE_ENABLE=1
+	EXE_NAME="silkterm"
+	NSIS_TEMPLATE="cicd/packaging/windows/installer.nsi.in"
+	RELEASE_ARTIFACT_DIR="cicd/artifacts/release"   ## only ever printed
+	ver="0.0.1"
+	root="${fakeRoot}"
+	write_sums(){ :; }
+	fEcho(){ echo "    $*"; }
+	fEcho_Clean(){ echo "    $*"; }
+	eval "$(sed -n '/^build_packages(){/,/^}/p' "${realRoot}/cicd/cicd.bash")"
+
+	## $1 is the binary path as stage 5 recorded it - relative to the repository
+	## with no CARGO_TARGET_DIR, absolute with one.
+	fRunStep() {
+		local bin="$1" out="$2"
+		local abs="${bin}"
+		[[ "${abs}" = /* ]] || abs="${fakeRoot}/${abs}"
+		mkdir -p "$(dirname "${abs}")"
+		printf 'MZ stand-in\n' > "${abs}"
+		art_dir="${out}"
+		mkdir -p "${art_dir}"
+		built_arts=("windows-x86_64|${bin}")
+		build_packages > "${work}/step.log" 2>&1 || true
+	}
+
+	fRunStep "target/x86_64-pc-windows-gnu/release/silkterm.exe" "${work}/art-rel"
+	fCheck "a relative target dir still makes the installer" \
+		test -f "${work}/art-rel/silkterm-0.0.1-windows-x86_64-setup.exe"
+
+	fRunStep "${work}/elsewhere/x86_64-pc-windows-gnu/release/silkterm.exe" "${work}/art-abs"
+	fCheck "an absolute target dir makes it too" \
+		test -f "${work}/art-abs/silkterm-0.0.1-windows-x86_64-setup.exe"
+	if [[ ! -f "${work}/art-abs/silkterm-0.0.1-windows-x86_64-setup.exe" ]]; then
+		sed -n '1,20p' "${work}/step.log" | sed 's/^/    /'
+	fi
+fi
+
+## The Windows pipeline looks for the same binaries and has the same rule.
+if command -v pwsh >/dev/null 2>&1; then
+	rc=0
+	pwsh -NoProfile -File "${meDir}/target-dir.ps1" || rc=$?
+	fCheck "cicd-win.ps1 resolves the target directory the same way" test "${rc}" -eq 0
+else
+	echo "  skip cicd-win.ps1 target dir (no pwsh)"
+fi
+
+if ((failures)); then echo "${failures} failed"; exit 1; fi
+echo "all passed"
+
+##	History:
+##		- 20260917 JC: Created.

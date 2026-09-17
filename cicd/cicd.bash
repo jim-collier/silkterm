@@ -744,7 +744,7 @@ fi
 build_packages(){
 	((PACKAGE_ENABLE)) || { fEcho_Clean "packages disabled"; return 0; }
 	[[ -n "${art_dir:-}" ]] || { fEcho "WARNING: packages skipped (no RELEASE_ARTIFACT_DIR)"; return 0; }
-	local pair osarch bin triple out nsi rc made=0
+	local pair osarch bin srcexe triple out nsi rc made=0
 	local rpmver="${ver//-/\~}"   ## RPM versions forbid '-' (it splits version-release); 1.0.0-beta1 -> 1.0.0~beta1
 	for pair in "${built_arts[@]}"; do
 		osarch="${pair%%|*}"; bin="${pair#*|}"
@@ -781,8 +781,12 @@ build_packages(){
 			if command -v makensis >/dev/null 2>&1 && [[ -f "${root}/${NSIS_TEMPLATE}" ]]; then
 				out="${art_dir}/${EXE_NAME}-${ver}-${osarch}-setup.exe"
 				nsi="$(mktemp --suffix=.nsi)"
+				## An absolute CARGO_TARGET_DIR already gives an absolute path, and
+				## prefixing the repo root then names a file that was never there.
+				srcexe="${bin}"
+				[[ "$srcexe" = /* ]] || srcexe="${root}/${srcexe}"
 				sed -e "s|@VERSION@|${ver}|g" -e "s|@ARCH@|${osarch}|g" \
-					-e "s|@SRCEXE@|${root}/${bin}|g" -e "s|@OUTFILE@|${out}|g" \
+					-e "s|@SRCEXE@|${srcexe}|g" -e "s|@OUTFILE@|${out}|g" \
 					"${root}/${NSIS_TEMPLATE}" > "${nsi}"
 				rc=0; makensis -V2 "${nsi}" >/dev/null || rc=$?
 				rm -f "${nsi}"
