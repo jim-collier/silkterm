@@ -262,8 +262,8 @@ trap 'rc=$?; printf "\n[ CICD ABORTED (exit %s) at line %s: %s ]\n" "$rc" "$LINE
 
 ## Gate mode: the local merge gate (what a bare-bones hosted CI would run).
 ## fmt --check + clippy -D warnings + tests, fail-fast, nothing mutated, no
-## artifacts/log-tee/publish. Wired as the pre-push hook for main/dev, so
-## nothing reaches an integration branch unverified even outside a full run.
+## artifacts/log-tee/publish. Wired as the pre-push hook for main, so nothing
+## reaches the release branch unverified even outside a full run.
 if ((gate)); then
 	fSection "Gate 1/3  Format check"
 	if declare -p FMT_CHECK_CMD &>/dev/null && ((${#FMT_CHECK_CMD[@]})); then
