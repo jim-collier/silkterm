@@ -82,6 +82,8 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Waiting on details from the machine it shows on: run `SILK_SCROLLDBG=1 silkterm 2> scroll.log`, hold the up arrow in nano for a few seconds, and keep the log. The nanorc in use and the key repeat rate would help too.
 	- Opened: 20260911-124508.
 
+- 🔘 Cursor blink doesn't seem to pause after in inactivity timeout. (Only on focus lost.)
+
 - 🔘 With two tmux panes stacked and both printing, only one pane slides at a time, and the other jumps whole lines. Each time the other pane scrolls, the slide in progress jumps the rest of the way.
 	- Side-by-side panes are not affected.
 	- Split from the smooth scrolling seams item. It shows on builds from before the scroll ledger too.
@@ -130,10 +132,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- A font list that is still an old default but written in single quotes becomes the current default. A renamed setting under a commented-out heading can get renamed after all.
 	- A save tidies quotes and indents, and the renames at launch look at both.
 	- Opened: 20260911-012838
-
-- 🔘 A test run can rewrite a fuzz corpus seed in place.
-	- After one full run, `cicd/tests/fuzz-corpus/config/shipped-default.shcl` had its shcl banner line refreshed to the current wording and nothing else changed. The next run left it alone. Which test writes through it was not found.
-	- Opened: 20260917-101707
 
 - 🔘 A performance test run while the monitor is asleep can save a rating that is too low.
 	- The display then shows one frame a second, so the first profile reads as hopeless and Standard terminal is saved, with no wallpaper from then on.
@@ -499,6 +497,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ A test run can rewrite a fuzz corpus seed in place.
+	- Reproduced: after one full run, `cicd/tests/fuzz-corpus/config/shipped-default.shcl` had its shcl banner line refreshed to the current wording and nothing else changed. The next run left it alone.
+	- Cause: not a test. Every write SilkTerm makes to a settings file goes through one function, and a trap in it fired for no corpus path across all 661 tests. Nothing in the pipeline names the file either. The only way to get that exact edit is to open the seed as a live settings file, which `--config` pointed at it does, and a launch refreshes the footer of any config it opens.
+	- Fixed: the readme says the corpus is read-only data, and why a seed that is a valid settings file is the easy one to forget.
+	- Pinned by: the pipeline hashes the corpus either side of the test stage and fails on a difference. Watched passing on an untouched corpus and firing on a seed written through.
+	- Left alone: the seed itself, which is already at the state a launch leaves behind, so the symptom cannot recur until the footer wording changes again.
+	- Opened: 20260917-101707
+	- Closed: 20260917-131500
 
 - ✅ A variable in a shell's own arguments is still expanded when it is spelled the way this platform spells it.
 	- Reproduced: `bash -c 'echo $FOO'` on Linux, or `cmd /k echo %PATH%` on Windows, reached the program with that word already replaced. Quoting did not protect it, and there was no way to write a literal `$` or `%`.
