@@ -82,8 +82,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Waiting on details from the machine it shows on: run `SILK_SCROLLDBG=1 silkterm 2> scroll.log`, hold the up arrow in nano for a few seconds, and keep the log. The nanorc in use and the key repeat rate would help too.
 	- Opened: 20260911-124508.
 
-- 🔘 Cursor blink doesn't seem to pause after in inactivity timeout. (Only on focus lost.)
-
 - 🔘 With two tmux panes stacked and both printing, only one pane slides at a time, and the other jumps whole lines. Each time the other pane scrolls, the slide in progress jumps the rest of the way.
 	- Side-by-side panes are not affected.
 	- Split from the smooth scrolling seams item. It shows on builds from before the scroll ledger too.
@@ -497,6 +495,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ Cursor blink doesn't seem to pause after in inactivity timeout. (Only on focus lost.)
+	- Reproduced: on the rig, a program that moved the cursor every 2.5s kept the animation running for as long as it ran, with nothing typed. A quiet pane stopped on time, which is why this only showed with something on screen doing its own thing.
+	- Cause: the stop was measured from the last time the cursor moved, not the last time the user did anything. A clock in a prompt, or any TUI on its own timer, resets that every few seconds. Focus loss parks by a different route, which is why that half worked.
+	- Fixed: the pane remembers when it was last worth animating for - input or a refocus - and the long stop reads that. The resume delay after typing still reads the cursor's own stillness, which is what it is for.
+	- Pinned by: `pause_state_long_idle_stops_although_a_program_keeps_moving_the_cursor`, watched failing on the old rule. The existing long-idle test now drives the input clock and fails on it too.
+	- Measured: with the fix, the same scene renders only the three frames each nudge's slide needs and parks at full size in between.
+	- Opened: 20260917
+	- Closed: 20260917-133000
 
 - ✅ A test run can rewrite a fuzz corpus seed in place.
 	- Reproduced: after one full run, `cicd/tests/fuzz-corpus/config/shipped-default.shcl` had its shcl banner line refreshed to the current wording and nothing else changed. The next run left it alone.
