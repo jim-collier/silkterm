@@ -490,6 +490,14 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 #### Done - Bugs
 
+- ✅ Clicking into a Settings text box no longer selected its value.
+	- Reproduced: on the reference box, a click in the right-hand part of the "File or folder" box with a long path in it. The selection ran off to the end of the text under a stationary pointer, and the release left a caret instead of the whole value selected. A box narrow enough to hold its value was fine, which is why it looked intermittent.
+	- Cause: a drag held past the edge of a box keeps selecting while the view crawls, and the pointer is replayed each frame to do that. It was replayed inside the box too. A click near the right edge scrolls the view to keep the caret in sight, the replay then read a later character under the same pointer, that scrolled the view further, and round it went.
+	- Fixed: the pointer is only replayed while it sits past the left or right edge of the box, which is the case the replay exists for.
+	- Pinned by: `a_click_into_a_field_selects_all_on_release` in `settings_ui.rs`, watched failing with the gate removed.
+	- Opened: 20260917
+	- Closed: 20260917
+
 - ✅ nano:
 	- Holding the cursor down to scroll down in a long document (which makes text move up) works well. But,
 	- Holding the cursor up to scroll up in a long document (which makes text move down), is jumpy. Seems to jump ~2 lines at a time.
@@ -1678,6 +1686,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Enter in the Settings dialog is OK, and walking onto a text box selects its value.
+	- Enter used to close the open field and stop there, so OK took a second press. It now closes the field and fires OK, the way it does in any other dialog. A menu, a dropdown popup and the prompt box still take Enter for themselves.
+	- Tab or an arrow onto a text or color box opens it with the value selected, so typing replaces it. That already happened on a click, on Space, and on the first character typed; the field just sat shut and blank until then.
+	- Left alone: a slider's number box. Left, Right, Up and Down step its value, which an open field would take for caret movement. Space or a click still opens it.
+	- Decided: Esc from inside a field is the dialog's Cancel now, in one press. Closing the field was all it used to do, and a typed value applies as it is typed, so there was nothing to take back - and with fields opening on the way past, Esc would have been eaten on every one.
+	- Pinned by: `enter_in_a_field_is_the_dialogs_ok`, `keyboard_focus_opens_a_text_field_with_the_value_selected` and `escape_from_inside_a_field_cancels_the_dialog`, all watched failing against the old behavior.
+	- Opened: 20260917
+	- Closed: 20260917
 
 - ✅ Minimap on by default.
 	- Done: `scroll.minimap.enabled` ships true. An existing config's commented line is refreshed, and one set to false by hand stays false. The scroll harness pins it off, since its scenes watch the text.

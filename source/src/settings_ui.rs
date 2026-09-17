@@ -1468,6 +1468,35 @@ impl SettingsDialog {
 		};
 		self.focus = Some(ring[next]);
 		self.scroll_focus_into_view();
+		self.open_focused_field();
+	}
+	// A text field the keyboard walks onto opens with its value selected, the way
+	// any other dialog does it: typing replaces, arrows keep. The mouse paths open
+	// their own field, so this is only for focus arriving by key.
+	//
+	// A slider's number box is left shut on purpose. It is a spinbox, and Left /
+	// Right / Up / Down step its value - which an open field would take for caret
+	// movement. Space or a click still opens it.
+	fn open_focused_field(&mut self) {
+		let Some(Focus::Row(i, part)) = self.focus else {
+			return;
+		};
+		if self.disabled(self.part_key(i, part)) {
+			return;
+		}
+		match self.specs[i].kind {
+			Kind::Text | Kind::Color => self.open_edit(i, true),
+			Kind::ShellList => match shell_stop(part, self.edited.shells.len()) {
+				ShellStop::Entry(k, ShellPart::Name) => {
+					self.open_edit(shell_field_row(k, false), true);
+				}
+				ShellStop::Entry(k, ShellPart::Command) => {
+					self.open_edit(shell_field_row(k, true), true);
+				}
+				_ => {}
+			},
+			_ => {}
+		}
 	}
 	// Scroll the rows region so a focused control row is fully visible (buttons
 	// are fixed chrome - always visible).
@@ -1520,6 +1549,7 @@ impl SettingsDialog {
 		self.hscroll = 0.0;
 		self.drag = None;
 		self.focus = self.first_focus();
+		self.open_focused_field();
 	}
 	// The Tab key: Ctrl switches tabs, otherwise walk control focus (Shift = back).
 	pub fn key_tab(&mut self) {
@@ -4122,9 +4152,20 @@ impl SettingsDialog {
 	// caller should schedule: fast while something moves, blink-rate while an
 	// idle edit pulses, None when there's nothing to animate.
 	fn animate_dip(&mut self, dt: f32, measure: &mut impl FnMut(&str) -> f32) -> Option<u64> {
-		if self.edit_drag.is_some() {
+		// Edge autoscroll: a drag held past the box keeps selecting while the view
+		// crawls, so the pointer is replayed each frame. Only past the box, though.
+		// Replaying it inside fed the view ease back into the caret: a click near
+		// the right edge of a value wider than its box scrolled the view, the
+		// replay then read a later character under the same pointer, that scrolled
+		// the view further, and the selection ran off to the end of the text.
+		if let Some(row) = self.edit_drag {
 			let (mx, my) = self.mouse;
-			self.mouse_move_dip(mx, my, measure);
+			let past_edge = self
+				.field_rect(row)
+				.is_some_and(|f| mx < f.x || mx > f.x + f.w);
+			if past_edge {
+				self.mouse_move_dip(mx, my, measure);
+			}
 		}
 		let row = self.edit.as_ref().map(|e| e.row)?;
 		let field = self.field_rect(row)?;
@@ -4580,16 +4621,17 @@ impl SettingsDialog {
 		self.emenu = None;
 	}
 
-	// Esc cancels the dialog; Enter commits an active hex edit (or OK otherwise).
+	// Esc cancels the dialog. A menu, a popup or the prompt box eats it first.
+	//
+	// An open field does not. Closing the field was all it used to do, and since
+	// a typed value applies as it is typed there was nothing to take back - so
+	// the press bought a lost caret and a second Esc. Now that walking onto a
+	// field opens it, that would have been every field on the way past.
 	pub fn key_escape(&mut self) -> Action {
-		// Esc closes the field context menu / dropdown popup first, not the dialog
 		if self.emenu.take().is_some() || self.open.take().is_some() {
 			Action::None
 		} else if self.prompt.is_some() {
-			self.prompt_close(); // then the prompt box, still not the dialog
-			Action::None
-		} else if self.edit.is_some() {
-			self.edit = None;
+			self.prompt_close();
 			Action::None
 		} else {
 			Action::Cancel
@@ -4620,8 +4662,12 @@ impl SettingsDialog {
 			self.dd_commit();
 			Action::None
 		} else if self.edit.is_some() {
+			// Enter in a field is the dialog's OK, the way it is in any other
+			// dialog. It used to close the field and stop there, so OK took two
+			// presses. Values apply as they are typed, so closing the field first
+			// only drops the caret.
 			self.commit_edit();
-			Action::None
+			Action::Ok
 		} else if let Some(Focus::Button(b)) = self.focus {
 			self.buttons()[b].0 // a focused footer button
 		} else if let Some(Focus::Row(i, p)) = self.focus {
@@ -7695,8 +7741,8 @@ mod tests {
 		d.char_input('9');
 		d.char_input('9');
 		assert_eq!(d.edited.font_size, 40.0);
-		// Enter commits; field closes and shows the clamped value
-		assert_eq!(d.key_enter(), super::Action::None);
+		// Enter commits and is the dialog's OK; the field closes on the clamped value
+		assert_eq!(d.key_enter(), super::Action::Ok);
 		assert!(d.edit.is_none());
 	}
 
@@ -8627,5 +8673,127 @@ mod tests {
 			tight.x + tight.w + 2.0 < d.valbox(i).x,
 			"and clear of the value field"
 		);
+	}
+
+	// A click into a field selects the whole value on release, so the next
+	// keystroke replaces it. The awkward case is a value wider than its box: the
+	// view scrolls under the caret, and the frames between press and release used
+	// to drag the selection away with it.
+	// press, hold for a few frames, release - with the pointer put there first,
+	// the way the window delivers it
+	fn click(d: &mut SettingsDialog, x: f32, y: f32, m: &mut impl FnMut(&str) -> f32) {
+		d.last_click = None;
+		d.mouse_move(x, y, m);
+		d.mouse_down(x, y, m);
+		for _ in 0..8 {
+			d.animate(0.016, m);
+		}
+		d.mouse_up(x, y);
+	}
+
+	#[test]
+	fn a_click_into_a_field_selects_all_on_release() {
+		use super::lay;
+		let (mut d, i) = mk_text_edit("old.png");
+		let mut m = |s: &str| s.chars().count() as f32;
+		// short value: anywhere in the box
+		d.edit = None;
+		let f = d.textbox(i);
+		click(&mut d, f.x + f.w / 2.0, f.y + f.h / 2.0, &mut m);
+		assert_eq!(d.selected_text().as_deref(), Some("old.png"));
+
+		// long value, clicked near the right edge - where the view has to scroll
+		let (mut d, i, _) = mk_long_text_edit('y');
+		let want = d.edit.as_ref().unwrap().buf.clone();
+		d.edit = None;
+		let f = d.textbox(i);
+		click(
+			&mut d,
+			f.x + f.w - lay().field_pad - 2.0,
+			f.y + f.h / 2.0,
+			&mut m,
+		);
+		assert_eq!(d.selected_text().as_deref(), Some(want.as_str()));
+	}
+
+	// Walking onto a text field opens it with the value selected, so typing
+	// replaces it. A slider is deliberately not in that set.
+	#[test]
+	fn keyboard_focus_opens_a_text_field_with_the_value_selected() {
+		use super::{Focus, Key};
+		let mut d = mk_dialog(2000.0);
+		let i = d.specs.iter().position(|s| s.key == Key::BgImage).unwrap();
+		d.tab = d.specs[i].tab;
+		d.edited.wallpaper_raw = "old.png".to_string();
+		d.focus = None;
+		for _ in 0..200 {
+			d.key_tab();
+			if d.focus == Some(Focus::Row(i, 0)) {
+				break;
+			}
+		}
+		assert_eq!(d.focus, Some(Focus::Row(i, 0)), "never reached the row");
+		assert_eq!(d.selected_text().as_deref(), Some("old.png"));
+		d.char_input('n');
+		assert_eq!(d.edited.wallpaper_raw, "n");
+		// and walking off closes it again
+		d.key_tab();
+		assert!(d.edit.as_ref().is_none_or(|e| e.row != i));
+
+		// a slider's number box stays shut, or Left/Right would move a caret
+		// instead of stepping the value
+		let mut d = mk_dialog(2000.0);
+		let i = d
+			.specs
+			.iter()
+			.position(|s| matches!(s.kind, super::Kind::Slider { .. }) && !d.disabled(s.key))
+			.unwrap();
+		d.tab = d.specs[i].tab;
+		d.focus = None;
+		for _ in 0..200 {
+			d.key_tab();
+			if d.focus == Some(Focus::Row(i, 0)) {
+				break;
+			}
+		}
+		assert_eq!(d.focus, Some(Focus::Row(i, 0)), "never reached the slider");
+		assert!(d.edit.is_none());
+	}
+
+	// Esc from inside a field is the dialog's Cancel, not "shut the field".
+	#[test]
+	fn escape_from_inside_a_field_cancels_the_dialog() {
+		use super::Action;
+		let (mut d, _) = mk_text_edit("old.png");
+		assert!(d.edit.is_some());
+		assert_eq!(d.key_escape(), Action::Cancel);
+	}
+
+	// Enter in a field is OK, not "close the field and wait for another Enter".
+	#[test]
+	fn enter_in_a_field_is_the_dialogs_ok() {
+		use super::{Action, Key};
+		let (mut d, _) = mk_text_edit("old.png");
+		d.char_input('n');
+		assert_eq!(d.key_enter(), Action::Ok);
+		assert!(d.edit.is_none());
+		assert_eq!(d.edited.wallpaper_raw, "n");
+
+		// same from a hex field, and from a shells-grid field
+		let mut d = mk_dialog(2000.0);
+		let i = d.specs.iter().position(|s| s.key == Key::ColFg).unwrap();
+		d.tab = d.specs[i].tab;
+		d.open_edit(i, true);
+		assert_eq!(d.key_enter(), Action::Ok);
+
+		let mut d = mk_dialog(2000.0);
+		let i = d
+			.specs
+			.iter()
+			.position(|s| matches!(s.kind, super::Kind::ShellList))
+			.unwrap();
+		d.tab = d.specs[i].tab;
+		d.open_edit(super::shell_field_row(0, false), true);
+		assert_eq!(d.key_enter(), Action::Ok);
 	}
 }
