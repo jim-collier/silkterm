@@ -71,10 +71,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
-- ✋ nano:
+- 🔘 nano:
 	- Holding the cursor down to scroll down in a long document (which makes text move up) works well. But,
 	- Holding the cursor up to scroll up in a long document (which makes text move down), is jumpy. Seems to jump ~2 lines at a time.
 		- 20260915-150037: Still jumpy.
+		- 20260917-055036: Still jumpy.
 	- Not reproduced on the Linux box. nano scrolls one row per key the same way in both directions, with or without soft wrap, and holding either arrow moves the text at the same even rate.
 	- 20260915: Checked again on the Linux box at its own key repeat rate (45 a second), in plain and highlighted files, and with nano's scroll sent as a redraw the way Windows sends it. Both directions move the same on every path.
 	- Which machine it shows on matters. On Windows, and over some ssh or WSL setups, the terminal sees a redraw rather than a scroll.
@@ -366,6 +367,22 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 - 🔘 Make text scrim falloff "Exponential" more agressive. E.g., increase the exponent.
 
+- 🔘 Release the GPU device after a long idle (e.g. 60 minutes).
+	- Drop the wgpu device and everything uploaded on it once the window has been idle long enough, and rebuild it when needed again. This is to lower total GPU memory footprint, esp. with multiple terminals open (e.g. for days).
+	- Idle = unfocused plus no PTY output, not `State::hidden()`. Occlusion is not reported by every WM, so `hidden()` only means minimized on the reference box. `TermInstance::note_activity` is the freshness signal.
+	- Deadline goes in the `about_to_wait` wake chain as one more `Option<Instant>` arm, beside `wp_next` and `vram_next`.
+	- Rebuild triggers on `Focused(true)` / `Occluded(false)` / pointer entering, which is where the GL `vram_next` probe already fires `recover_gpu`. Both render entry points need it, the way `freeze_sync` is reached from both.
+	- Vetoed while a dialog is open (main window holds the GL/EGL context), and while a rating run is in flight.
+	- First step is measuring the rebuild through the existing `recover_gpu` path. Extrapolating from the cold dialog context gives ~300-500ms, unmeasured.
+	- Need to figure out whether the X11 transparent path can survive a teardown at all - the ARGB visual belongs to the window, so it may be native-backend only.
+		- If not, may need to disable the feature when transparency is enabled in the program, with flyover text explaining why.
+	- Opened: 20260905-181131.
+	- Settings:
+		- On "Window" tab.
+		- Enable/disable checkbox. (Disabled by default.)
+		- Idle minutes when definitely hidden (default 30).
+		- Idle minutes otherwise (default 240
+
 - 🔘 Themes:
 	- 🔘 A fourth built-in theme. Pastel is the idea: a pleasing light pastel on a dark gray background carrying a subtle tint of the complementary color. Solarized is the other candidate.
 	- Opened: 20260628-083740
@@ -379,20 +396,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- 🔘 A hex field should select its contents when it takes focus rather than emptying itself, which is what a text box normally does.
 
 - 🔘 Allow programs to change the tab title.
-
-- 🔘 Release the GPU device after a long idle (e.g. 60 minutes).
-	- Drop the wgpu device and everything uploaded on it once the window has been idle long enough, and rebuild it when needed again. This is to lower total GPU memory footprint, esp. with multiple terminals open (e.g. for days).
-	- Idle = unfocused plus no PTY output, not `State::hidden()`. Occlusion is not reported by every WM, so `hidden()` only means minimized on the reference box. `TermInstance::note_activity` is the freshness signal.
-	- Deadline goes in the `about_to_wait` wake chain as one more `Option<Instant>` arm, beside `wp_next` and `vram_next`.
-	- Rebuild triggers on `Focused(true)` / `Occluded(false)` / pointer entering, which is where the GL `vram_next` probe already fires `recover_gpu`. Both render entry points need it, the way `freeze_sync` is reached from both.
-	- Vetoed while a dialog is open (main window holds the GL/EGL context), and while a rating run is in flight.
-	- First step is measuring the rebuild through the existing `recover_gpu` path. Extrapolating from the cold dialog context gives ~300-500ms, unmeasured.
-	- Need to figure out whether the X11 transparent path can survive a teardown at all - the ARGB visual belongs to the window, so it may be native-backend only.
-	- Opened: 20260905-181131.
-	- Setting:
-		- On "Window" tab.
-		- Enable/disable checkbox. (Disabled by default.)
-		- Idle minutes (default 60).
 
 - NOTE: Stop here to work on releasing RC1.
 
