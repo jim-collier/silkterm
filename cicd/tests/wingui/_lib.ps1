@@ -224,17 +224,28 @@ function fWaitOther($p, $known, $seconds = 20) {
 ##	owns either, so a bare SetForegroundWindow is refused - press a harmless key
 ##	first, and borrow the current owner's input queue.
 function fFocus($h) {
+	$escaped = @()
 	for ($try = 0; $try -lt 4; $try++) {
 		##	Search and the Start menu take the foreground and hold it, and no amount
-		##	of asking gets it back while they are open. Escape closes them.
+		##	of asking gets it back while they are open. Escape closes them. A Search
+		##	host left over from the logon can ignore Escape and sit there for hours,
+		##	so one that is still in front on the next try is ended instead. All of
+		##	these come back on demand, so nothing is lost.
 		$fg = [Silk.Win]::GetForegroundWindow()
 		if ($fg -ne [IntPtr]::Zero -and -not (fForegroundIsOurs $h)) {
 			$owner = 0
 			[void][Silk.Win]::GetWindowThreadProcessId($fg, [ref]$owner)
 			$name = (Get-Process -Id $owner -ErrorAction SilentlyContinue).ProcessName
 			if ($name -in @("SearchHost", "StartMenuExperienceHost", "ShellExperienceHost", "TextInputHost")) {
-				[SilkKeys]::Tap([uint16]0x1B)        ## escape
-				Start-Sleep -Milliseconds 500
+				if ($owner -in $escaped) {
+					Stop-Process -Id $owner -Force -ErrorAction SilentlyContinue
+					fNote "ended $name $owner, which kept the foreground after Escape"
+					Start-Sleep -Milliseconds 1500
+				} else {
+					[SilkKeys]::Tap([uint16]0x1B)        ## escape
+					$escaped += $owner
+					Start-Sleep -Milliseconds 500
+				}
 			}
 		}
 		[void][Silk.Win]::ShowWindow($h, 9)          ## SW_RESTORE
