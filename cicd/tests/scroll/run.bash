@@ -233,10 +233,18 @@ run_scene(){
 	## actually producing frames, then stop; bounded by a generous ceiling so a truly
 	## dead binary still exits. The scene self-scrolls forever, so more wall time just
 	## means more frames - never a hang.
-	local want=60 ceiling=$((settle + capture + 60)) frames=0 done_at=0
+	local want=60 ceiling=$((settle + capture + 60)) frames=0 done_at=0 lead=0 marked=0
 	SECONDS=0
 	while ((SECONDS < ceiling)); do
 		kill -0 "$pid" 2>/dev/null || break
+		## The chrome scene prints its history and then sleeps before the loop
+		## under test starts. A renderer quick off the mark traces that burst
+		## easing, with no block on screen to hold, and it used to fill most of
+		## the frames judged. Count only what comes after, taken just before the
+		## loop can have started.
+		if [[ "$mode" == pinned ]] && ((! marked && SECONDS >= settle - 1)); then
+			lead=$(grep -c SCROLLDBG "$trace" 2>/dev/null || true); lead=${lead:-0}; marked=1
+		fi
 		if [[ "$mode" == still ]]; then
 			## A still screen builds only when something changes, so it may never
 			## reach the frame count. Stop a few seconds after the swap instead,
@@ -245,6 +253,8 @@ run_scene(){
 			((done_at && SECONDS >= done_at)) && break
 		else
 			frames=$(grep -c SCROLLDBG "$trace" 2>/dev/null || true); frames=${frames:-0}
+			frames=$((frames - lead))
+			[[ "$mode" != pinned ]] || ((marked)) || frames=0
 			((frames >= want)) && break
 		fi
 		sleep 0.5
@@ -254,7 +264,7 @@ run_scene(){
 
 	((verbose)) && fEcho_Clean "  ${label}: $(grep -c SCROLLDBG "$trace" 2>/dev/null || echo 0) trace frames"
 	local rc=0
-	python3 "${meDir}/analyze.py" --mode "$mode" --expect-st "$est" --expect-sb "$esb" --label "$label" <"$trace" \
+	python3 "${meDir}/analyze.py" --mode "$mode" --expect-st "$est" --expect-sb "$esb" --label "$label" --skip-frames "$lead" <"$trace" \
 		| sed 's/^/  /' || rc=$?
 	case "$rc" in
 		0) pass=$((pass + 1)) ;;

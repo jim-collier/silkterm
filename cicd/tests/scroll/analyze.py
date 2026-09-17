@@ -53,6 +53,8 @@ def main() -> int:
     ap.add_argument("--expect-sb", type=int, default=-1)
     ap.add_argument("--label", default="scene")
     ap.add_argument("--eps", type=float, default=0.02)
+    # frames traced before the scene's loop began, which the check must not judge
+    ap.add_argument("--skip-frames", type=int, default=0)
     a = ap.parse_args()
 
     frames = []
@@ -70,6 +72,8 @@ def main() -> int:
                     "ob": int(m.group(10) or 0),
                 }
             )
+
+    frames = frames[a.skip_frames:]
 
     def out(tag, msg):
         print(f"[ {tag} {a.label}: {msg} ]")
