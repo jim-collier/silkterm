@@ -132,6 +132,9 @@ cat >"$cfg" <<-'SHCL'
 	performance.automatic: false
 	performance.profile: custom
 	scroll.smooth_apps: true
+	## The scenes watch the text. A minimap column would add a strip that moves
+	## on its own schedule.
+	scroll.minimap.enabled: false
 	transparency.enabled: false
 	text.scrim.enabled: false
 	wallpaper.fallback_builtin: false

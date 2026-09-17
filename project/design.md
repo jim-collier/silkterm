@@ -242,7 +242,7 @@ It is switchable (`smooth_scroll_apps`, on by default).
 
 ### Minimap
 
-An optional sidebar showing the whole scroll buffer in miniature, in the spirit of the Sublime Text / VS Code minimap. Off by default.
+An optional sidebar showing the whole scroll buffer in miniature, in the spirit of the Sublime Text / VS Code minimap. On by default since 2026-09-17, once the column learned to step aside for full-screen programs.
 
 Where it sits:
 

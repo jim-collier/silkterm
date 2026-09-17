@@ -167,7 +167,7 @@ The performance profile with every effect at its shipped setting: smooth scrolli
 
 ## Minimap
 
-A column beside the text showing the whole scrollback in miniature, as colored strokes rather than readable characters. The lit band marks what is on screen; drag it to scroll, or click elsewhere in the column to go there. It takes the space it uses, so switching it on costs the terminal columns.
+A column beside the text showing the whole scrollback in miniature, as colored strokes rather than readable characters. The lit band marks what is on screen; drag it to scroll, or click elsewhere in the column to go there. It takes the space it uses, so switching it off gives those columns back to the terminal.
 
 ## Minimum contrast
 

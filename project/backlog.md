@@ -1656,6 +1656,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 #### Done - New features and enhancements
 
+- ✅ Minimap on by default.
+	- Done: `scroll.minimap.enabled` ships true. An existing config's commented line is refreshed, and one set to false by hand stays false. The scroll harness pins it off, since its scenes watch the text.
+	- Opened: 20260917
+	- Closed: 20260917
+
 - ✅ Release the GPU device after a long idle.
 	- Drop the wgpu device and everything uploaded on it once the window has been idle long enough, and rebuild it when needed again. This is to lower total GPU memory footprint, esp. with multiple terminals open (e.g. for days).
 	- Idle = unfocused plus no PTY output, not `State::hidden()`. Occlusion is not reported by every WM, so `hidden()` only means minimized on the reference box. `TermInstance::note_activity` is the freshness signal.
