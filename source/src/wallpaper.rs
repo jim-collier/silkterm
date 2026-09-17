@@ -16,6 +16,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use winit::event_loop::EventLoopProxy;
 
@@ -33,6 +34,10 @@ const WP_AVOID_MAX: usize = 32;
 // never read the live store, since it outlives the settings it was started with.
 pub struct Request {
 	pub seq: u64,
+	// The newest request's seq, shared with the window. A worker whose own seq
+	// is no longer the newest has been superseded, and stops at its next stage
+	// rather than blurring a photo nobody will see.
+	pub newest: Arc<AtomicU64>,
 	pub settings: Arc<Settings>,
 	// also scan the rotation folder and pick from it (startup and each rotation
 	// step); false just loads whatever `settings.wallpaper` names.
@@ -47,6 +52,52 @@ pub struct Request {
 	// none. Without this the built-in stood in, or a rotation folder left the
 	// window bare, so one flag meant two things depending on a folder.
 	pub cleared: bool,
+}
+
+impl Request {
+	fn stale(&self) -> bool {
+		self.newest.load(Ordering::Relaxed) != self.seq
+	}
+}
+
+// Rotation pacing, kept apart from the window so it can be driven by a clock.
+//
+// A tick that finds a request still working sends nothing. Sending would only
+// retire the one in flight, and once preparing an image took longer than the
+// interval every request was retired before it arrived: the picture never
+// changed, and each abandoned thread went on blurring a photo to the end. The
+// tick is remembered and served when the result arrives - by the result itself
+// when it was a rotation, or by sending one then when it was not.
+#[derive(Debug, Default)]
+pub struct Pacing {
+	inflight: Option<u64>,
+	owed: bool,
+}
+
+impl Pacing {
+	pub fn sent(&mut self, seq: u64) {
+		self.inflight = Some(seq);
+	}
+
+	// A tick: whether to send a rotation request now.
+	pub fn tick(&mut self) -> bool {
+		if self.inflight.is_some() {
+			self.owed = true;
+			return false;
+		}
+		true
+	}
+
+	// The newest request answered. True means a tick fired while it was working
+	// and the answer was no rotation, so one is due now.
+	pub fn arrived(&mut self, scanned: bool) -> bool {
+		self.inflight = None;
+		if scanned {
+			self.owed = false;
+			return false;
+		}
+		std::mem::take(&mut self.owed)
+	}
 }
 
 // Image pixels ready for upload, with the layout the file's own tags asked for.
@@ -79,7 +130,8 @@ pub struct Loaded {
 // A thread per request rather than one long-lived worker, deliberately: a
 // request that hangs on a dead mount blocks its own thread forever, and a shared
 // worker would leave every later request queued behind it. The stale result is
-// harmless when it finally arrives - the sequence stamp retires it.
+// harmless when it finally arrives - the sequence stamp retires it. A worker
+// that has been superseded while doing real work gives up between stages.
 pub fn spawn(proxy: &EventLoopProxy<UserEvent>, request: Request) {
 	let proxy = proxy.clone();
 	let spawned = std::thread::Builder::new()
@@ -122,7 +174,11 @@ fn run(request: &Request) -> Loaded {
 		settings.rotation_folder().is_some()
 	};
 	let image = (settings.wallpaper_enabled && !request.cleared)
-		.then(|| prepare(settings, path.as_deref(), folder_active))
+		.then(|| {
+			prepare(settings, path.as_deref(), folder_active, &|| {
+				request.stale()
+			})
+		})
 		.flatten();
 	Loaded {
 		seq: request.seq,
@@ -201,8 +257,17 @@ fn fit_within(w: u32, h: u32, max: u32) -> Option<(u32, u32)> {
 // Decode the wallpaper and apply everything that is fixed at load time (blur,
 // contrast mask, the image's own layout tags). `folder_active` suppresses the
 // built-in stand-in where no path was given at all, since rotation is about to
-// supply one; a path that fails to open still falls back to it.
-fn prepare(settings: &Settings, path: Option<&Path>, folder_active: bool) -> Option<Prepared> {
+// supply one; a path that fails to open still falls back to it. `stale` is asked
+// before each stage, and answers None once the request has been superseded.
+fn prepare(
+	settings: &Settings,
+	path: Option<&Path>,
+	folder_active: bool,
+	stale: &dyn Fn() -> bool,
+) -> Option<Prepared> {
+	if stale() {
+		return None;
+	}
 	let mut source = None;
 	let mut img = match path {
 		Some(path) => match image::open(path) {
@@ -244,6 +309,11 @@ fn prepare(settings: &Settings, path: Option<&Path>, folder_active: bool) -> Opt
 	// takes every shell down with it. 1e-40 is inside the config's range.
 	let blur = if blur.is_normal() { blur } else { 0.0 };
 	if blur > 0.0 || settings.wallpaper_contrast_mask {
+		// The float copy is sixteen bytes a pixel and the blur is the slow part,
+		// so this is where a superseded request costs the most to carry on.
+		if stale() {
+			return None;
+		}
 		let (w, h) = img.dimensions();
 		let mut linear: image::ImageBuffer<image::Rgba<f32>, Vec<f32>> =
 			image::ImageBuffer::new(w, h);
@@ -257,6 +327,9 @@ fn prepare(settings: &Settings, path: Option<&Path>, folder_active: bool) -> Opt
 		}
 		if blur > 0.0 {
 			linear = image::imageops::blur(&linear, blur);
+		}
+		if stale() {
+			return None;
 		}
 		if settings.wallpaper_contrast_mask {
 			crate::contrast::apply(
@@ -274,6 +347,9 @@ fn prepare(settings: &Settings, path: Option<&Path>, folder_active: bool) -> Opt
 				(src[3].clamp(0.0, 1.0) * 255.0 + 0.5) as u8,
 			]);
 		}
+	}
+	if stale() {
+		return None;
 	}
 	// A photo isn't squashed by a default that suits gradients.
 	let mut fit = settings.wallpaper_default_fit;
@@ -391,11 +467,12 @@ fn shuffle_pick(len: usize, recent: &[usize], entropy: u64) -> usize {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Prepared, Request, WP_AVOID_MAX, list_folder_images, next_wallpaper_index, prepare, run,
-		shuffle_pick,
+		Pacing, Prepared, Request, WP_AVOID_MAX, list_folder_images, next_wallpaper_index, prepare,
+		run, shuffle_pick,
 	};
 	use crate::config::{Fit, Settings};
 	use std::sync::Arc;
+	use std::sync::atomic::AtomicU64;
 
 	// The blur and the contrast mask are the slow half and neither is under test
 	// here; skipping them keeps these fast.
@@ -515,12 +592,12 @@ mod tests {
 		let mut s = flat_settings();
 		let missing = std::env::temp_dir().join("silkterm_no_such_wallpaper.png");
 		let _ = std::fs::remove_file(&missing);
-		assert!(prepare(&s, Some(&missing), false).is_some());
+		assert!(prepare(&s, Some(&missing), false, &|| false).is_some());
 		// a rotation folder doesn't change that: the picked file supplies nothing
-		assert!(prepare(&s, Some(&missing), true).is_some());
+		assert!(prepare(&s, Some(&missing), true, &|| false).is_some());
 		// ... unless the user opted out
 		s.wallpaper_fallback_builtin = false;
-		assert!(prepare(&s, Some(&missing), false).is_none());
+		assert!(prepare(&s, Some(&missing), false, &|| false).is_none());
 	}
 
 	// The blur asserts on a sigma that is not a normal float, and a subnormal one
@@ -530,7 +607,7 @@ mod tests {
 	fn a_subnormal_blur_is_no_blur() {
 		let mut s = flat_settings();
 		s.wallpaper_blur = 1e-40;
-		assert!(prepare(&s, None, false).is_some());
+		assert!(prepare(&s, None, false, &|| false).is_some());
 
 		// the same value from an image's own tag
 		let packet = "<x:xmpmeta><rdf:RDF><rdf:Description rdf:about=''>\
@@ -541,7 +618,7 @@ mod tests {
 		s.wallpaper_blur = 0.0;
 		s.wallpaper_honor_xmp_look = true;
 		assert_eq!(crate::xmp::read(&path).blur, Some(0.0));
-		let prepared = prepare(&s, Some(&path), false).expect("prepared");
+		let prepared = prepare(&s, Some(&path), false, &|| false).expect("prepared");
 		assert_eq!(
 			prepared.rgba.dimensions(),
 			(8, 8),
@@ -641,9 +718,126 @@ mod tests {
 			return; // only does anything when the test above starts it
 		};
 		let before = peak_kb();
-		let prepared = prepare(&flat_settings(), Some(std::path::Path::new(&path)), false);
+		let prepared = prepare(
+			&flat_settings(),
+			Some(std::path::Path::new(&path)),
+			false,
+			&|| false,
+		);
 		assert_eq!(prepared.expect("prepared").rgba.dimensions(), (4096, 4096));
 		println!("grew_kb {}", peak_kb() - before);
+	}
+
+	// A request retired by a newer one used to blur and mask a photo to the end,
+	// a gigabyte or so each for a 4K image, and a rotation faster than the
+	// preparation kept several going at once. The worker asks between stages
+	// now, and every stage boundary is a place it gives up.
+	#[test]
+	fn a_superseded_request_stops_before_its_next_stage() {
+		use std::cell::Cell;
+		let s = Settings {
+			wallpaper_blur: 1.0,
+			wallpaper_contrast_mask: true,
+			..flat_settings()
+		};
+		let asked = Cell::new(0);
+		let live = prepare(&s, None, false, &|| {
+			asked.set(asked.get() + 1);
+			false
+		});
+		assert!(live.is_some());
+		let stages = asked.get();
+		assert_eq!(
+			stages, 4,
+			"before the decode, the float copy, the mask and the layout"
+		);
+		for stale_from in 0..stages {
+			asked.set(0);
+			let gone = prepare(&s, None, false, &|| {
+				let n = asked.get();
+				asked.set(n + 1);
+				n >= stale_from
+			});
+			assert!(gone.is_none(), "stale at check {stale_from}");
+			assert_eq!(
+				asked.get(),
+				stale_from + 1,
+				"stopped at the check that said so"
+			);
+		}
+		// the stamp is what says so in the real thing
+		let newest = Arc::new(AtomicU64::new(2));
+		let request = Request {
+			seq: 1,
+			newest,
+			settings: Arc::new(s),
+			scan: false,
+			current: None,
+			cleared: false,
+		};
+		assert!(run(&request).image.is_none());
+	}
+
+	// The pacing rule, driven by a clock: images that take six seconds to
+	// prepare on a two-second interval. Each tick used to send a request that
+	// retired the one before it, so the picture never changed, and the retired
+	// workers piled up. One preparation at a time now, and the picture changes
+	// no later than one preparation after a tick.
+	#[test]
+	fn rotation_keeps_going_when_preparing_outlasts_the_interval() {
+		const IVL: u32 = 2;
+		const PREP: u32 = 6;
+		let mut pacing = Pacing::default();
+		let mut seq = 0u64;
+		let mut next = Some(0u32); // the timer, as the window keeps it
+		let mut working: Vec<(u64, u32, bool)> = Vec::new(); // seq, done at, scan
+		let mut changes = Vec::new();
+		let mut most_at_once = 0;
+		for now in 0..80u32 {
+			// results first, as the event loop would see them before its own poll
+			let done: Vec<_> = working.iter().filter(|w| w.1 == now).copied().collect();
+			working.retain(|w| w.1 != now);
+			for (id, _, scan) in done {
+				if id != seq {
+					continue; // superseded while it was working
+				}
+				if pacing.arrived(scan) {
+					next = Some(now);
+				}
+				if scan {
+					changes.push(now);
+					next = Some(now + IVL);
+				}
+			}
+			// a settings change re-reads the current image without rotating, and
+			// supersedes whatever was working
+			if now == 21 {
+				seq += 1;
+				pacing.sent(seq);
+				working.push((seq, now + PREP, false));
+			}
+			if next.is_some_and(|at| now >= at) {
+				next = Some(now + IVL);
+				if pacing.tick() {
+					seq += 1;
+					pacing.sent(seq);
+					working.push((seq, now + PREP, true));
+				} else {
+					next = None;
+				}
+			}
+			let live = working.iter().filter(|w| w.0 == seq).count();
+			most_at_once = most_at_once.max(live);
+			assert!(
+				working.len() <= 2,
+				"retired workers pile up at {now}: {working:?}"
+			);
+		}
+		assert_eq!(most_at_once, 1);
+		// one preparation, a rest of one interval, the next: every eight seconds,
+		// and the settings change costs one preparation more before rotation
+		// picks up again
+		assert_eq!(changes, vec![6, 14, 33, 41, 49, 57, 65, 73]);
 	}
 
 	// An empty rotation folder reports no rotation, and the built-in fills in -
@@ -658,7 +852,7 @@ mod tests {
 		s.wallpaper_folder = Some(dir.clone());
 		s.wallpaper_folder_auto = true; // auto-detected: nothing to report
 		assert!(super::rotate(&s, None).is_none());
-		assert!(prepare(&s, None, false).is_some());
+		assert!(prepare(&s, None, false, &|| false).is_some());
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 
@@ -671,7 +865,7 @@ mod tests {
 			wallpaper_default_fit: Fit::Zoom,
 			..flat_settings()
 		};
-		let Some(Prepared { fit, anchor, .. }) = prepare(&s, None, false) else {
+		let Some(Prepared { fit, anchor, .. }) = prepare(&s, None, false, &|| false) else {
 			panic!("built-in wallpaper failed to decode");
 		};
 		assert_eq!(fit, Fit::Zoom);
@@ -695,6 +889,7 @@ mod tests {
 			};
 			let request = |cleared| Request {
 				seq: 1,
+				newest: Arc::new(AtomicU64::new(1)),
 				settings: Arc::new(settings.clone()),
 				scan: false,
 				current: None,

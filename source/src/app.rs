@@ -1867,7 +1867,10 @@ struct State {
 	// The window options the command line gave at launch, folded in again after a
 	// reload so a reread file does not drop them.
 	cli_style: crate::cli::Style,
-	wp_seq: u64, // request stamp; a worker result with an older one is stale
+	// Request stamp, shared with the workers: a result with an older one is
+	// stale, and a worker whose stamp is no longer the newest stops early.
+	wp_seq: Arc<std::sync::atomic::AtomicU64>,
+	wp_pacing: crate::wallpaper::Pacing, // holds a tick while a request is working
 	// A worker has answered - with an image, or with the news that there is none.
 	wp_answered: bool,
 	// ...and a frame has been drawn since, so whatever it said is ON SCREEN. This
@@ -3800,12 +3803,18 @@ impl State {
 		// a lock that names nothing is a bare flag asking for no picture
 		let cleared = self.wp_locked && settings.wallpaper.is_none();
 		// retires anything already in flight - a result arriving after a newer
-		// request (a rotation tick overtaken by a settings change) is dropped
-		self.wp_seq = self.wp_seq.wrapping_add(1);
+		// request (a rotation tick overtaken by a settings change) is dropped, and
+		// the worker sees the new stamp and stops at its next stage
+		let seq = self
+			.wp_seq
+			.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+			.wrapping_add(1);
+		self.wp_pacing.sent(seq);
 		crate::wallpaper::spawn(
 			&self.proxy,
 			crate::wallpaper::Request {
-				seq: self.wp_seq,
+				seq,
+				newest: self.wp_seq.clone(),
 				settings,
 				scan,
 				current: self.wp_current.clone(),
@@ -3834,13 +3843,25 @@ impl State {
 		if !live {
 			return;
 		}
+		// A request still working (an image slower to prepare than the interval,
+		// or a folder on a slow share) is left to finish. Its arrival re-arms the
+		// timer, or brings the tick back if it was not a rotation itself.
+		if !self.wp_pacing.tick() {
+			self.wp_next = None;
+			return;
+		}
 		self.request_wallpaper(true);
 	}
 
 	// A worker finished; uploading the pixels is all that was left for this thread.
 	fn wallpaper_ready(&mut self, loaded: crate::wallpaper::Loaded) {
-		if loaded.seq != self.wp_seq {
+		if loaded.seq != self.wp_seq.load(std::sync::atomic::Ordering::Relaxed) {
 			return; // superseded while it was working
+		}
+		if self.wp_pacing.arrived(loaded.scanned) {
+			// a tick fired while this was working: due now, and the poll sends it
+			// once there is a device to show it on
+			self.wp_next = Some(Instant::now());
 		}
 		if loaded.scanned {
 			// a scan is authoritative about rotation: no pick means the folder holds
@@ -6380,7 +6401,8 @@ impl ApplicationHandler<UserEvent> for App {
 			wp_next: None,
 			wp_locked: false,
 			cli_style: self.cli.win.style.clone(),
-			wp_seq: 0,
+			wp_seq: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+			wp_pacing: crate::wallpaper::Pacing::default(),
 			wp_answered: false,
 			wp_shown: false,
 			shell_scan_cap: None,
