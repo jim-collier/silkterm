@@ -191,7 +191,14 @@ fn parse_percent(value: &str) -> Option<f32> {
 // Sigma in pixels, "px" optional. Same ceiling as the config's own range: past
 // that a value is a typo, and a runaway sigma would stall the decode.
 fn parse_blur(value: &str) -> Option<f32> {
-	number(value, "px").map(|v| v.clamp(0.0, 100.0))
+	// a subnormal sigma is no blur, and the blur itself refuses one
+	number(value, "px").map(|v| {
+		if v.is_normal() {
+			v.clamp(0.0, 100.0)
+		} else {
+			0.0
+		}
+	})
 }
 
 fn number(value: &str, unit: &str) -> Option<f32> {
@@ -310,6 +317,7 @@ mod tests {
 		assert_eq!(parse_blur("10"), Some(10.0));
 		assert_eq!(parse_blur("2.5px"), Some(2.5));
 		assert_eq!(parse_blur("500"), Some(100.0));
+		assert_eq!(parse_blur("1e-40"), Some(0.0));
 		for junk in ["", "%", "lots", "nan", "inf"] {
 			assert_eq!(parse_percent(junk), None, "{junk} should not parse");
 			assert_eq!(parse_blur(junk), None, "{junk} should not parse");
@@ -397,7 +405,7 @@ mod tests {
 				assert!(opacity.is_finite(), "opacity {opacity}");
 			}
 			if let Some(blur) = tags.blur {
-				assert!(blur.is_finite(), "blur {blur}");
+				assert!(blur == 0.0 || blur.is_normal(), "blur {blur}");
 			}
 			if let Some(anchor) = tags.anchor {
 				assert!(anchor.iter().all(|v| v.is_finite()), "anchor {anchor:?}");

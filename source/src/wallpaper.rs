@@ -208,7 +208,7 @@ fn prepare(settings: &Settings, path: Option<&Path>, folder_active: bool) -> Opt
 		Some(path) => match image::open(path) {
 			Ok(loaded) => {
 				source = Some(path);
-				loaded.to_rgba8()
+				cut_to_rgba(loaded)
 			}
 			Err(e) => {
 				eprintln!(
@@ -224,14 +224,6 @@ fn prepare(settings: &Settings, path: Option<&Path>, folder_active: bool) -> Opt
 		// so a fresh install still looks the part. Opt out with wallpaper_fallback_builtin.
 		None => (!folder_active).then(|| builtin(settings)).flatten()?,
 	};
-	// A wallpaper is only ever drawn at window size, and the linear intermediate
-	// below is sixteen bytes a pixel with nothing between the file and it - so an
-	// ordinary large photo wanted gigabytes, and an image wider than the GPU's
-	// texture limit aborted the upload outright. Blurring gets much cheaper too,
-	// and the blur reads truer: its radius is now relative to what is on screen.
-	if let Some((w, h)) = fit_within(img.width(), img.height(), MAX_EDGE) {
-		img = image::imageops::resize(&img, w, h, image::imageops::FilterType::Triangle);
-	}
 	// The image's own tags: layout, and the two look values. Read straight from
 	// the file the pixels came from - the embedded default wallpaper has no
 	// path, and keeps the configured values.
@@ -248,6 +240,9 @@ fn prepare(settings: &Settings, path: Option<&Path>, folder_active: bool) -> Opt
 	// darkens edges. The f32 intermediate also avoids 8-bit banding inside the
 	// blur (final banding is handled by the high-precision offscreen + the blit's
 	// dither).
+	// The blur asserts on a sigma that is not a normal float, and a panic here
+	// takes every shell down with it. 1e-40 is inside the config's range.
+	let blur = if blur.is_normal() { blur } else { 0.0 };
 	if blur > 0.0 || settings.wallpaper_contrast_mask {
 		let (w, h) = img.dimensions();
 		let mut linear: image::ImageBuffer<image::Rgba<f32>, Vec<f32>> =
@@ -304,7 +299,21 @@ fn builtin(settings: &Settings) -> Option<image::RgbaImage> {
 		.wallpaper_fallback_builtin
 		.then(|| image::load_from_memory(DEFAULT_BACKGROUND).ok())
 		.flatten()
-		.map(|img| img.to_rgba8())
+		.map(cut_to_rgba)
+}
+
+// A wallpaper is only ever drawn at window size, and the linear intermediate in
+// `prepare` is sixteen bytes a pixel - so an ordinary large photo wanted
+// gigabytes, and an image wider than the GPU's texture limit aborted the upload.
+// The cut comes before the RGBA copy and uses no float buffer, so a small file
+// with huge dimensions costs its decode (512 MiB at most, the image crate's own
+// limit) and nothing at full size after that. Blurring gets cheaper too, and its
+// radius is relative to what is on screen.
+fn cut_to_rgba(img: image::DynamicImage) -> image::RgbaImage {
+	match fit_within(img.width(), img.height(), MAX_EDGE) {
+		Some((w, h)) => img.thumbnail_exact(w, h).into_rgba8(),
+		None => img.into_rgba8(),
+	}
 }
 
 // Every image in a rotation folder, in filename order.
@@ -512,6 +521,129 @@ mod tests {
 		// ... unless the user opted out
 		s.wallpaper_fallback_builtin = false;
 		assert!(prepare(&s, Some(&missing), false).is_none());
+	}
+
+	// The blur asserts on a sigma that is not a normal float, and a subnormal one
+	// passed both the config's range and the tag reader, so the worker panicked
+	// and took the terminal with it.
+	#[test]
+	fn a_subnormal_blur_is_no_blur() {
+		let mut s = flat_settings();
+		s.wallpaper_blur = 1e-40;
+		assert!(prepare(&s, None, false).is_some());
+
+		// the same value from an image's own tag
+		let packet = "<x:xmpmeta><rdf:RDF><rdf:Description rdf:about=''>\
+			<wallpaper:Blur>1e-40</wallpaper:Blur></rdf:Description></rdf:RDF></x:xmpmeta>";
+		let path =
+			std::env::temp_dir().join(format!("silkterm_wp_blur_{}.png", std::process::id()));
+		std::fs::write(&path, tagged_png(packet)).unwrap();
+		s.wallpaper_blur = 0.0;
+		s.wallpaper_honor_xmp_look = true;
+		assert_eq!(crate::xmp::read(&path).blur, Some(0.0));
+		let prepared = prepare(&s, Some(&path), false).expect("prepared");
+		assert_eq!(
+			prepared.rgba.dimensions(),
+			(8, 8),
+			"the file, not the built-in"
+		);
+		let _ = std::fs::remove_file(&path);
+	}
+
+	// A real 8x8 PNG with an iTXt XMP packet ahead of IDAT, where the reader
+	// stops looking.
+	fn tagged_png(packet: &str) -> Vec<u8> {
+		fn crc(bytes: &[u8]) -> u32 {
+			let mut c = !0u32;
+			for b in bytes {
+				c ^= u32::from(*b);
+				for _ in 0..8 {
+					c = if c & 1 == 1 {
+						(c >> 1) ^ 0xedb8_8320
+					} else {
+						c >> 1
+					};
+				}
+			}
+			!c
+		}
+		let mut plain = Vec::new();
+		image::GrayImage::new(8, 8)
+			.write_to(
+				&mut std::io::Cursor::new(&mut plain),
+				image::ImageFormat::Png,
+			)
+			.unwrap();
+		let mut body = b"iTXtXML:com.adobe.xmp\0\0\0\0\0".to_vec();
+		body.extend_from_slice(packet.as_bytes());
+		let mut chunk = u32::try_from(body.len() - 4)
+			.unwrap()
+			.to_be_bytes()
+			.to_vec();
+		chunk.extend_from_slice(&body);
+		chunk.extend_from_slice(&crc(&body).to_be_bytes());
+		// signature (8) + IHDR (25)
+		let mut out = plain[..33].to_vec();
+		out.extend_from_slice(&chunk);
+		out.extend_from_slice(&plain[33..]);
+		out
+	}
+
+	// A small file with huge dimensions was converted to RGBA and resized through
+	// a float copy at full width before the cut, gigabytes from a few hundred KB.
+	// Measured in a child copy of this test binary so no other test's memory
+	// counts.
+	#[cfg(target_os = "linux")]
+	#[test]
+	fn a_huge_image_costs_its_decode_and_no_more() {
+		let dir = std::env::temp_dir().join(format!("silkterm_wp_huge_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("huge.png");
+		// 64 MiB decoded. Before the fix this peaked near 900 MiB.
+		image::GrayImage::new(8000, 8000).save(&path).unwrap();
+		let out = std::process::Command::new(std::env::current_exe().unwrap())
+			.args([
+				"--exact",
+				"wallpaper::tests::huge_image_child",
+				"--nocapture",
+			])
+			.env("SILK_WP_HUGE", &path)
+			.output()
+			.unwrap();
+		let _ = std::fs::remove_dir_all(&dir);
+		let text = String::from_utf8_lossy(&out.stdout);
+		assert!(
+			out.status.success(),
+			"{text}{}",
+			String::from_utf8_lossy(&out.stderr)
+		);
+		let grew: u64 = text
+			.lines()
+			.find_map(|l| l.strip_prefix("grew_kb "))
+			.and_then(|v| v.trim().parse().ok())
+			.expect("child reports its growth");
+		assert!(grew < 200 << 10, "peak grew {} MiB", grew >> 10);
+	}
+
+	#[cfg(target_os = "linux")]
+	#[test]
+	fn huge_image_child() {
+		fn peak_kb() -> u64 {
+			std::fs::read_to_string("/proc/self/status")
+				.unwrap()
+				.lines()
+				.find_map(|l| l.strip_prefix("VmHWM:"))
+				.and_then(|v| v.trim().trim_end_matches("kB").trim().parse().ok())
+				.unwrap()
+		}
+		let Some(path) = std::env::var_os("SILK_WP_HUGE") else {
+			return; // only does anything when the test above starts it
+		};
+		let before = peak_kb();
+		let prepared = prepare(&flat_settings(), Some(std::path::Path::new(&path)), false);
+		assert_eq!(prepared.expect("prepared").rgba.dimensions(), (4096, 4096));
+		println!("grew_kb {}", peak_kb() - before);
 	}
 
 	// An empty rotation folder reports no rotation, and the built-in fills in -
