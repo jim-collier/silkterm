@@ -222,6 +222,17 @@ impl EventListener for EventProxy {
 	}
 }
 
+// The grid a pane asks for, held to what the engine can take. The engine
+// documents two columns as its least, since a wide character needs both, but
+// does not enforce it: one column panics on a CJK character or an emoji, and
+// shrinking wide text to one column reflows without end.
+fn grid_dims(cols: usize, lines: usize) -> TermDimensions {
+	TermDimensions {
+		columns: cols.max(alacritty_terminal::term::MIN_COLUMNS),
+		screen_lines: lines.max(1),
+	}
+}
+
 // size descriptor handed to the crate; history is set separately via Config
 #[derive(Clone, Copy)]
 pub struct TermDimensions {
@@ -308,14 +319,10 @@ impl TermInstance {
 		command: Option<Vec<String>>,
 		cwd: Option<std::path::PathBuf>,
 	) -> anyhow::Result<Self> {
-		let cols = cols.max(1);
-		let lines = lines.max(1);
+		let dims = grid_dims(cols, lines);
+		let (cols, lines) = (dims.columns, dims.screen_lines);
 
 		let config = engine_config();
-		let dims = TermDimensions {
-			columns: cols,
-			screen_lines: lines,
-		};
 		let event_proxy = EventProxy::new(
 			id,
 			proxy,
@@ -593,17 +600,13 @@ impl TermInstance {
 	}
 
 	pub fn resize(&mut self, cols: usize, lines: usize, cell_w: u16, cell_h: u16) {
-		let cols = cols.max(1);
-		let lines = lines.max(1);
+		let dims = grid_dims(cols, lines);
+		let (cols, lines) = (dims.columns, dims.screen_lines);
 		if cols == self.cols && lines == self.lines {
 			return;
 		}
 		self.cols = cols;
 		self.lines = lines;
-		let dims = TermDimensions {
-			columns: cols,
-			screen_lines: lines,
-		};
 		self.term.lock_unfair().resize(dims);
 		let win = WindowSize {
 			num_cols: cols as u16,
@@ -1121,8 +1124,8 @@ fn wsl_cd(argv: &[String], dir: &std::path::Path) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
 	use super::{
-		SHELL_PRIVATE_ENV, WakeGate, env_fixups, expand_refs, is_command_child, parse_env_block,
-		query_reply, requested_color, usable_cwd, wsl_cd,
+		SHELL_PRIVATE_ENV, WakeGate, env_fixups, expand_refs, grid_dims, is_command_child,
+		parse_env_block, query_reply, requested_color, usable_cwd, wsl_cd,
 	};
 	#[cfg(unix)]
 	use super::{program_name, status_text};
@@ -1167,6 +1170,28 @@ mod tests {
 			*seen.0.lock().expect("seen lock"),
 			["Clipboard hello", "Selection hello"]
 		);
+	}
+
+	// A pane narrowed below two cells asked the engine for one column, where a
+	// wide character panicked and wide text already on screen reflowed until
+	// memory ran out.
+	#[test]
+	fn a_pane_too_narrow_for_a_wide_character_still_takes_one() {
+		use alacritty_terminal::event::VoidListener;
+		use alacritty_terminal::grid::Dimensions;
+		use alacritty_terminal::term::Term;
+		use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+
+		let mut parser = Processor::<StdSyncHandler>::default();
+		let mut narrow = Term::new(super::engine_config(), &grid_dims(1, 3), VoidListener);
+		parser.advance(&mut narrow, "\u{4e2d}\u{1f600}x".as_bytes());
+		assert_eq!(narrow.columns(), 2);
+
+		let mut wide = Term::new(super::engine_config(), &grid_dims(6, 3), VoidListener);
+		parser.advance(&mut wide, "\u{4e2d}\u{4e2d}\u{4e2d}".as_bytes());
+		wide.resize(grid_dims(1, 3));
+		assert_eq!(wide.columns(), 2);
+		assert_eq!(grid_dims(0, 0).screen_lines, 1);
 	}
 
 	fn argv(words: &str) -> Vec<String> {
