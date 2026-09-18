@@ -407,10 +407,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- The message goes nowhere, since a Windows build has no console of its own. Code review 20260914 item 29 (F61).
 	- Opened: 20260914-124200
 
-- 🔘 After a window moves to a monitor with a lower refresh rate, the performance profile can step down while the display is keeping up.
-	- The frame budget is taken from the monitor at launch and never updated. Code review 20260914 item 30 (F62).
-	- Opened: 20260914-124200
-
 - 🔘 After the PowerShell installer adds SilkTerm to PATH on Windows, a new console opened from the Start menu does not find it until you sign out.
 	- The PATH is written to the registry without telling Windows it changed. Code review 20260914 item 58 (F90).
 	- Opened: 20260914-124200
@@ -566,6 +562,14 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ After a window moves to a monitor with a lower refresh rate, the performance profile can step down while the display is keeping up.
+	- The frame budget is taken from the monitor at launch and never updated. Code review 20260914 item 30 (F62).
+	- Fixed: the budget is read from the window's monitor four times a second. That is too few frames at the old budget to fill half a window, so a move cannot bring a false verdict.
+	- Fixed: a new budget starts the window over. The other way round, 60 Hz frames would have read as misses on a 144 Hz monitor.
+	- Pinned by: `the_budget_follows_the_monitor_the_window_is_on` and `frames_paced_by_another_monitor_are_not_counted_against_this_one`. Each goes red with its half taken out, and the first with a one second re-read.
+	- Not run on two real monitors, since none are here.
+	- Opened: 20260914-124200. Closed: 20260918.
 
 - ✅ The PowerShell prompt shows no ahead or behind count, and names only an `origin` remote. The bash prompt does both since 20260917, and the two are meant to read the same.
 	- Fixed: the counts follow the two marks as `↑2↓1`, in the bash prompt's color. The remote named is the one the branch tracks, else `origin`, else the first. It is asked again when a branch gains an upstream.
