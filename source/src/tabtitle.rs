@@ -400,6 +400,16 @@ pub fn window_title(
 	}
 }
 
+/// A note on the window's own state, after everything else the title says.
+/// It goes on a `--title` too, since that asks for a name and this is news
+/// about the window rather than part of its name.
+pub fn with_note(title: String, note: Option<&str>) -> String {
+	match note {
+		Some(note) => format!("{title} ({note})"),
+		None => title,
+	}
+}
+
 /// The tab's text, longest form first. The caller measures each against the
 /// space it has and takes the first that fits; the last rung is the least that
 /// still names the pane, so there is always something to draw.
@@ -840,7 +850,7 @@ mod tests {
 	use super::{
 		Demand, Rights, Style, Task, clamp_page, elapsed, label_forms, page_for, path_forms, plain,
 		program_says, shell_forms, slot_at_x, slot_x, tabs_that_fit, task_forms, tip_lines,
-		tip_value, widths, window_suffix, window_title,
+		tip_value, widths, window_suffix, window_title, with_note,
 	};
 
 	// Most of what follows is the same question either way, so it is asked with
@@ -1679,6 +1689,21 @@ mod tests {
 		);
 		assert_eq!(window_title(root, Some(""), "SilkTerm", None), "Root");
 		assert_eq!(window_title(root, Some("   "), "SilkTerm", None), "Root");
+	}
+
+	#[test]
+	fn a_note_follows_the_whole_title_even_a_custom_one() {
+		let root = Rights {
+			say: Some("Root"),
+			decorated: false,
+		};
+		let title = window_title(root, Some("deploy"), "SilkTerm", None);
+		assert_eq!(
+			with_note(title, Some("restoring resources ...")),
+			"Root: deploy (restoring resources ...)"
+		);
+		let title = window_title(Rights::default(), None, "SilkTerm", Some("Bash"));
+		assert_eq!(with_note(title.clone(), None), title);
 	}
 
 	// A title is drawn by the desktop as text, so a program must not be able to
