@@ -373,6 +373,11 @@ impl Gfx {
 				let _ = device.poll(wgpu::PollType::wait_indefinitely());
 				drop(queue);
 				drop(device);
+				// Unbound before either is destroyed. GLX only defers destroying a
+				// current drawable, so the window kept its old GLX surface, and
+				// NVIDIA refused the rebuild a second one (BadDrawable, then
+				// GLXBadWindow when the half-made one was dropped).
+				let ctx = ctx.make_not_current();
 				drop(surface);
 				drop(ctx);
 				Rebirth::Gl(instance, config)
@@ -520,6 +525,8 @@ impl Gfx {
 		el: &ActiveEventLoop,
 		attrs: WindowAttributes,
 	) -> anyhow::Result<(Self, Arc<Window>)> {
+		#[cfg(target_os = "linux")]
+		quiet_glx_errors();
 		// No transparency requirement in the template: the picker closure must
 		// return a Config (can't say "none fit"), and a panic there would abort
 		// past resumed()'s native-backend fallback (panic=abort in release).
@@ -1274,6 +1281,85 @@ fn log_renderer(info: &wgpu::AdapterInfo, transparent: bool) {
 	);
 }
 
+// Keep the GL path's X errors away from winit. winit holds on to the last X
+// error no hook claimed, and its IME calls on a focus change `expect` to find
+// none - so a GLX error left over from an earlier call, a failed device rebuild
+// say, killed the window the next time it gained or lost focus. glutin has its
+// own hook and still sees every error, since winit asks all of them.
+#[cfg(target_os = "linux")]
+fn quiet_glx_errors() {
+	use std::sync::Once;
+	use std::sync::atomic::AtomicU32;
+	static ONCE: Once = Once::new();
+	static LOGGED: AtomicU32 = AtomicU32::new(0);
+	ONCE.call_once(|| {
+		let Some(glx) = GlxCodes::query() else {
+			return;
+		};
+		winit::platform::x11::register_xlib_error_hook(Box::new(move |_display, event| {
+			// SAFETY: winit hands every hook the XErrorEvent it was called with
+			let event = unsafe { &*(event as *const x11_dl::xlib::XErrorEvent) };
+			if !glx.claims(event.request_code, event.error_code) {
+				return false;
+			}
+			// winit logs only what nobody claimed, so say it here. A driver that
+			// fails every frame would otherwise fill the log.
+			if LOGGED.fetch_add(1, Ordering::Relaxed) < 20 {
+				eprintln!(
+					"{}: X error {} from GL request {}.{}, not fatal",
+					crate::config::APP_NAME,
+					event.error_code,
+					event.request_code,
+					event.minor_code
+				);
+			}
+			true
+		}));
+	});
+}
+
+// Which X errors belong to GL: any raised by a GLX request or by NVIDIA's
+// private NV-GLX one, and any in GLX's own error range. An opcode of 0 means
+// the extension is not there.
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy)]
+struct GlxCodes {
+	requests: [u8; 2],
+	first_error: u8,
+}
+
+#[cfg(target_os = "linux")]
+impl GlxCodes {
+	// GLXBadContext through GLXBadProfileARB
+	const ERRORS: u16 = 14;
+
+	// Asked on a connection of its own. Opcodes are the server's, so they are
+	// the same on winit's.
+	fn query() -> Option<Self> {
+		use x11rb::protocol::xproto::ConnectionExt as _;
+		let (conn, _) = x11rb::connect(None).ok()?;
+		let ext = |name: &[u8]| {
+			conn.query_extension(name)
+				.ok()?
+				.reply()
+				.ok()
+				.filter(|r| r.present)
+		};
+		let glx = ext(b"GLX")?;
+		let nv = ext(b"NV-GLX").map_or(0, |r| r.major_opcode);
+		Some(GlxCodes {
+			requests: [glx.major_opcode, nv],
+			first_error: glx.first_error,
+		})
+	}
+
+	fn claims(self, request: u8, error: u8) -> bool {
+		let first = u16::from(self.first_error);
+		(request != 0 && self.requests.contains(&request))
+			|| (first != 0 && (first..first + Self::ERRORS).contains(&u16::from(error)))
+	}
+}
+
 // Offscreen scene target for the GL path: rendered top-left like the native
 // surface, then flip-blitted into the default framebuffer.
 fn offscreen_tex(
@@ -1655,6 +1741,31 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// Numbers from the NVIDIA box where a stray GLX error used to kill the
+	// window at its next focus change: GLX 152 with errors from 158, NV-GLX 156.
+	#[cfg(target_os = "linux")]
+	#[test]
+	fn gl_errors_are_claimed_and_others_are_not() {
+		let nvidia = GlxCodes {
+			requests: [152, 156],
+			first_error: 158,
+		};
+		assert!(
+			nvidia.claims(152, 170),
+			"GLXBadWindow from glXDestroyWindow"
+		);
+		assert!(nvidia.claims(156, 9), "BadDrawable from NV-GLX");
+		assert!(nvidia.claims(1, 160), "a GLX error on some other request");
+		assert!(!nvidia.claims(20, 3), "BadWindow from GetProperty");
+		assert!(!nvidia.claims(1, 172), "past GLX's error range");
+		let mesa = GlxCodes {
+			requests: [152, 0],
+			first_error: 158,
+		};
+		assert!(!mesa.claims(0, 9));
+		assert!(!mesa.claims(156, 9), "no NV-GLX here");
+	}
 
 	// A built context has to survive being asked for. It didn't once: the state
 	// was taken unconditionally to join the worker and only put back on the

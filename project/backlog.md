@@ -72,6 +72,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Bugs
 
 - 🔘 Two terminals running for around 24 to 48 hours, disappeared the moment they got focus.
+	- Opened: 20260918
+	- Four dogfood windows died this way since 20260917, all on builds with the idle GPU release. The two here went at 10:58:11 and 10:58:19.
+	- Each one first failed to get its GPU device back after an idle release (GLXBadDrawable, then GLXBadWindow). SilkTerm logged that and planned to try again on the next input.
+	- winit keeps the last X error in one slot, and its IME focus and unfocus calls `expect` that slot to be empty. The next focus change found the stale GLX error there and panicked.
+	- So there are two faults. The rebuild fails on some windows, and any stray GLX error is fatal at the next focus change.
 
 - 🔘 The PowerShell prompt shows no ahead or behind count, and names only an `origin` remote. The bash prompt does both since 20260917, and the two are meant to read the same.
 	- Opened: 20260917

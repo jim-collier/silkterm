@@ -95,6 +95,8 @@ workspace = true
 # desktop behind the translucent window (transparent_background_blur).
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = "0.13"
+# XErrorEvent, for the GLX error hook in gfx.rs. Already in the tree through winit.
+x11-dl = "2.21"
 
 # Unix: tcgetpgrp() on the PTY master to read the foreground program for tab titles.
 [target.'cfg(unix)'.dependencies]
