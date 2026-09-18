@@ -349,7 +349,10 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 78 (F110, should-fix): The publish script changes quote marks in a `--message`, and does nothing at all when the message contains `-v` or `-h`.
 		- The message is committed as given, and only an argument that is exactly `-h` or `-v` asks for help or the version.
 		- Pinned by the publish test, with a message holding both quote marks and both flags, and an inline `--msg=` one.
-	- Code review 20260914 item 79 (F111, should-fix): The wallpaper gallery and the README contact sheet still show nine wallpapers that were removed from the pack.
+	- ✅ Code review 20260914 item 79 (F111, should-fix): The wallpaper gallery and the README contact sheet still show nine wallpapers that were removed from the pack.
+		- Both are rendered again from the pack, 104 images. Every remaining record keeps its credit and licence unchanged.
+		- The pipeline now fails when the gallery names other images than the pack, or the sheet has the wrong number of rows. A change inside one row of the sheet is not caught, since the sheet can only be checked by its size.
+		- The live gallery follows once `main` has the new page, at the next release.
 	- Code review 20260914 item 80 (F112, should-fix): The git-aware bash prompt shows nothing in a repository without an `origin` remote, and never shows how far ahead or behind a branch is.
 	- ✅ Code review 20260914 item 81 (F113, should-fix): Each demo recording leaves background daemons running after it ends.
 		- The session runs in its own process group, and stopping it ends the whole group, so the bus and the settings service go with it.

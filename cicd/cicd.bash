@@ -618,6 +618,13 @@ if [[ -x "${root}/cicd/tests/gates/run.bash" ]]; then
 	"${root}/cicd/tests/gates/run.bash" >/dev/null || fDie "startup gate test failed"
 	fEcho "OK: startup gates"
 fi
+## The wallpaper gallery and contact sheet are rendered, so they go stale in
+## silence when the pack changes. Nine removed images sat in both for a month.
+if [[ -f "${root}/cicd/utility/wallpaper-gallery.bash" ]]; then
+	fEcho_Clean "wallpaper gallery ..."
+	bash "${root}/cicd/utility/wallpaper-gallery.bash" --check || fDie "the wallpaper gallery does not match the pack"
+	fEcho "OK: wallpaper gallery"
+fi
 ## Graphical scenarios on the Windows boxes. Neither box is build hardware, so an
 ## unreachable or locked one is reported and stepped over; a scenario that actually
 ## ran and failed aborts.

@@ -14,7 +14,7 @@
 ##	Syntax:
 ##		wallpaper-gallery.bash [--cols N] [--tile WxH] [--src DIR] [--out FILE] [--quality N]
 ##		                       [--thumb WxH] [--docs DIR] [--raw-base URL]
-##		                       [--sheet-only | --page-only]
+##		                       [--sheet-only | --page-only | --check]
 ##		  --cols N       contact-sheet tiles per row (default 9)
 ##		  --tile WxH     contact-sheet tile size in pixels (default 160x100)
 ##		  --src DIR      wallpaper folder (default: the pack under filesystem/)
@@ -25,7 +25,10 @@
 ##		  --raw-base URL where the page fetches full images from
 ##		  --sheet-only   render only the contact sheet
 ##		  --page-only    render only the Pages gallery
-##	Needs: ffmpeg. Exit: 0 rendered, 2 skip (no ffmpeg / no images).
+##		  --check        render nothing; fail when the committed gallery names other
+##		                 images than the pack, or the sheet has the wrong row count
+##	Needs: ffmpeg (not for --check). Exit: 0 rendered or matching, 1 --check found
+##	a mismatch, 2 skip (no ffmpeg / no images).
 ##	History: At bottom of script.
 
 ##	Copyright (c) 2026 Bubbles
@@ -45,7 +48,7 @@ docs="${repoDir}/docs"
 template="${meDir}/wallpaper-gallery.html"
 rawBase="https://raw.githubusercontent.com/jim-collier/silkterm/main/filesystem/home/.config/silkterm/wallpaper/"
 declare -i cols=9 quality=4 thumbQuality=5
-declare -i doSheet=1 doPage=1
+declare -i doSheet=1 doPage=1 doCheck=0
 tile="160x100"
 thumb="360x225"
 
@@ -60,6 +63,7 @@ while (($#)); do case "$1" in
 	--raw-base)   rawBase="${2:-}"; shift 2 ;;
 	--sheet-only) doPage=0; shift ;;
 	--page-only)  doSheet=0; shift ;;
+	--check)      doCheck=1; shift ;;
 	-h|--help)    grep -E '^##' "$0" | sed 's/^##\t\?//'; exit 0 ;;
 	*) echo "wallpaper-gallery: unknown option: $1" >&2; exit 2 ;;
 esac; done
@@ -68,8 +72,8 @@ fEcho()       { echo "[ $* ]"; }
 fEcho_Clean() { echo "$*"; }
 fSkip()       { echo "wallpaper-gallery: $1" >&2; exit 2; }   ## 2 = non-fatal skip, as elsewhere in cicd
 
-command -v ffmpeg >/dev/null || fSkip "ffmpeg not found"
 [[ -d "$src" ]] || fSkip "no wallpaper folder: $src"
+((doCheck)) || command -v ffmpeg >/dev/null || fSkip "ffmpeg not found"
 
 declare -i tileW="${tile%%x*}" tileH="${tile##*x}"
 declare -i thumbW="${thumb%%x*}" thumbH="${thumb##*x}"
@@ -100,6 +104,35 @@ declare -i count="${#images[@]}"
 ((count)) || fSkip "no images in $src"
 
 declare -i rows=$(( (count + cols - 1) / cols ))
+
+##	Both views are rendered from one list in one run, so the page's records say
+##	what the sheet holds too. The sheet itself can only be checked by its size:
+##	a row count that does not fit the pack is a stale sheet, though a change
+##	within one row is not caught.
+if ((doCheck)); then
+	page="${docs}/wallpapers/index.html"
+	[[ -r "$page" ]] || { echo "wallpaper-gallery: no gallery page at ${page}" >&2; exit 1; }
+	declare -i bad=0
+	stale="$(diff <(printf '%s\n' "${images[@]}" | sed 's:.*/::' | LC_ALL=C sort) \
+		<(grep -o '"f":"[^"]*"' "$page" | sed 's/^"f":"//; s/"$//; s/\\"/"/g; s/\\\\/\\/g' | LC_ALL=C sort) || true)"
+	if [[ -n "$stale" ]]; then
+		echo "wallpaper-gallery: the gallery page does not match the pack (< pack only, > page only):" >&2
+		grep '^[<>]' <<<"$stale" | sed 's/^/    /' >&2
+		bad=1
+	fi
+	dims="$(file -b "$out" 2>/dev/null | grep -oE '[0-9]+x[0-9]+' | tail -1 || true)"
+	if [[ -n "$dims" ]]; then
+		## margin and padding are both 6, as the tile filter below lays them out
+		declare -i sheetRows=$(( (${dims##*x} - 12 + 6) / (tileH + 6) ))
+		if ((sheetRows != rows)); then
+			echo "wallpaper-gallery: the contact sheet has ${sheetRows} rows, and ${count} images need ${rows}" >&2
+			bad=1
+		fi
+	fi
+	((bad)) && { echo "wallpaper-gallery: re-run cicd/utility/wallpaper-gallery.bash and commit what it writes" >&2; exit 1; }
+	echo "wallpaper-gallery: the gallery matches the pack (${count} images)"
+	exit 0
+fi
 
 fEcho_Clean
 fEcho "Wallpaper gallery"
@@ -219,3 +252,4 @@ fi
 ##	Script history:
 ##		- 20260819: Created.
 ##		- 20260819: Added the Pages gallery - thumbnail grid, in-place viewer, prev/next.
+##		- 20260917: --check, so the pipeline notices a gallery left behind by the pack.
