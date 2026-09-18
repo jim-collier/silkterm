@@ -623,9 +623,29 @@ impl Drop for TermInstance {
 	fn drop(&mut self) {
 		let _ = self.sender.send(Msg::Shutdown);
 		if let Some(io) = self.io.take() {
-			let _ = io.join();
+			join_for(io, SHUTDOWN_WAIT);
 		}
 	}
+}
+
+// How long closing a pane waits for its reader thread (join_for).
+const SHUTDOWN_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
+
+// Wait for a pane's reader thread to end, but not for good. Its last act is
+// waiting on the shell after the hang-up signal, and a shell that ignores it
+// (a `nohup` job, a trap) ends only when it chooses. This runs on the
+// window's thread, so the whole window froze until then. Past the wait the
+// handle is dropped and the thread finishes on its own. True if it ended.
+fn join_for(io: std::thread::JoinHandle<()>, wait: std::time::Duration) -> bool {
+	let deadline = std::time::Instant::now() + wait;
+	while !io.is_finished() {
+		if std::time::Instant::now() >= deadline {
+			return false;
+		}
+		std::thread::sleep(std::time::Duration::from_millis(1));
+	}
+	let _ = io.join();
+	true
 }
 
 // Variables the launching shell keeps for ITSELF, which must not ride along
@@ -1125,7 +1145,7 @@ fn wsl_cd(argv: &[String], dir: &std::path::Path) -> Option<Vec<String>> {
 mod tests {
 	use super::{
 		SHELL_PRIVATE_ENV, WakeGate, env_fixups, expand_refs, grid_dims, is_command_child,
-		parse_env_block, query_reply, requested_color, usable_cwd, wsl_cd,
+		join_for, parse_env_block, query_reply, requested_color, usable_cwd, wsl_cd,
 	};
 	#[cfg(unix)]
 	use super::{program_name, status_text};
@@ -1192,6 +1212,27 @@ mod tests {
 		wide.resize(grid_dims(1, 3));
 		assert_eq!(wide.columns(), 2);
 		assert_eq!(grid_dims(0, 0).screen_lines, 1);
+	}
+
+	// Closing a pane whose shell ignores the hang-up signal froze the whole
+	// window until that shell ended, since the close waited on it.
+	#[test]
+	fn closing_a_pane_does_not_wait_on_a_shell_that_stays() {
+		use std::time::{Duration, Instant};
+		let stays = std::thread::spawn(|| std::thread::sleep(Duration::from_secs(5)));
+		let start = Instant::now();
+		assert!(!join_for(stays, Duration::from_millis(100)));
+		assert!(
+			start.elapsed() < Duration::from_secs(2),
+			"waited {:?}",
+			start.elapsed()
+		);
+
+		let ends = std::thread::spawn(|| std::thread::sleep(Duration::from_millis(10)));
+		assert!(
+			join_for(ends, Duration::from_secs(5)),
+			"a normal close is reaped"
+		);
 	}
 
 	fn argv(words: &str) -> Vec<String> {

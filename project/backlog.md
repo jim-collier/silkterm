@@ -312,8 +312,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- The engine keeps at most nine per cell now. Upstream's fix is carried on the fork's 0.26.0 branch until a release has it.
 	- Code review 20260914 item 66 (F98, blocking): On Windows a shell whose path holds a space can be tricked into running a different program, and an inherited directory with a space reaches the shell split in two.
 	- Code review 20260914 item 67 (F99, should-fix): On Linux a program that closes its terminal but keeps running spins a core at 100% until it exits.
-	- Code review 20260914 item 68 (F100, should-fix): Double-clicking an unmatched bracket scans the whole scrollback under the terminal lock, so it hitches on a large history.
-	- Code review 20260914 item 69 (F101, should-fix): Closing a pane whose program ignores the hang-up signal freezes the whole window until that program ends.
+	- ✅ Code review 20260914 item 68 (F100, should-fix): Double-clicking an unmatched bracket scans the whole scrollback under the terminal lock, so it hitches on a large history.
+		- SilkTerm looks for the partner itself now, at most 200 rows away, once at the click. A bracket with no partner in reach is selected alone. A bracket to its partner across lines still works, and so does a word.
+		- Pinned by `a_bracket_looks_for_its_partner_only_so_far`, watched failing with the reach removed.
+	- ✅ Code review 20260914 item 69 (F101, should-fix): Closing a pane whose program ignores the hang-up signal freezes the whole window until that program ends.
+		- A close waits a quarter second for the pane to finish, then goes on and lets it finish on its own. The program is not killed, since a `nohup` job ignores the signal on purpose.
+		- Pinned by `closing_a_pane_does_not_wait_on_a_shell_that_stays`, watched failing with the old wait.
 	- Code review 20260914 item 70 (F102, should-fix): On Windows each pane leaks a couple of process handles that are never freed while SilkTerm runs.
 	- Code review 20260914 item 71 (F103, should-fix): A program can force unbounded memory by setting a huge window title and pushing it onto the title stack.
 	- ✅ Code review 20260914 item 72 (F104, blocking): Opening a bash pane in a cloned repository can run a command hidden in its branch name, through the git-aware prompt.

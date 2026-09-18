@@ -7027,8 +7027,12 @@ impl ApplicationHandler<UserEvent> for App {
 									p.update_selection(end, Side::Right);
 								} else if double {
 									// a shape we can name (URL, path) wins; else the
-									// contents of a matched pair; else the word
-									match p.shape_span(point).or_else(|| p.pair_span(point, &pairs))
+									// contents of a matched pair; else a bracket to
+									// its partner; else the word
+									match p
+										.shape_span(point)
+										.or_else(|| p.pair_span(point, &pairs))
+										.or_else(|| p.bracket_span(point))
 									{
 										Some((start, end)) => {
 											p.begin_selection(
