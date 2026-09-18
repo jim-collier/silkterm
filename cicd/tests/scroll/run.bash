@@ -246,7 +246,7 @@ run_scene(){
 		## the frames judged. Count only what comes after, taken just before the
 		## loop can have started.
 		if [[ "$mode" == pinned ]] && ((! marked && SECONDS >= settle - 1)); then
-			lead=$(grep -c SCROLLDBG "$trace" 2>/dev/null || true); lead=${lead:-0}; marked=1
+			lead=$(fTraceFrames "$trace"); marked=1
 		fi
 		if [[ "$mode" == still ]]; then
 			## A still screen builds only when something changes, so it may never
@@ -255,7 +255,7 @@ run_scene(){
 			((done_at == 0)) && grep -q 'alt=1' "$trace" 2>/dev/null && done_at=$((SECONDS + 3))
 			((done_at && SECONDS >= done_at)) && break
 		else
-			frames=$(grep -c SCROLLDBG "$trace" 2>/dev/null || true); frames=${frames:-0}
+			frames=$(fTraceFrames "$trace")
 			frames=$((frames - lead))
 			[[ "$mode" != pinned ]] || ((marked)) || frames=0
 			((frames >= want)) && break
@@ -265,7 +265,7 @@ run_scene(){
 	stop_silk "$pid"
 	wait "$pid" 2>/dev/null || true
 
-	((verbose)) && fEcho_Clean "  ${label}: $(grep -c SCROLLDBG "$trace" 2>/dev/null || echo 0) trace frames"
+	((verbose)) && fEcho_Clean "  ${label}: $(fTraceFrames "$trace") trace frames"
 	local rc=0
 	python3 "${meDir}/analyze.py" --mode "$mode" --expect-st "$est" --expect-sb "$esb" --label "$label" --skip-frames "$lead" <"$trace" \
 		| sed 's/^/  /' || rc=$?
@@ -312,7 +312,7 @@ real_smoke(){
 	wait "$pid" 2>/dev/null || true
 	## An idle real app only builds on dirty frames, so a handful is expected; the
 	## signal is that it stayed alive (no hang) and rendered the alt screen (frames>0).
-	local n; n="$(grep -c SCROLLDBG "$trace" 2>/dev/null || echo 0)"
+	local n; n="$(fTraceFrames "$trace")"
 	if ((alive)) && ((n >= 1)); then
 		fEcho_Clean "  ${app}: OK (alive, entered alt-screen: ${n} frame(s))"
 	else

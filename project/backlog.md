@@ -375,10 +375,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- The PATH is written to the registry without telling Windows it changed. Code review 20260914 item 58 (F90).
 	- Opened: 20260914-124200
 
-- 🔘 The scroll harness prints a frame count of `0` twice when a trace has none, and its real-app check compares that doubled text as a number.
-	- `grep -c` prints 0 and exits 1 on no match, so `|| echo 0` adds a second one. Only the verbose line and the best-effort smoke read it.
-	- Opened: 20260916
-
 - 🔘 The new-window test fails on Windows.
 	- `a_new_window_keeps_the_settings_file_and_the_panes_directory` expects `--config /x/alt.shcl`, and Windows makes that path absolute as `C:\x\alt.shcl`. The test's expectation is wrong there, not the new window.
 	- Opened: 20260916
@@ -528,6 +524,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ The scroll harness prints a frame count of `0` twice when a trace has none, and its real-app check compares that doubled text as a number.
+	- `grep -c` prints 0 and exits 1 on no match, so `|| echo 0` adds a second one. Only the verbose line and the best-effort smoke read it.
+	- Fixed: one function counts a trace's frames for every place that asks, and it prints a single 0 for none.
+	- Pinned by: the scroll verdict test, with a trace holding frames, one holding none and no trace at all. Watched failing with the old count.
+	- Opened: 20260916. Closed: 20260917.
 
 - ✅ The feature that is supposed to release the GPU after a timeout, doesn't seem to be doing anything. (Unless there's no visible side-effect when restoring?)
 	- Reproduced: partly. Of five windows open on the reference box, only two ran a build with the feature, and one of those had already let its device go. It was gone from `nvidia-smi`, with fewer threads and fewer driver files open. The other three were older builds.
