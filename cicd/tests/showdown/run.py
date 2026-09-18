@@ -73,7 +73,7 @@ tb.readme_path = lambda: str(readme)
 
 def bench(*args):
 	with redirect_stdout(io.StringIO()) as out:
-		tb.main(["--scene", "ascii", "--label", "XTerm/999", *args])
+		tb.main(["--scene", "ascii", "--label", "XTerm/999-rc1+20260917", *args])
 	return out.getvalue()
 
 def xterm_row():
@@ -94,7 +94,8 @@ grid[0] = (160, 42)
 bench("--history", "--quick")
 check("a quick history refresh leaves the table alone", xterm_row() == before, xterm_row())
 bench()
-check("a full run at the table's grid still writes its row", "| 999 |" in xterm_row(), xterm_row())
+check("a full run at the table's grid still writes its row", "| 999" in xterm_row(), xterm_row())
+check("and its version keeps the prerelease tag, not the stamp", "| 999-rc1 |" in xterm_row(), xterm_row())
 
 ## The writer puts back a table it has nothing new for exactly as it was.
 block = original.split(tb.README_BEGIN, 1)[1].split(tb.README_END, 1)[0]
@@ -175,6 +176,17 @@ env["CARGO_TARGET_DIR"] = "tgt"
 got = bash('repoRoot=/repo; appId=silkterm\n' + lookup + 'printf "%s" "${exeCandidates[0]}"')
 check("and takes a relative one from the repository",
 	got.stdout == "/repo/tgt/x86_64-pc-windows-gnu/release/silkterm.exe", got.stdout + got.stderr)
+
+## README note 9 names the rig behind each group of columns. Each has to be the
+## rig its script really is.
+note9 = next((ln for ln in original.splitlines() if ln.startswith("<sub><sup>9</sup>")), "")
+speed_rig = (UTILITY / "include/termbench-run.bash").read_text(encoding="utf-8")
+size_rig_text = size_rig.read_text(encoding="utf-8")
+check("note 9 says the speed rig is a headless Wayland compositor",
+	"headless Wayland compositor" in note9 and "WLR_BACKENDS=headless" in speed_rig)
+check("note 9 says the size rig is an X server drawing in software at its grid",
+	"private X server drawing in software, at a 100x30 grid" in note9
+	and "Xvfb" in size_rig_text and 'grid="100x30"' in size_rig_text)
 
 shutil.rmtree(scratch, ignore_errors=True)
 if failures:

@@ -985,11 +985,11 @@ def _head_key(cell):
 def _short_version(build):
 	"""
 	The Ver column is narrow and shares its width with everything else, so it
-	carries the release number only. The build stamp and prerelease tag matter
-	when comparing one dev build against another, which is what the tool's own
-	history table is for.
+	drops the build stamp, which matters only when comparing one dev build
+	against another - the tool's own history table is for that. The prerelease
+	tag stays, since without it the cell names a release that may not exist.
 	"""
-	return build.split("+", 1)[0].split("-", 1)[0] or "-"
+	return build.split("+", 1)[0] or "-"
 
 
 def _split_table(block):
