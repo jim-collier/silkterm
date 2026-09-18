@@ -1443,6 +1443,46 @@ impl IdleClock {
 	}
 }
 
+// What the window title says about the device. Nothing normally, a note while
+// it is let go, another while it comes back, and a last one for a few seconds
+// after. The wallpaper is the last thing a rebuild waits on, and the only part
+// slow enough for anyone to see, so coming back lasts until it answers.
+// Any rebuild counts, a return to this console as much as the idle release.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Conserve {
+	Off,
+	Saving,
+	Restoring,
+	Restored(Instant),
+}
+
+const RESTORED_SHOWN: Duration = Duration::from_secs(5);
+
+impl Conserve {
+	fn note(self, now: Instant) -> Option<&'static str> {
+		match self {
+			Conserve::Off => None,
+			Conserve::Saving => Some("resource conservation mode"),
+			Conserve::Restoring => Some("restoring resources ..."),
+			Conserve::Restored(at) => (now < at + RESTORED_SHOWN).then_some("resources restored"),
+		}
+	}
+
+	// When the title next changes on its own.
+	fn wake(self) -> Option<Instant> {
+		match self {
+			Conserve::Restored(at) => Some(at + RESTORED_SHOWN),
+			_ => None,
+		}
+	}
+
+	fn wallpaper_answered(&mut self, now: Instant) {
+		if *self == Conserve::Restoring {
+			*self = Conserve::Restored(now);
+		}
+	}
+}
+
 // What the idle release reads of the window (see `release_deadline`).
 struct Idle {
 	focused: bool,
@@ -1958,6 +1998,7 @@ struct State {
 	gl: bool, // born on the glutin GL path (X11): the one with a VT watcher and sentinels
 	adapter_info: wgpu::AdapterInfo, // for the About dialog, which may open before a rebuild
 	idle: IdleClock,
+	conserve: Conserve,
 	vt_heal: VtHeal,
 }
 
@@ -2816,6 +2857,7 @@ impl State {
 			&config::title_prefix(),
 			suffix.as_deref(),
 		);
+		let title = crate::tabtitle::with_note(title, self.conserve.note(Instant::now()));
 		if title != self.last_win_title {
 			self.window.set_title(&title);
 			self.last_win_title = title;
@@ -3704,6 +3746,9 @@ impl State {
 		self.invalidate_prepared();
 		self.rebirth = Some(gpu.release());
 		self.idle.wake_owed = false;
+		// no frame draws while released, so nothing else would update the title
+		self.conserve = Conserve::Saving;
+		self.update_title();
 		trim_heap();
 		idledbg(&format!("device released in {:?}", start.elapsed()));
 	}
@@ -3748,6 +3793,8 @@ impl State {
 		// the window may have been resized while there was no surface to follow
 		self.relayout_all();
 		self.request_wallpaper(false);
+		self.conserve = Conserve::Restoring;
+		self.update_title();
 		// the grid moved while nothing drew: one hard-cut catch-up frame
 		self.freeze_catchup();
 		idledbg(&format!("device rebuilt in {:?}", start.elapsed()));
@@ -3973,6 +4020,8 @@ impl State {
 		// Answered either way: an empty result is the news that there is no
 		// wallpaper to wait for, which settles the question just as well.
 		self.wp_answered = true;
+		self.conserve.wallpaper_answered(Instant::now());
+		self.update_title();
 		self.dirty = true;
 	}
 
@@ -4195,6 +4244,8 @@ impl State {
 		// re-decoded rather than kept resident: a large wallpaper is tens of MB, and
 		// a VT switch is rare enough not to trade that for a moment without one
 		self.request_wallpaper(false);
+		self.conserve = Conserve::Restoring;
+		self.update_title();
 		self.dirty = true;
 	}
 
@@ -6497,6 +6548,7 @@ impl ApplicationHandler<UserEvent> for App {
 			gl,
 			adapter_info,
 			idle: IdleClock::new(),
+			conserve: Conserve::Off,
 			vt_heal: VtHeal::default(),
 		});
 		// A wallpaper given on the command line (--wallpaper-file, incl. an explicit
@@ -7819,6 +7871,11 @@ impl ApplicationHandler<UserEvent> for App {
 			vramdbg("vt return, second pass -> heal_gpu");
 			state.heal_gpu(self.dialog.is_some());
 		}
+		// "resources restored" comes down on its own after a few seconds
+		if state.conserve.wake().is_some_and(|at| Instant::now() >= at) {
+			state.conserve = Conserve::Off;
+			state.update_title();
+		}
 		// GL path: the VT watcher (spawn_vt_watch) is the real loss trigger; the
 		// readback probes below stay as field evidence + a fallback for a missed
 		// switch, since a real purge read back "intact" (driver restores readback
@@ -8061,6 +8118,12 @@ impl ApplicationHandler<UserEvent> for App {
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,
 		};
+		// wake to take "resources restored" out of the title
+		let flow = match (flow, state.conserve.wake()) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
 		// wake for the second heal after a return to this console
 		let flow = match (flow, state.vt_heal.again) {
 			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
@@ -8170,12 +8233,12 @@ impl State {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Caret, CloseScope, ContextMenu, CopyMetrics, Entry, Idle, IdleClock, MenuAction,
-		TAB_CLOSE_M, TabEdit, VT_SETTLE, ViewState, VtHeal, accel_at, accel_clash, close_scope,
-		copybox_fit, copybox_place, fit_px, focus_ring, is_copy_chord, key_is_typed, menu_metrics,
-		mia, msub, mta, needs_folder_read, new_window_command, pace_frame, rating_step,
-		release_deadline, remember_resize, rotation_next, settings_after_reload, tab_close_box,
-		tab_command_line, tab_title_w, typed_title, view_menu_items, window_px,
+		Caret, CloseScope, Conserve, ContextMenu, CopyMetrics, Entry, Idle, IdleClock, MenuAction,
+		RESTORED_SHOWN, TAB_CLOSE_M, TabEdit, VT_SETTLE, ViewState, VtHeal, accel_at, accel_clash,
+		close_scope, copybox_fit, copybox_place, fit_px, focus_ring, is_copy_chord, key_is_typed,
+		menu_metrics, mia, msub, mta, needs_folder_read, new_window_command, pace_frame,
+		rating_step, release_deadline, remember_resize, rotation_next, settings_after_reload,
+		tab_close_box, tab_command_line, tab_title_w, typed_title, view_menu_items, window_px,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
@@ -8298,6 +8361,34 @@ mod tests {
 		assert!(seen.since > long_ago, "output on screen is a sign of life");
 		assert!(seen.output(true, false));
 		assert!(seen.wake_owed);
+	}
+
+	#[test]
+	fn the_title_note_follows_the_device_out_and_back() {
+		let now = Instant::now();
+		assert_eq!(Conserve::Off.note(now), None);
+		assert_eq!(
+			Conserve::Saving.note(now),
+			Some("resource conservation mode")
+		);
+		let mut state = Conserve::Saving;
+		state.wallpaper_answered(now);
+		assert_eq!(
+			state,
+			Conserve::Saving,
+			"a wallpaper while released changes nothing"
+		);
+		state = Conserve::Restoring;
+		assert_eq!(state.note(now), Some("restoring resources ..."));
+		assert_eq!(
+			state.wake(),
+			None,
+			"restoring waits on the wallpaper, not a clock"
+		);
+		state.wallpaper_answered(now);
+		assert_eq!(state.note(now), Some("resources restored"));
+		assert_eq!(state.wake(), Some(now + RESTORED_SHOWN));
+		assert_eq!(state.note(now + RESTORED_SHOWN), None);
 	}
 
 	// A return to this console is healed at once and once more when the X

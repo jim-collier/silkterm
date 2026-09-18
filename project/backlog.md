@@ -1792,6 +1792,14 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 #### Done - New features and enhancements
 
+- ✅ Show in window title, if GPU and CPU savings are in effect, then show when restoring, then restored.
+	- In effect: "[regular title] (resource conservation mode)"
+	- Restoring: "[regular title] (restoring resources ...)"
+	- Restored: "[regular title] (resources restored)"
+		- Show for 5 seconds after restoration
+	- Opened: 20260918
+	- Done: restoring lasts until the wallpaper is back. Shown for any rebuild, a VT switch included, and after a custom title too.
+
 - ✅ Enter in the Settings dialog is OK, and walking onto a text box selects its value.
 	- Enter used to close the open field and stop there, so OK took a second press. It now closes the field and fires OK, the way it does in any other dialog. A menu, a dropdown popup and the prompt box still take Enter for themselves.
 	- Tab or an arrow onto a text, color or number box opens it with the value selected, so typing replaces it. That already happened on a click, on Space, and on the first character typed; the field just sat shut and blank until then.

@@ -676,6 +676,8 @@ Three defects came out of building it, all fixed with it: a program could put co
 
 - The same release and rebuild heals a window after a return to its console from a text one, twice: at once, and again three seconds later, after the X server has set the mode. The older fix rebuilt only the glyphs and the wallpaper, and each thing added to the device since then was one more that a switch could leave spoiled.
 
+- The window title says so (2026-09-18). "(resource conservation mode)" while released, "(restoring resources ...)" until the wallpaper is back, since the device itself returns too fast to see, then "(resources restored)" for five seconds. Any rebuild shows it, a return from a text console included, and it goes on a `--title` too, since it is news about the window rather than part of its name.
+
 - Rejected: dropping the uploads and keeping the device. The device and its context are the fixed cost the feature exists to remove, and the uploads are the smaller half.
 
 - Rejected: disabling the feature under transparency. The X11 GL path survives the teardown, since the ARGB visual belongs to the window and a new context on the kept config binds to it.
