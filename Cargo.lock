@@ -2474,6 +2474,7 @@ dependencies = [
  "wgpu",
  "windows-sys 0.59.0",
  "winit",
+ "x11-dl",
  "x11rb",
  "zeno",
 ]
