@@ -29,5 +29,14 @@ fScrollVerdict(){
 	echo "OK: no scroll regressions"; return 0
 }
 
+## fTraceFrames <trace>
+## Echoes how many frames a trace holds, 0 for none or no file. `grep -c`
+## prints 0 and exits 1 on no match, so `|| echo 0` after it printed 0 twice.
+fTraceFrames(){
+	local n; n="$(grep -c SCROLLDBG "${1}" 2>/dev/null || true)"
+	echo "${n:-0}"
+}
+
 ##	History:
 ##		- 20260908 JC: Split out of run.bash so the exit code has a test.
+##		- 20260917 JC: Trace frame count.

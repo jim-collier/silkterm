@@ -44,7 +44,8 @@
 ##		demo-video.py [--profile video,gif] [--segments a,b,...] [--seed N]
 ##		              [--keep-work] [--no-rotate] [--no-asset] [--display :98]
 ##		              [--out-dir DIR]
-##		Env: SILK_BIN overrides the binary (default REPO/target/release/silkterm).
+##		Env: SILK_BIN overrides the binary (default release/silkterm under
+##		CARGO_TARGET_DIR, or REPO/target).
 ##	Notes:
 ##		AV sync needs no calibration: before the app launches, the bare root is
 ##		flashed white (xsetroot) at a recorded wall-clock time; the bright frame
@@ -64,6 +65,7 @@ import glob
 import json
 import math
 import os
+import pwd
 import random
 import re
 import shutil
@@ -105,7 +107,8 @@ FRAME_L, FRAME_R, FRAME_T, FRAME_B = 2, 2, 32, 2
 
 # The decoration is built at record time from a square-cornered dark theme (its
 # parts are flat one-color SVGs, so a color swap is the whole job) and dropped
-# in the WM's own throwaway HOME - nothing is installed system-wide. Slate
+# in the WM's own throwaway HOME - nothing is installed system-wide, and the
+# WM's session gets every XDG folder inside that HOME too (see wm_env). Slate
 # blue-gray: it has to read as chrome next to mint terminal text and warm yellow
 # captions, while separating the window from the black border and black band.
 WM_BASE_THEME = "Material-Black-Pistachio"  # SQUARE corners (opaque top-left)
@@ -162,6 +165,15 @@ def out_of(cmd):
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ##	Recorder: display/app/capture lifecycle + the event/banner logs
 
+def run_user():
+	# gui-headless.bash names its run folder the same way; USER is unset under
+	# cron and in some ssh contexts
+	return os.environ.get("USER") or pwd.getpwuid(os.getuid()).pw_name
+
+def target_dir():
+	# cargo is run from the repo, so a relative CARGO_TARGET_DIR hangs off it
+	return REPO / os.environ.get("CARGO_TARGET_DIR", "target")
+
 def gpu_prefix(e):
 	"""Command prefix that puts the app on a real GPU, editing env `e` as needed.
 
@@ -190,8 +202,8 @@ class Rec:
 		self.out_fps  = profile["out_fps"]
 		self.display  = args.display
 		self.num      = self.display.lstrip(":")
-		self.auth     = f"/tmp/cicd-gui-headless-{os.environ['USER']}/Xauthority-{self.num}"
-		self.bin      = os.environ.get("SILK_BIN", str(REPO / "target/release/silkterm"))
+		self.auth     = f"/tmp/cicd-gui-headless-{run_user()}/Xauthority-{self.num}"
+		self.bin      = os.environ.get("SILK_BIN") or str(target_dir() / "release/silkterm")
 		self.work     = Path(tempfile.mkdtemp(prefix="silk-demo-"))
 		self.home     = self.work / "home"
 		self.wmhome   = self.work / "wmhome"    # the WM's HOME: theme + its own xfconf
@@ -280,27 +292,66 @@ class Rec:
 			CICD_HEADLESS_SIZE=f"{self.size[0]}x{self.size[1]}x24")
 		subprocess.run([gh, "stop"], env=e, capture_output=True)
 		run([gh, "start"], env=e)
-		theme = self.make_theme()
-		wm_env = self.env()
-		wm_env["HOME"] = str(self.wmhome)     # finds the theme, keeps its xfconf here
-		self.wm = subprocess.Popen(["dbus-run-session", "--", "sh", "-c",
-			f'xfconf-query -c xfwm4 -p /general/theme --create -t string -s "{theme}"; '
-			'xfconf-query -c xfwm4 -p /general/title_font --create -t string -s "Lato Bold 10"; '
-			'xfconf-query -c xfwm4 -p /general/button_layout --create -t string -s "O|HMC"; '
-			"exec xfwm4 --compositor=off --vblank=off"],
-			env=wm_env, stdout=open(self.work / "wm.log", "w"), stderr=subprocess.STDOUT)
+		self.start_wm(self.make_theme())
 		time.sleep(2.0)
 		# pure black so the thin border framing the window reads as black, not a tint
 		subprocess.run(["xsetroot", "-solid", "#000000"], env=self.env(), check=False)
 
-	def stop_display(self):
-		if getattr(self, "wm", None):
-			self.wm.terminate()
+	def wm_env(self):
+		# xfconfd keeps its channels under XDG_CONFIG_HOME, not HOME, so with the
+		# desktop's own one inherited a recording wrote its theme, title font and
+		# buttons over the real desktop's. Every base folder goes inside wmhome.
+		e = self.env()
+		e["HOME"] = str(self.wmhome)
+		for var, sub in (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"),
+				("XDG_CACHE_HOME", ".cache"), ("XDG_STATE_HOME", ".local/state"),
+				("XDG_RUNTIME_DIR", "run")):
+			d = self.wmhome / sub
+			d.mkdir(parents=True, exist_ok=True, mode=0o700)
+			e[var] = str(d)
+		return e
+
+	def start_wm(self, theme, wm="xfwm4 --compositor=off --vblank=off"):
+		# its own session, so stop_wm can end the bus and xfconfd with it
+		self.wm = subprocess.Popen(["dbus-run-session", "--", "sh", "-c",
+			f'xfconf-query -c xfwm4 -p /general/theme --create -t string -s "{theme}"; '
+			'xfconf-query -c xfwm4 -p /general/title_font --create -t string -s "Lato Bold 10"; '
+			'xfconf-query -c xfwm4 -p /general/button_layout --create -t string -s "O|HMC"; '
+			f"exec {wm}"],
+			env=self.wm_env(), stdout=open(self.work / "wm.log", "w"),
+			stderr=subprocess.STDOUT, start_new_session=True)
+
+	def stop_wm(self):
+		# dbus-run-session dies on SIGTERM and leaves its bus, xfconfd and the WM
+		# running under init. They all stay in its process group, so end that.
+		if not getattr(self, "wm", None):
+			return
+		for sig in (signal.SIGTERM, signal.SIGKILL):
 			try:
-				self.wm.wait(timeout=5)
-			except subprocess.TimeoutExpired:
-				self.wm.kill()
-			self.wm = None
+				os.killpg(self.wm.pid, sig)
+			except ProcessLookupError:
+				break
+			deadline = time.time() + 5
+			while time.time() < deadline and self.wm_survivors():
+				time.sleep(0.1)
+			if not self.wm_survivors():
+				break
+		try:
+			self.wm.wait(timeout=5)
+		except subprocess.TimeoutExpired:
+			pass
+		self.wm = None
+
+	def wm_survivors(self):
+		self.wm.poll()                         # reap the leader, or it counts as alive
+		try:
+			os.killpg(self.wm.pid, 0)
+			return True
+		except ProcessLookupError:
+			return False
+
+	def stop_display(self):
+		self.stop_wm()
 		gh = str(REPO / "cicd/utility/gui-headless.bash")
 		e = dict(os.environ, CICD_HEADLESS_DISPLAY=self.display)
 		subprocess.run([gh, "stop"], env=e, capture_output=True)
@@ -1479,6 +1530,10 @@ if __name__ == "__main__":
 
 
 ##	Script history:
+##		- 20260917: the WM session keeps every XDG folder inside its own HOME, so
+##		  xfconfd no longer writes the demo theme over the desktop's, and ends
+##		  with its bus and xfconfd; USER may be unset; the default binary follows
+##		  CARGO_TARGET_DIR.
 ##		- 20260813: the run pins the app's frame rate to the capture rate
 ##		  (SILK_MAX_FPS) - the two were 60 and 50, so one frame in six was dropped
 ##		  and the picture hitched on a strict period. Gif back to 50fps on that

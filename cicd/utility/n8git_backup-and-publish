@@ -103,12 +103,16 @@ fMain(){
 	## Generic variables
 	local -i wasShown_Copyright=0; local -i wasShown_About=0; wasShown_Syntax=0
 
-	## Check for need to show help
+	## Check for need to show help. Whole arguments only: matching the joined
+	## string took `-m "fix -v flag"` as a request for the version.
 	{ ((atLeastOneArgRequired)) && [[ -z "${1:-}${2:-}${3:-}${4:-}" ]]; } && { fCopyright; fAbout; fSyntax; return 1; }
-	case " ${*,,} " in
-		*" -h "*|*" --help "*)                 fCopyright; fAbout; fSyntax; return 0; ;;
-		*" -v "*|*" --ver "*|*" --version "*)  fCopyright;                  return 0; ;;
-	esac
+	local helpArg=""
+	for helpArg in "${@}"; do
+		case "${helpArg,,}" in
+			-h|--help)            fCopyright; fAbout; fSyntax; return 0; ;;
+			-v|--ver|--version)   fCopyright;                  return 0; ;;
+		esac
+	done
 
 	## Validate dependencies
 	fMustBeInPath rar
@@ -348,7 +352,6 @@ fParseArgs(){
 	local thisStr=""
 	for ((i=1; i<=totalArgCount; i++)); do
 		thisStr="${!i}"
-		thisStr="${thisStr//\"/″}"; thisStr="${thisStr//\'/′}"
 		allArgsArr+=("${thisStr}")
 	done
 
@@ -617,6 +620,10 @@ fMain  "${@}"
 ##		- 20260915:
 ##			- A failed pull puts the stashed work back before stopping, and a run
 ##			  refuses to start while an earlier run's 'auto-stash' is still stashed.
+##		- 20260917:
+##			- A commit message is committed as given; quote marks were swapped for
+##			  look-alikes.
+##			- Only a whole '-h' or '-v' argument asks for help or the version.
 ##		- 20260917: Backup excludes now cover compiler and build caches: .zig-cache,
 ##		  ccache, CMakeFiles, .cache and the JS/Haskell/Python ones, dir and contents
 ##		  both. Also the Panoplia audit scratch trees, which each hold a whole build.

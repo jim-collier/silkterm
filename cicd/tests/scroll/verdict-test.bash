@@ -85,6 +85,26 @@ fAnalyze "an ease left running on the alt screen" 1 still "0 0 0.5 0
 0 0 0 1"
 fAnalyze "no alt screen at all" 2 still "0 0 0.5 0"
 
+## frame counts, for a trace with frames, one with none and no trace at all
+fCount(){
+	local -r what="${1}" want="${2}" file="${3}"
+	local got
+	got="$(fTraceFrames "${file}")"
+	if [[ "${got}" == "${want}" ]]; then
+		echo "  ok   ${what}"
+	else
+		echo "  FAIL ${what}: wanted ${want}, got '${got//$'\n'/\\n}'"
+		failures=$((failures + 1))
+	fi
+}
+countDir="$(mktemp -d)"
+printf 'SCROLLDBG f=0\nnoise\nSCROLLDBG f=1\n' >"${countDir}/two"
+printf 'noise\n' >"${countDir}/none"
+fCount "a trace with two frames" 2 "${countDir}/two"
+fCount "a trace with no frames"  0 "${countDir}/none"
+fCount "no trace file"           0 "${countDir}/missing"
+rm -f "${countDir}/two" "${countDir}/none"; rmdir "${countDir}"
+
 ## run.bash where something it needs is missing: 3, so cicd says skipped, not OK
 fakeBin="$(mktemp -d)"
 trap 'rm -f "${fakeBin}/dirname" "${fakeBin}/python3"; rmdir "${fakeBin}" 2>/dev/null || true' EXIT
@@ -107,3 +127,4 @@ echo "all passed"
 ##	History:
 ##		- 20260908 JC: Created.
 ##		- 20260915 JC: Trace checks and the skips before any scene runs.
+##		- 20260917 JC: Frame counts.

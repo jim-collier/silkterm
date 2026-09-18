@@ -328,17 +328,39 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Left alone: the parser keeps room for the longest escape sequence a pane has sent. It is one buffer per pane, reused rather than added to, and a fix would mean patching the parser crate as well.
 	- ✅ Code review 20260914 item 72 (F104, blocking): Opening a bash pane in a cloned repository can run a command hidden in its branch name, through the git-aware prompt.
 		- Branch and remote names are escaped before they go into the prompt. Fixed in x9ps1-git first and the copy taken again, with a test on each side.
-	- Code review 20260914 item 73 (F105, blocking): Recording the demo can replace the desktop's own window manager theme, title font and button layout.
-	- Code review 20260914 item 74 (F106, should-fix): When the publish step cannot reach the remote, uncommitted work is left in a git stash with no word of where it went.
-	- Code review 20260914 item 75 (F107, should-fix): The startup lint and profiler checks can mark a pipeline run as seen while it is still being written, so its later warnings are never shown.
-	- Code review 20260914 item 76 (F108, should-fix): `cicd/utility/gui-headless.bash` can report a display it did not start, and can stop a display or process that another run started.
-	- Code review 20260914 item 77 (F109, should-fix): A blank publish message at the pipeline prompt commits an automatic message instead of opening the editor the prompt promises.
-	- Code review 20260914 item 78 (F110, should-fix): The publish script changes quote marks in a `--message`, and does nothing at all when the message contains `-v` or `-h`.
-	- Code review 20260914 item 79 (F111, should-fix): The wallpaper gallery and the README contact sheet still show nine wallpapers that were removed from the pack.
+	- ✅ Code review 20260914 item 73 (F105, blocking): Recording the demo can replace the desktop's own window manager theme, title font and button layout.
+		- The recorder's window manager gets every XDG folder inside its own throwaway home, not only HOME. Its settings service had kept writing to the desktop's config folder.
+		- Pinned by `cicd/tests/demo/run.py`, which runs the session with the caller's XDG folders pointed at empty ones and checks they stay empty.
+	- ✅ Code review 20260914 item 74 (F106, should-fix): When the publish step cannot reach the remote, uncommitted work is left in a git stash with no word of where it went.
+		- A failed pull puts the stash back before stopping. That came in with the 09-15 utility sync. What was missing was a test.
+		- Pinned by the publish test, which runs the real script against a remote that has been moved away, one that is reachable, and a pop that conflicts.
+	- ✅ Code review 20260914 item 75 (F107, should-fix): The startup lint and profiler checks can mark a pipeline run as seen while it is still being written, so its later warnings are never shown.
+		- The pipeline writes its run log and its flamegraph under a name both checks skip, and renames each once it is whole. A failed run's log is renamed too.
+		- Pinned by `cicd/tests/gates/run.bash`, which runs the pipeline's own logging block, looks while it is part way through, and looks again after.
+	- ✅ Code review 20260914 item 76 (F108, should-fix): `cicd/utility/gui-headless.bash` can report a display it did not start, and can stop a display or process that another run started.
+		- A number another X server holds is refused, and success means our own server holds the number and answers.
+		- A saved pid carries its start time, so a pid that now belongs to something else is not taken for the server.
+		- A server belongs to the script that started it. While that script runs, another run can neither stop it nor share it. Once it has exited, as after a start by hand, anyone may.
+		- Pinned by the install test, with a foreign server on the number, a pid file naming another process, and two runs on one number.
+	- ✅ Code review 20260914 item 77 (F109, should-fix): A blank publish message at the pipeline prompt commits an automatic message instead of opening the editor the prompt promises.
+		- Decided: keep the automatic message and fix the words. The message is asked for before the build so the run can finish unattended, and an editor at the end would stop it.
+		- A blank answer now takes the same message `--yes` does, and the plan and the prompt both show it.
+		- Pinned by the publish test, which checks the plan, the prompt and the message the publisher commits.
+	- ✅ Code review 20260914 item 78 (F110, should-fix): The publish script changes quote marks in a `--message`, and does nothing at all when the message contains `-v` or `-h`.
+		- The message is committed as given, and only an argument that is exactly `-h` or `-v` asks for help or the version.
+		- Pinned by the publish test, with a message holding both quote marks and both flags, and an inline `--msg=` one.
+	- ✅ Code review 20260914 item 79 (F111, should-fix): The wallpaper gallery and the README contact sheet still show nine wallpapers that were removed from the pack.
+		- Both are rendered again from the pack, 104 images. Every remaining record keeps its credit and licence unchanged.
+		- The pipeline now fails when the gallery names other images than the pack, or the sheet has the wrong number of rows. A change inside one row of the sheet is not caught, since the sheet can only be checked by its size.
+		- The live gallery follows once `main` has the new page, at the next release.
 	- Code review 20260914 item 80 (F112, should-fix): The git-aware bash prompt shows nothing in a repository without an `origin` remote, and never shows how far ahead or behind a branch is.
-	- Code review 20260914 item 81 (F113, should-fix): Each demo recording leaves background daemons running after it ends.
-	- Code review 20260914 item 82 (F114, should-fix): The demo recorder fails at start when `USER` is not set.
-	- Code review 20260914 item 83 (F115, should-fix): The demo recorder uses a binary under `target/` even when `CARGO_TARGET_DIR` puts the build elsewhere.
+	- ✅ Code review 20260914 item 81 (F113, should-fix): Each demo recording leaves background daemons running after it ends.
+		- The session runs in its own process group, and stopping it ends the whole group, so the bus and the settings service go with it.
+		- Pinned by the same test, which looks for anything from the session still running.
+	- ✅ Code review 20260914 item 82 (F114, should-fix): The demo recorder fails at start when `USER` is not set.
+		- It falls back to the account name, the way `gui-headless.bash` does, so both find the same folder.
+	- ✅ Code review 20260914 item 83 (F115, should-fix): The demo recorder uses a binary under `target/` even when `CARGO_TARGET_DIR` puts the build elsewhere.
+		- With no `SILK_BIN` it looks under `CARGO_TARGET_DIR`, and a relative one is taken from the repository, where cargo runs.
 	- ✅ Code review 20260914 item 85 (F117, blocking): A release can go out with binaries built from a source file that was never added to git, so the tagged source differs from what was built.
 		- An untracked file that is not ignored counts as dirty now, and the release names the files. An ignored one still leaves the tree clean.
 	- ✅ Code review 20260914 item 86 (F118, should-fix): The scroll regression check counts a full-screen app slide that never starts as skipped, so the pipeline still passes.
@@ -374,10 +396,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 - 🔘 After the PowerShell installer adds SilkTerm to PATH on Windows, a new console opened from the Start menu does not find it until you sign out.
 	- The PATH is written to the registry without telling Windows it changed. Code review 20260914 item 58 (F90).
 	- Opened: 20260914-124200
-
-- 🔘 The scroll harness prints a frame count of `0` twice when a trace has none, and its real-app check compares that doubled text as a number.
-	- `grep -c` prints 0 and exits 1 on no match, so `|| echo 0` adds a second one. Only the verbose line and the best-effort smoke read it.
-	- Opened: 20260916
 
 - 🔘 The new-window test fails on Windows.
 	- `a_new_window_keeps_the_settings_file_and_the_panes_directory` expects `--config /x/alt.shcl`, and Windows makes that path absolute as `C:\x\alt.shcl`. The test's expectation is wrong there, not the new window.
@@ -528,6 +546,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ The scroll harness prints a frame count of `0` twice when a trace has none, and its real-app check compares that doubled text as a number.
+	- `grep -c` prints 0 and exits 1 on no match, so `|| echo 0` adds a second one. Only the verbose line and the best-effort smoke read it.
+	- Fixed: one function counts a trace's frames for every place that asks, and it prints a single 0 for none.
+	- Pinned by: the scroll verdict test, with a trace holding frames, one holding none and no trace at all. Watched failing with the old count.
+	- Opened: 20260916. Closed: 20260917.
 
 - ✅ The feature that is supposed to release the GPU after a timeout, doesn't seem to be doing anything. (Unless there's no visible side-effect when restoring?)
 	- Reproduced: partly. Of five windows open on the reference box, only two ran a build with the feature, and one of those had already let its device go. It was gone from `nvidia-smi`, with fewer threads and fewer driver files open. The other three were older builds.
