@@ -311,7 +311,10 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 65 (F97, blocking): A program printing a long run of combining marks grows SilkTerm's memory without limit, since they pile onto one cell that the scrollback cap never trims.
 		- The engine keeps at most nine per cell now. Upstream's fix is carried on the fork's 0.26.0 branch until a release has it.
 	- Code review 20260914 item 66 (F98, blocking): On Windows a shell whose path holds a space can be tricked into running a different program, and an inherited directory with a space reaches the shell split in two.
-	- Code review 20260914 item 67 (F99, should-fix): On Linux a program that closes its terminal but keeps running spins a core at 100% until it exits.
+	- ✅ Code review 20260914 item 67 (F99, should-fix): On Linux a program that closes its terminal but keeps running spins a core at 100% until it exits.
+		- Fixed in the engine fork: once the terminal hangs up, the reader leaves it out of the poll for a tenth of a second at a time. What was written just before the hang-up is still read first.
+		- The second part matters for a program that opens its terminal again later. Before, the spin caught that output by luck, and a plain pause lost it.
+		- Pinned by `a_hung_up_terminal_does_not_spin_the_reader`. It used about 1930 ms of CPU in 2 s before and about 1 ms after. It also checks the reopened output and that the pane still ends at once.
 	- ✅ Code review 20260914 item 68 (F100, should-fix): Double-clicking an unmatched bracket scans the whole scrollback under the terminal lock, so it hitches on a large history.
 		- SilkTerm looks for the partner itself now, at most 200 rows away, once at the click. A bracket with no partner in reach is selected alone. A bracket to its partner across lines still works, and so does a word.
 		- Pinned by `a_bracket_looks_for_its_partner_only_so_far`, watched failing with the reach removed.
