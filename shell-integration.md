@@ -53,11 +53,13 @@ The part in brackets only appears inside a git working tree, and the two marks a
 - The first says everything is committed. A modified file or an untracked one turns it red.
 - The second says the branch is level with its upstream - nothing to push, nothing to pull. A branch with no upstream at all counts as not level.
 
+When the branch is ahead or behind, the counts follow the marks, such as `↑2↓1`. The name in front of the branch is the remote the branch tracks, else `origin`, else the first remote there is. A repository with no remote shows the branch alone.
+
 When the brackets are there the typing moves to a second line, since the first line is long by then. Outside a repository the prompt is one line. Either way it ends in the usual `>`.
 
 The same prompt appears on Windows PowerShell 5.1 (`[PS 5.1] ...`) and on PowerShell 7 wherever it runs, macOS and Linux included. The block puts the console on the UTF-8 code page, so a branch name with a non-ASCII character in it reads correctly.
 
-It costs one `git` call per prompt, and none at all outside a working tree - the search for a `.git` folder is done in the shell.
+It costs one `git` call per prompt, a few more the first time a branch is seen, and none at all outside a working tree - the search for a `.git` folder is done in the shell.
 
 `X9PS1_STANDARD=1` in a session puts an ordinary `PS C:\path>` prompt back, the same way it does for the bash prompt below. To take the whole thing back, define your own `prompt` **below** the block; anything of yours is detected on the next launch and left alone from then on.
 
@@ -97,7 +99,7 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 	# Code points rather than literal glyphs, because 5.1 reads a file with no
 	# byte-order mark as ANSI. The light pair: a light check beside the HEAVY cross
 	# read as two different weights, which is what they are.
-	$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2713; No = [string][char]0x2717 }
+	$global:__SilkTermGlyphs = @{ Yes = [string][char]0x2713; No = [string][char]0x2717; Up = [string][char]0x2191; Down = [string][char]0x2193 }
 	# Root gets a different decorator, the way a unix prompt does.
 	$global:__SilkTermAdmin = $false
 	try {
@@ -155,17 +157,38 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 		$ErrorActionPreference = $prev
 		if (-not $lines) { return $null }
 		$branch = ''
-		$ahead = $null
+		$ab = $null
 		$clean = $true
 		foreach ($line in $lines) {
 			if ($line.StartsWith('# branch.head ')) { $branch = ($line -split ' ', 3)[2] }
-			elseif ($line.StartsWith('# branch.ab ')) { $ahead = ($line -split ' ', 3)[2] }
+			elseif ($line.StartsWith('# branch.ab ')) { $ab = ($line -split ' ', 3)[2] }
 			elseif (-not $line.StartsWith('#')) { $clean = $false }
 		}
-		if (-not $global:__SilkTermRemotes.ContainsKey($Root)) {
+		# No branch.ab line means no upstream, so nothing to be level with.
+		$ahead = 0
+		$behind = 0
+		$level = $false
+		if ($ab -match '^\+(\d+) -(\d+)$') {
+			$ahead = [int]$Matches[1]
+			$behind = [int]$Matches[2]
+			$level = ($ahead -eq 0 -and $behind -eq 0)
+		}
+		# The remote the branch tracks, else origin, else the first one. None is
+		# fine too. Asked once per branch rather than at every prompt, and again
+		# once it gains an upstream, since that can name a different remote.
+		$key = "$Root`n$branch`n$($null -ne $ab)"
+		if (-not $global:__SilkTermRemotes.ContainsKey($key)) {
 			$prev = $ErrorActionPreference
 			$ErrorActionPreference = 'Continue'
-			$url = (& git config --get remote.origin.url 2>$null) -as [string]
+			$remote = $null
+			if ($branch -ne '(detached)') { $remote = (& git config --get "branch.$branch.remote" 2>$null) -as [string] }
+			if (-not $remote -or $remote -eq '.') {
+				# A remote's name is case-sensitive to git, so Origin is not origin.
+				$names = @(& git remote 2>$null)
+				$remote = if ($names -ccontains 'origin') { 'origin' } else { $names | Select-Object -First 1 }
+			}
+			$url = $null
+			if ($remote) { $url = (& git config --get "remote.$remote.url" 2>$null) -as [string] }
 			$ErrorActionPreference = $prev
 			if ($url) {
 				# ssh remotes read git@host:owner/repo - the part before the @ is
@@ -173,9 +196,9 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 				$at = $url.IndexOf('@')
 				if ($at -ge 0) { $url = $url.Substring($at + 1) }
 			}
-			$global:__SilkTermRemotes[$Root] = $url
+			$global:__SilkTermRemotes[$key] = $url
 		}
-		@{ Branch = $branch; Clean = $clean; Synced = ($ahead -eq '+0 -0'); Remote = $global:__SilkTermRemotes[$Root] }
+		@{ Branch = $branch; Clean = $clean; Synced = $level; Ahead = $ahead; Behind = $behind; Remote = $global:__SilkTermRemotes[$key] }
 	}
 
 	function global:__SilkTermPrompt {
@@ -209,6 +232,12 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 			$out += (__SilkTermPaint '1;36' $git.Branch) + ' '
 			# Two marks: everything committed, and level with the upstream.
 			$out += (& $mark $git.Clean) + (& $mark $git.Synced)
+			if ($git.Ahead -or $git.Behind) {
+				$counts = ''
+				if ($git.Ahead) { $counts += $global:__SilkTermGlyphs.Up + $git.Ahead }
+				if ($git.Behind) { $counts += $global:__SilkTermGlyphs.Down + $git.Behind }
+				$out += ' ' + (__SilkTermPaint '1;32' $counts)
+			}
 			$out += ' ' + (__SilkTermPaint '2;37' ']')
 			# The first line is long in a repository, so the typing starts on its own.
 			$out += "`n"

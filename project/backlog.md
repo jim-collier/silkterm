@@ -71,9 +71,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
-- 🔘 The PowerShell prompt shows no ahead or behind count, and names only an `origin` remote. The bash prompt does both since 20260917, and the two are meant to read the same.
-	- Opened: 20260917
-
 - 🔬 After a crash in VSCodium required switching to VT-1, the terminal on the same virtual desktop came back with background-only, no text visible. (This looks a lot like a previous bug many weeks ago.)
 	- On some other silkterm windows (but not all), text is visible, but the background is gray, not the theme's black. (Even after changing the theme.) Some silkterm windows seem fine.
 	- After a second switch to VT-1 and back, another silkterm window got a gray background, and invisible text.
@@ -569,6 +566,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ The PowerShell prompt shows no ahead or behind count, and names only an `origin` remote. The bash prompt does both since 20260917, and the two are meant to read the same.
+	- Fixed: the counts follow the two marks as `↑2↓1`, in the bash prompt's color. The remote named is the one the branch tracks, else `origin`, else the first. It is asked again when a branch gains an upstream.
+	- Pinned by: `the_powershell_prompt_shows_any_repository_and_how_far_it_is_from_upstream`, watched failing on the old block. Windows PowerShell 5.1 is untested; nothing new in the block is specific to 7.
+	- Opened: 20260917. Closed: 20260918.
 
 - ✅ Two terminals running for around 24 to 48 hours, disappeared the moment they got focus.
 	- Four dogfood windows died this way since 20260917, all on builds with the idle GPU release. The two here went at 10:58:11 and 10:58:19.
