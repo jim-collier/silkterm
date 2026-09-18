@@ -1235,6 +1235,109 @@ mod tests {
 		);
 	}
 
+	// A program that closed its terminal and kept running spun the reader thread
+	// at a whole core until it exited. The engine read EIO, went round again, and
+	// found the PTY still readable. The fix is in the engine fork, so an engine
+	// update is what would bring this back.
+	#[cfg(target_os = "linux")]
+	#[test]
+	fn a_hung_up_terminal_does_not_spin_the_reader() {
+		let out = std::process::Command::new(std::env::current_exe().unwrap())
+			.args(["--exact", "term::tests::hung_up_child", "--nocapture"])
+			.env("SILK_HUP_CHILD", "1")
+			.output()
+			.unwrap();
+		let text = String::from_utf8_lossy(&out.stdout);
+		assert!(
+			out.status.success(),
+			"{text}{}",
+			String::from_utf8_lossy(&out.stderr)
+		);
+		let cpu: u64 = text
+			.lines()
+			.find_map(|l| l.strip_prefix("cpu_ms "))
+			.and_then(|v| v.trim().parse().ok())
+			.expect("child reports its CPU time");
+		// about 2000 while it spun
+		assert!(cpu < 300, "the reader used {cpu} ms of CPU in 2 s");
+		// the pause may not cost output from a program that opens its terminal
+		// again, or hold up the end of the pane
+		assert!(text.contains("reopened yes"), "{text}");
+		let ended: u64 = text
+			.lines()
+			.find_map(|l| l.strip_prefix("ended_ms "))
+			.and_then(|v| v.trim().parse().ok())
+			.expect("child reports when the pane ended");
+		assert!(ended < 1000, "the pane ended {ended} ms after its program");
+	}
+
+	#[cfg(target_os = "linux")]
+	#[test]
+	fn hung_up_child() {
+		use alacritty_terminal::event::{VoidListener, WindowSize};
+		use alacritty_terminal::event_loop::EventLoop;
+		use alacritty_terminal::index::{Column, Line, Point};
+		use alacritty_terminal::term::Term;
+		use alacritty_terminal::tty;
+		use std::time::{Duration, Instant};
+
+		fn cpu_ms() -> u64 {
+			let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+			unsafe { libc::getrusage(libc::RUSAGE_SELF, &raw mut usage) };
+			let ms = |t: libc::timeval| t.tv_sec as u64 * 1000 + t.tv_usec as u64 / 1000;
+			ms(usage.ru_utime) + ms(usage.ru_stime)
+		}
+		if std::env::var_os("SILK_HUP_CHILD").is_none() {
+			return; // only does anything when the test above starts it
+		}
+		let dims = grid_dims(80, 24);
+		let term = std::sync::Arc::new(alacritty_terminal::sync::FairMutex::new(Term::new(
+			super::engine_config(),
+			&dims,
+			VoidListener,
+		)));
+		let opts = tty::Options {
+			shell: Some(tty::Shell::new(
+				"/bin/sh".into(),
+				vec![
+					"-c".into(),
+					"exec </dev/null >/dev/null 2>&1; sleep 3; echo back >/dev/tty; sleep 0.5"
+						.into(),
+				],
+			)),
+			..Default::default()
+		};
+		let win = WindowSize {
+			num_cols: 80,
+			num_lines: 24,
+			cell_width: 8,
+			cell_height: 16,
+		};
+		let pty = tty::new(&opts, win, 0).unwrap();
+		let event_loop = EventLoop::new(term.clone(), VoidListener, pty, false, false).unwrap();
+		let start = Instant::now();
+		let handle = event_loop.spawn();
+		// let the shell get as far as the sleep
+		std::thread::sleep(Duration::from_millis(300));
+		let before = cpu_ms();
+		std::thread::sleep(Duration::from_secs(2));
+		println!("cpu_ms {}", cpu_ms() - before);
+		// the loop ends by itself once the program exits
+		let _ = handle.join();
+		println!(
+			"ended_ms {}",
+			start.elapsed().as_millis().saturating_sub(3500)
+		);
+		let text = term.lock().bounds_to_string(
+			Point::new(Line(0), Column(0)),
+			Point::new(Line(23), Column(79)),
+		);
+		println!(
+			"reopened {}",
+			if text.contains("back") { "yes" } else { "no" }
+		);
+	}
+
 	fn argv(words: &str) -> Vec<String> {
 		words.split(' ').map(str::to_string).collect()
 	}

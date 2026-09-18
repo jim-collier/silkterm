@@ -4,9 +4,9 @@
 members = ["source"]
 resolver = "3"
 
-# Two changes over the released 0.26.0, on one branch. The first is temporary,
-# the second is ours to keep: when a release carries the deadlock fix, rebase
-# the ledger branch onto it rather than dropping the patch.
+# Four changes over the released 0.26.0, on one branch. At each new release,
+# move them onto a new branch named for it, and leave this one standing so an
+# older lock still resolves.
 #
 # The scroll ledger: the engine records every region scroll (count, region,
 # and the rows that left the screen) so the alt-screen slide can ease off an
@@ -20,10 +20,16 @@ resolver = "3"
 # needs only enough output to fill the buffer, so it was reachable by ordinary
 # use and nothing about our own code was involved.
 #
-# That one is submitted upstream as alacritty/alacritty#9026. The branch is cut
-# from the v0.17.0 tag rather than master purely so the version still reads
-# 0.26.0 - cargo silently ignores a patch whose version does not satisfy the
-# dependency requirement, and master carries a pre-release version that does not.
+# That one went upstream as alacritty/alacritty#9026 and was closed unmerged.
+# The branch is cut from the v0.17.0 tag rather than master purely so the
+# version still reads 0.26.0 - cargo silently ignores a patch whose version does
+# not satisfy the dependency requirement, and master carries a pre-release
+# version that does not.
+#
+# The cap of nine combining marks per cell is upstream's own fix (ede2ac144d),
+# here until a release has it. The last is ours: on Linux, a program that
+# closes its terminal and keeps running no longer spins the reader thread at a
+# whole core. The PTY is left out of the poll for a tenth of a second at a time.
 [patch.crates-io]
 alacritty_terminal = { git = "https://github.com/jim-collier/alacritty", branch = "scroll-ledger-0.26.0" }
 
