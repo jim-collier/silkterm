@@ -1889,7 +1889,7 @@ struct State {
 	// how a scroll ease is being paced, and the period a frame may not exceed
 	// before it counts as a miss (profile.rs)
 	rating: crate::profile::Rating,
-	frame_budget_ms: f32,
+	frame_budget: crate::profile::FrameBudget,
 	// The startup benchmark: a run in flight, and when one is due. While a run
 	// is in flight the window renders flat out. bench_banner is when the banner
 	// went up, which is earlier than either - it covers the wait as well as the
@@ -6448,7 +6448,7 @@ impl ApplicationHandler<UserEvent> for App {
 			h: (gfx.config.height as f32 - top).max(1.0),
 		};
 		let list = build_layout(&self.cli, &mut text, &self.proxy, area);
-		let frame_budget_ms = crate::profile::budget_ms(refresh_hz(&window));
+		let frame_budget = crate::profile::FrameBudget::new(Instant::now(), refresh_hz(&window));
 		let surface_px = (gfx.config.width, gfx.config.height);
 		let gl = gfx.is_gl();
 		let adapter_info = gfx.adapter_info.clone();
@@ -6485,7 +6485,7 @@ impl ApplicationHandler<UserEvent> for App {
 			clipboard: Clipboard::new(),
 			last_frame: Instant::now(),
 			rating: crate::profile::Rating::new(),
-			frame_budget_ms,
+			frame_budget,
 			bench: None,
 			bench_at: None,
 			bench_cap: None,
@@ -8029,7 +8029,9 @@ impl ApplicationHandler<UserEvent> for App {
 			if state.bench.is_some() {
 				// a run is timing the rungs itself; the step-down would be reading
 				// the same frames and moving the profile out from under it
-				let budget = state.frame_budget_ms;
+				let budget = state
+					.frame_budget
+					.at(Instant::now(), || refresh_hz(&state.window));
 				match state.bench.as_mut().map(|b| b.note(Instant::now(), budget)) {
 					Some(crate::profile::Step::Rung(next)) => state.set_live_profile(next),
 					Some(crate::profile::Step::Done(pick)) => state.finish_bench(pick),
@@ -8038,7 +8040,9 @@ impl ApplicationHandler<UserEvent> for App {
 			}
 			match step {
 				RatingStep::Note => {
-					let budget = state.frame_budget_ms;
+					let budget = state
+						.frame_budget
+						.at(Instant::now(), || refresh_hz(&state.window));
 					state.rating.note(Instant::now(), budget);
 					if state.rating.verdict(budget) == Some(true) {
 						state.step_down_profile();

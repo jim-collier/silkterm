@@ -532,6 +532,33 @@ pub fn budget_ms(refresh_hz: f32) -> f32 {
 	1000.0 / refresh_hz.max(1.0) * 1.5
 }
 
+// The budget of the monitor the window is on now. A window can be dragged to a
+// monitor with another rate, and a budget kept from launch then reads every
+// frame on a slower one as a miss. Asked again four times a second rather than
+// every frame, since on Windows the answer comes from enumerating display
+// modes. That is too few frames at the old budget to fill half a window.
+pub struct FrameBudget {
+	ms: f32,
+	read_at: Instant,
+}
+
+impl FrameBudget {
+	pub fn new(now: Instant, refresh_hz: f32) -> FrameBudget {
+		FrameBudget {
+			ms: budget_ms(refresh_hz),
+			read_at: now,
+		}
+	}
+
+	pub fn at(&mut self, now: Instant, refresh_hz: impl FnOnce() -> f32) -> f32 {
+		if now.saturating_duration_since(self.read_at).as_secs_f32() >= 0.25 {
+			self.ms = budget_ms(refresh_hz());
+			self.read_at = now;
+		}
+		self.ms
+	}
+}
+
 // A verdict has to come from one sitting. Frames eased this long after the last
 // counted one start a new window rather than finishing a half-full one left
 // from hours ago.
@@ -543,6 +570,8 @@ pub struct Rating {
 	// the last frame counted, kept across a pause so the gap to the next one
 	// can be judged stale
 	noted: Option<Instant>,
+	// the budget the window is being filled under
+	budget: f32,
 }
 
 impl Rating {
@@ -551,6 +580,7 @@ impl Rating {
 			periods: Vec::with_capacity(WINDOW),
 			last: None,
 			noted: None,
+			budget: 0.0,
 		}
 	}
 
@@ -564,6 +594,13 @@ impl Rating {
 			.is_some_and(|at| now.saturating_duration_since(at).as_secs_f32() > STALE_S)
 		{
 			self.periods.clear();
+		}
+		// Frames paced by another monitor say nothing against this one's budget.
+		// A 60 Hz window moved to 144 Hz would read as missing every frame.
+		if budget_ms != self.budget {
+			self.periods.clear();
+			self.last = None;
+			self.budget = budget_ms;
 		}
 		if let Some(last) = self.last {
 			let period = now.saturating_duration_since(last).as_secs_f32() * 1000.0;
@@ -610,8 +647,8 @@ fn median(values: &mut [f32]) -> f32 {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Bench, Profile, Rating, Step, WINDOW, apply, budget_ms, first_pick, software_adapter,
-		unapply,
+		Bench, FrameBudget, Profile, Rating, Step, WINDOW, apply, budget_ms, first_pick,
+		software_adapter, unapply,
 	};
 	use crate::config::Settings;
 	use std::time::{Duration, Instant};
@@ -951,6 +988,45 @@ mod tests {
 			r.note(t, budget);
 			assert_ne!(r.verdict(budget), Some(true), "a stall is not a miss");
 		}
+	}
+
+	// The budget was read once at launch. A window opened on 144 Hz and dragged
+	// to 60 Hz timed every frame against 10.4 ms and stepped the profile down.
+	#[test]
+	fn the_budget_follows_the_monitor_the_window_is_on() {
+		let mut t = Instant::now();
+		let mut budget = FrameBudget::new(t, 144.0);
+		let mut r = Rating::new();
+		r.note(t, budget.at(t, || unreachable!("asked again at once")));
+		// dragged to a 60 Hz monitor, which paces every frame at its own period,
+		// asked for a verdict at every frame the way the window does
+		for _ in 0..=WINDOW * 3 {
+			t += Duration::from_micros(16_667);
+			let now = budget.at(t, || 60.0);
+			r.note(t, now);
+			assert_ne!(
+				r.verdict(now),
+				Some(true),
+				"a display keeping up read as missing"
+			);
+		}
+		assert_eq!(budget.at(t, || 60.0), budget_ms(60.0));
+	}
+
+	// Moved the other way, periods paced at 60 Hz would read as misses against a
+	// 144 Hz budget, so a new budget starts the window over.
+	#[test]
+	fn frames_paced_by_another_monitor_are_not_counted_against_this_one() {
+		let slow = budget_ms(60.0);
+		let fast = budget_ms(144.0);
+		let mut r = Rating::new();
+		let mut t = Instant::now();
+		r.note(t, slow);
+		periods(&mut r, &mut t, WINDOW - 1, 16, slow);
+		periods(&mut r, &mut t, 2, 7, fast);
+		assert_eq!(r.verdict(fast), None, "the 60 Hz frames were kept");
+		periods(&mut r, &mut t, WINDOW, 7, fast);
+		assert_eq!(r.verdict(fast), Some(false));
 	}
 
 	#[test]
