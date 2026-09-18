@@ -660,7 +660,7 @@ Three defects came out of building it, all fixed with it: a program could put co
 
 - Off by default. Switched on, a window that has sat unused lets its GPU device go, with everything uploaded to it, and takes it back the moment it is used again. The shells run on and the grid keeps up; only drawing stops. The case is many windows open for days, each holding a device, a swapchain, two glyph atlases, the scrim's textures and a wallpaper the whole time.
 
-- Unused means no input, no focus change and no output from any pane. Two waits, both in minutes on the Window tab: a shorter one for a window that is minimized, or covered where the desktop reports it, and a longer one for a window that is only unfocused, since that one may be on a second screen being read. A window with focus and on screen never lets go.
+- Unused means no input, no focus change and no output from any pane while the window can be seen. Output into a hidden window does not count, or a program printing in a minimized window would hold the device for good. Two waits, both in minutes on the Window tab: a shorter one for a window that is minimized, or covered where the desktop reports it, and a longer one for a window that is only unfocused, since that one may be on a second screen being read. A window with focus and on screen never lets go.
 
 - It comes back on any sign of life: a key, a click, the pointer entering, focus, a hidden window being shown, a shell printing, or the desktop asking for a repaint. Output into a hidden window does not bring it back; that waits for the reveal, the way the frozen-window rule already works.
 

@@ -71,8 +71,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
-- 🔘 The feature that is supposed to release the GPU after a timeout, doesn't seem to be doing anything. (Unless there's no visible side-effect when restoring?)
-
 - 🔘 After a crash in VSCodium required switching to VT-1, the terminal on the same virtual desktop came back with background-only, no text visible. (This looks a lot like a previous bug many weeks ago.)
 	- On some other silkterm windows (but not all), text is visible, but the background is gray, not the theme's black. (Even after changing the theme.) Some silkterm windows seem fine.
 	- After a second switch to VT-1 and back, another silkterm window got a gray background, and invisible text.
@@ -510,6 +508,16 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ The feature that is supposed to release the GPU after a timeout, doesn't seem to be doing anything. (Unless there's no visible side-effect when restoring?)
+	- Reproduced: partly. Of five windows open on the reference box, only two ran a build with the feature, and one of those had already let its device go. It was gone from `nvidia-smi`, with fewer threads and fewer driver files open. The other three were older builds.
+	- Note: there is no visible side-effect by design. On X11 the window keeps showing its last frame, and taking the device back is about 25 ms.
+	- Cause: the other new window was running an agent whose spinner prints all the time, and any output restarted the idle clock. That is fine for a window on screen, but a minimized window printing forever would never let go, although nobody could see the output.
+	- Fixed: output only restarts the clock while the window can be seen. A released hidden window is still owed its device at the reveal, so a desktop that says nothing about showing it again cannot leave old text up.
+	- Left alone: a window that is only behind others. Under a compositing desktop it is never reported as covered, so it counts as unfocused, and its own output keeps it.
+	- Pinned by: `output_into_a_hidden_window_does_not_hold_its_device`, watched failing with the hidden case removed. On the rig, a minimized window printing twice a second let go within the wait and came back on restore, where the build before it never let go.
+	- Opened: 20260917
+	- Closed: 20260917
 
 - ✅ Clicking into a Settings text box no longer selected its value.
 	- Reproduced: on the reference box, a click in the right-hand part of the "File or folder" box with a long path in it. The selection ran off to the end of the text under a stationary pointer, and the release left a caret instead of the whole value selected. A box narrow enough to hold its value was fine, which is why it looked intermittent.
