@@ -322,7 +322,10 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- A close waits a quarter second for the pane to finish, then goes on and lets it finish on its own. The program is not killed, since a `nohup` job ignores the signal on purpose.
 		- Pinned by `closing_a_pane_does_not_wait_on_a_shell_that_stays`, watched failing with the old wait.
 	- Code review 20260914 item 70 (F102, should-fix): On Windows each pane leaks a couple of process handles that are never freed while SilkTerm runs.
-	- Code review 20260914 item 71 (F103, should-fix): A program can force unbounded memory by setting a huge window title and pushing it onto the title stack.
+	- ✅ Code review 20260914 item 71 (F103, should-fix): A program can force unbounded memory by setting a huge window title and pushing it onto the title stack.
+		- A title is cut to 2 KiB, in the engine fork and again where SilkTerm passes it to the window. The stack keeps 4096 entries, so the most it can hold is 8 MiB.
+		- Pinned by `a_program_title_is_held_to_a_size`, which sets a 1 MiB title, pushes it 64 times and pops it back. It fails against the engine without the cap and without SilkTerm's.
+		- Left alone: the parser keeps room for the longest escape sequence a pane has sent. It is one buffer per pane, reused rather than added to, and a fix would mean patching the parser crate as well.
 	- ✅ Code review 20260914 item 72 (F104, blocking): Opening a bash pane in a cloned repository can run a command hidden in its branch name, through the git-aware prompt.
 		- Branch and remote names are escaped before they go into the prompt. Fixed in x9ps1-git first and the copy taken again, with a test on each side.
 	- Code review 20260914 item 73 (F105, blocking): Recording the demo can replace the desktop's own window manager theme, title font and button layout.

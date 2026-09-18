@@ -174,12 +174,31 @@ fn status_text(status: std::process::ExitStatus) -> String {
 	"unknown".into()
 }
 
+// The one text a program can hand the window at any size. The engine fork keeps
+// 2 KiB of a title as well, and this holds the same line here, so an engine
+// update cannot quietly take it away.
+const TITLE_MAX_BYTES: usize = 2048;
+
+fn capped_title(mut title: String) -> String {
+	if title.len() > TITLE_MAX_BYTES {
+		let mut end = TITLE_MAX_BYTES;
+		while !title.is_char_boundary(end) {
+			end -= 1;
+		}
+		title.truncate(end);
+		title.shrink_to_fit();
+	}
+	title
+}
+
 impl EventListener for EventProxy {
 	fn send_event(&self, event: Event) {
 		let _ = match event {
 			Event::Wakeup if !self.wake.post() => Ok(()), // one notice is enough
 			Event::Wakeup => self.proxy.send_event(UserEvent::Wakeup(self.id)),
-			Event::Title(t) => self.proxy.send_event(UserEvent::Title(self.id, t)),
+			Event::Title(t) => self
+				.proxy
+				.send_event(UserEvent::Title(self.id, capped_title(t))),
 			// Empty, not the app name: that is how "the program set no title" is
 			// told apart from one it happened to set to our own name.
 			Event::ResetTitle => self
@@ -1144,8 +1163,9 @@ fn wsl_cd(argv: &[String], dir: &std::path::Path) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
 	use super::{
-		SHELL_PRIVATE_ENV, WakeGate, env_fixups, expand_refs, grid_dims, is_command_child,
-		join_for, parse_env_block, query_reply, requested_color, usable_cwd, wsl_cd,
+		SHELL_PRIVATE_ENV, TITLE_MAX_BYTES, WakeGate, capped_title, env_fixups, expand_refs,
+		grid_dims, is_command_child, join_for, parse_env_block, query_reply, requested_color,
+		usable_cwd, wsl_cd,
 	};
 	#[cfg(unix)]
 	use super::{program_name, status_text};
@@ -1190,6 +1210,55 @@ mod tests {
 			*seen.0.lock().expect("seen lock"),
 			["Clipboard hello", "Selection hello"]
 		);
+	}
+
+	// A program could set a title of any size and push it thousands of times onto
+	// the title stack, and each copy was kept. A megabyte title grew the whole
+	// program by about 4 GiB.
+	#[test]
+	fn a_program_title_is_held_to_a_size() {
+		use alacritty_terminal::event::{Event, EventListener};
+		use alacritty_terminal::term::Term;
+		use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+		use std::sync::{Arc, Mutex};
+
+		#[derive(Clone, Default)]
+		struct Titles(Arc<Mutex<Vec<(usize, usize)>>>);
+		impl EventListener for Titles {
+			fn send_event(&self, event: Event) {
+				if let Event::Title(t) = event {
+					let mut seen = self.0.lock().expect("titles lock");
+					seen.push((t.len(), t.capacity()));
+				}
+			}
+		}
+
+		// the engine half: set, push, set something short, pop back
+		let titles = Titles::default();
+		let mut term = Term::new(super::engine_config(), &grid_dims(20, 4), titles.clone());
+		let mut parser = Processor::<StdSyncHandler>::default();
+		let big = format!("\x1b]2;{}\x07", "x".repeat(1 << 20));
+		parser.advance(&mut term, big.as_bytes());
+		parser.advance(&mut term, "\x1b[22t".repeat(64).as_bytes());
+		parser.advance(&mut term, b"\x1b]2;short\x07\x1b[23t");
+		let seen = titles.0.lock().expect("titles lock").clone();
+		assert_eq!(seen.len(), 3, "{seen:?}");
+		for (len, cap) in &seen {
+			assert!(
+				*len <= TITLE_MAX_BYTES && *cap < 2 * TITLE_MAX_BYTES,
+				"{seen:?}"
+			);
+		}
+		assert_eq!(seen[1].0, 5, "an ordinary title is left alone");
+		assert!(seen[2].0 > 0, "the pushed title comes back");
+
+		// and ours, whatever the engine does
+		let held = capped_title("x".repeat(1 << 20));
+		assert_eq!(held.len(), TITLE_MAX_BYTES);
+		assert!(held.capacity() < 2 * TITLE_MAX_BYTES);
+		let wide = capped_title(format!("x{}", "\u{4e2d}".repeat(TITLE_MAX_BYTES)));
+		assert!(wide.len() > TITLE_MAX_BYTES - 3 && wide.ends_with('\u{4e2d}'));
+		assert_eq!(capped_title("~/src".into()), "~/src");
 	}
 
 	// A pane narrowed below two cells asked the engine for one column, where a
