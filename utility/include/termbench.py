@@ -100,6 +100,10 @@ DATA_FILE = "results.jsonl"
 
 README_BEGIN = "<!-- termbench:begin -->"
 README_END = "<!-- termbench:end -->"
+# The table's rows were all taken this way, and a figure taken any other way
+# does not belong beside them. update-showdown.py's SPEED_GRID is the same grid.
+TABLE_GRID = "160x42"
+TABLE_LINE_CELLS = 80
 
 MB = 1024 * 1024
 
@@ -842,6 +846,27 @@ def aggregate(records, mode, line_cells):
 	return out, skipped
 
 
+def unpublishable(mode, scale, grid, line_cells):
+	"""Why a run at these settings may not reach the README, or "" if it may."""
+	if mode != "full":
+		return "a %s run" % mode
+	if scale != 1.0:
+		return "scale %g" % scale
+	if grid != TABLE_GRID:
+		return "grid %s, the table's is %s" % (grid or "unknown", TABLE_GRID)
+	if line_cells != TABLE_LINE_CELLS:
+		return "%d-cell lines, the table's are %d" % (line_cells, TABLE_LINE_CELLS)
+	return ""
+
+
+def readme_rows(records):
+	"""aggregate() over only the records the table may show."""
+	fit = [r for r in records
+	       if not unpublishable(r.get("mode"), r.get("scale", 1.0), r.get("grid", ""),
+	                            r.get("line_cells"))]
+	return aggregate(fit, "full", TABLE_LINE_CELLS)[0]
+
+
 def history_table(rows):
 	by_term = {}
 	for row in rows:
@@ -1111,7 +1136,8 @@ def main(argv):
 			return 0
 		print(history_table(rows))
 		readme = readme_path()
-		if not args.no_readme and readme and update_readme(readme, rows):
+		table_rows = readme_rows(load())
+		if not args.no_readme and readme and table_rows and update_readme(readme, table_rows):
 			print("\nREADME.md results table updated")
 		return 0
 
@@ -1189,8 +1215,11 @@ def main(argv):
 			           "not comparable here)" % skipped)
 
 	if not args.no_readme and not args.no_save:
+		why = unpublishable(mode, scale, grid, args.line_cells)
 		readme = readme_path()
-		if readme and rows and update_readme(readme, rows):
+		if why:
+			out.append("\nREADME.md not touched: %s" % why)
+		elif readme and rows and update_readme(readme, readme_rows(load())):
 			out.append("\nREADME.md results table updated")
 
 	if not synced_all:
