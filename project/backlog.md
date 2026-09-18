@@ -76,6 +76,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 - 🔘 After a crash in VSCodium required switching to VT-1, the terminal on the same virtual desktop came back with background-only, no text visible. (This looks a lot like a previous bug many weeks ago.)
 	- On some other silkterm windows (but not all), text is visible, but the background is gray, not the theme's black. (Even after changing the theme.) Some silkterm windows seem fine.
 	- After a second switch to VT-1 and back, another silkterm window got a gray background, and invisible text.
+	- Additional info: All terminals actually "came back", eventually, after more than an hour of stepping away from the system.
 
 - 🔬 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
 	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even muffer's autocopy doesn't work.)
