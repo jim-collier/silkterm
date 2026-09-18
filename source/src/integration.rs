@@ -904,18 +904,22 @@ mod tests {
 		assert!(updated.starts_with(mine));
 	}
 
+	fn a_pwsh() -> Option<&'static str> {
+		["pwsh", "pwsh.exe"].into_iter().find(|program| {
+			std::process::Command::new(program)
+				.args(["-NoProfile", "-NonInteractive", "-Command", "exit 0"])
+				.output()
+				.is_ok_and(|out| out.status.success())
+		})
+	}
+
 	// Runs the block the way a profile does, where a PowerShell is installed. The
 	// hook holds a delegate that `&` cannot call, so an earlier handler broke every
 	// directory change, and a second load wrapped its own wrapper. Both arms are
 	// run: the 5.1 one by forcing the test that picks it.
 	#[test]
 	fn the_block_keeps_an_earlier_hook_and_survives_loading_twice() {
-		let Some(pwsh) = ["pwsh", "pwsh.exe"].into_iter().find(|program| {
-			std::process::Command::new(program)
-				.args(["-NoProfile", "-NonInteractive", "-Command", "exit 0"])
-				.output()
-				.is_ok_and(|out| out.status.success())
-		}) else {
+		let Some(pwsh) = a_pwsh() else {
 			eprintln!("no pwsh here, skipped");
 			return;
 		};
@@ -966,6 +970,125 @@ Write-Host \"COLOR=$global:__SilkTermHostColor\"",
 			assert!(after.contains("COLOR=1;33"), "{arm}: {stdout}");
 		}
 		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// The PowerShell prompt is a port of the bash one and should read the same.
+	// It named only an origin remote and showed no count, a day after bash got both.
+	#[test]
+	fn the_powershell_prompt_shows_any_repository_and_how_far_it_is_from_upstream() {
+		use std::path::Path;
+		use std::process::Command;
+		let Some(pwsh) = a_pwsh() else {
+			eprintln!("no pwsh here, skipped");
+			return;
+		};
+		let dir = std::env::temp_dir().join(format!("silkterm_psgit_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).expect("temp dir");
+		let block = dir.join("block.ps1");
+		std::fs::write(
+			&block,
+			SNIPPET.replace("-not [Console]::IsOutputRedirected", "$true"),
+		)
+		.unwrap();
+
+		let run = |cwd: &Path, program: &str, args: &[&str]| {
+			let out = Command::new(program)
+				.args(args)
+				.current_dir(cwd)
+				.env(
+					"GIT_CONFIG_GLOBAL",
+					if cfg!(windows) { "NUL" } else { "/dev/null" },
+				)
+				.env("GIT_CONFIG_NOSYSTEM", "1")
+				.env("GIT_AUTHOR_NAME", "test")
+				.env("GIT_AUTHOR_EMAIL", "test@example.com")
+				.env("GIT_COMMITTER_NAME", "test")
+				.env("GIT_COMMITTER_EMAIL", "test@example.com")
+				.env_remove("GIT_DIR")
+				.env_remove("GIT_WORK_TREE")
+				.env_remove("GIT_INDEX_FILE")
+				.env_remove("X9PS1_STANDARD")
+				.output()
+				.unwrap_or_else(|e| panic!("run {program}: {e}"));
+			assert!(out.status.success(), "{program} {args:?}: {out:?}");
+			String::from_utf8_lossy(&out.stdout).into_owned()
+		};
+		let git = |cwd: &Path, args: &[&str]| run(cwd, "git", args);
+		let commit =
+			|cwd: &Path, msg: &str| git(cwd, &["commit", "-q", "--allow-empty", "-m", msg]);
+
+		// No remote at all
+		git(&dir, &["init", "-q", "-b", "lonebranch", "lone"]);
+
+		// A clone whose remote is not origin, two ahead of its upstream and one behind,
+		// with an origin added after that the branch does not track
+		let up = dir.join("up.git");
+		let up_str = up.to_string_lossy().into_owned();
+		git(&dir, &["init", "-q", "--bare", "-b", "main", "up.git"]);
+		git(&dir, &["init", "-q", "-b", "main", "other"]);
+		let other = dir.join("other");
+		commit(&other, "one");
+		git(&other, &["push", "-q", &up_str, "main"]);
+		git(&dir, &["clone", "-q", "-o", "upstream", &up_str, "tracked"]);
+		commit(&other, "two");
+		git(&other, &["push", "-q", &up_str, "main"]);
+		let tracked = dir.join("tracked");
+		git(&tracked, &["fetch", "-q", "upstream"]);
+		git(
+			&tracked,
+			&["remote", "add", "origin", "https://example.com/decoy.git"],
+		);
+		commit(&tracked, "three");
+		commit(&tracked, "four");
+
+		// A branch with no upstream, where origin is the one to name
+		git(&dir, &["init", "-q", "-b", "main", "untracked"]);
+		let untracked = dir.join("untracked");
+		git(
+			&untracked,
+			&["remote", "add", "aaa", "https://example.com/first.git"],
+		);
+		git(
+			&untracked,
+			&["remote", "add", "origin", "https://example.com/origin.git"],
+		);
+
+		let shown = |cwd: &Path| {
+			let quoted = |path: &Path| path.to_string_lossy().replace('\'', "''");
+			let script = format!(
+				". '{}'\nSet-Location -LiteralPath '{}'\nWrite-Host 'PROMPT'\n__SilkTermPrompt",
+				quoted(&block),
+				quoted(cwd)
+			);
+			let out = run(
+				&dir,
+				pwsh,
+				&["-NoProfile", "-NonInteractive", "-Command", &script],
+			);
+			out.split("PROMPT").nth(1).unwrap_or_default().to_string()
+		};
+		let lone = shown(&dir.join("lone"));
+		let far = shown(&tracked);
+		let no_upstream = shown(&untracked);
+		let _ = std::fs::remove_dir_all(&dir);
+
+		assert!(
+			lone.contains("lonebranch"),
+			"no git part without a remote: {lone:?}"
+		);
+		assert!(
+			far.contains(&up_str) && !far.contains("decoy"),
+			"not the remote the branch tracks: {far:?}"
+		);
+		assert!(
+			far.contains("\u{2191}2\u{2193}1"),
+			"no ahead and behind count: {far:?}"
+		);
+		assert!(
+			no_upstream.contains("example.com/origin.git") && !no_upstream.contains('\u{2191}'),
+			"origin not preferred with no upstream: {no_upstream:?}"
+		);
 	}
 
 	fn found(title: &str, command: &str) -> Found {
