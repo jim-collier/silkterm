@@ -427,8 +427,20 @@ fi
 ## blank gets swallowed or doubled depending on what a tool printed last. Skip
 ## the insert on the stream's first line: the preflight already ends with a
 ## blank on the tty, which this pipe never sees.
+##
+## The log is written under a .part name and renamed on the way out, once tee has
+## finished, so the startup gate never marks a log as seen while it is still
+## being written. A failed run's log is renamed too. The wait is bounded, since a
+## background process a stage left behind can hold the pipe open.
+fFinishLog(){
+	exec 1>&3 2>&4
+	local i; for i in {1..50}; do kill -0 "${lint_tee}" 2>/dev/null || break; sleep 0.1; done
+	mv -f "${lint_log}.part" "${lint_log}" 2>/dev/null || true
+}
 if [[ -n "${LINT_LOG_DIR:-}" ]] && mkdir -p "${root}/${LINT_LOG_DIR}" 2>/dev/null; then
 	gfs_rotate "${root}/${LINT_LOG_DIR}" run log >/dev/null 2>&1 || true
+	lint_log="${root}/${LINT_LOG_DIR}/run_${stamp}.log"
+	exec 3>&1 4>&2
 	exec > >(awk -v rule="${_letterbox}" '
 		$0 == "" { blanks++; next }
 		{
@@ -437,7 +449,9 @@ if [[ -n "${LINT_LOG_DIR:-}" ]] && mkdir -p "${root}/${LINT_LOG_DIR}" 2>/dev/nul
 			blanks = 0; print; fflush()
 		}
 		END { for (; blanks > 0; blanks--) print "" }
-	' | tee "${root}/${LINT_LOG_DIR}/run_${stamp}.log") 2>&1
+	' | tee "${lint_log}.part") 2>&1
+	lint_tee=$!
+	trap 'rc=$?; fFinishLog; exit $rc' EXIT
 fi
 
 ## Stage 0: remote sync. Make sure the local branch can be safely refreshed from
@@ -598,6 +612,12 @@ if [[ -x "${root}/cicd/tests/demo/run.py" ]]; then
 	"${root}/cicd/tests/demo/run.py" >/dev/null || fDie "demo recorder session test failed"
 	fEcho "OK: demo recorder session"
 fi
+## The startup gates, which once marked a run as seen while it was being written.
+if [[ -x "${root}/cicd/tests/gates/run.bash" ]]; then
+	fEcho_Clean "startup gates ..."
+	"${root}/cicd/tests/gates/run.bash" >/dev/null || fDie "startup gate test failed"
+	fEcho "OK: startup gates"
+fi
 ## Graphical scenarios on the Windows boxes. Neither box is build hardware, so an
 ## unreachable or locked one is reported and stepped over; a scenario that actually
 ## ran and failed aborts.
@@ -685,18 +705,22 @@ run_profiler(){
 	fi
 
 	## Born canonical (role "frequent"); the rotation retags the newest as "latest".
+	## The app writes the graph as it exits, so it goes under a .part name the
+	## startup gate skips, and is renamed once whole.
 	local out="${profile_dir}/flame_${stamp}_frequent.svg"
+	local part="${out}.part"
 	fEcho_Clean "running app ${PROFILE_SECS}s under sampler on headless ${hdisp} ..."
 	local prc=0
 	## -u WAYLAND_DISPLAY: winit prefers Wayland wherever it sees one, so on a
 	## Wayland session (WSLg included) DISPLAY alone leaves the window on the
 	## real desktop and the profiler samples nothing.
 	env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE \
-	SILK_PROFILE_OUT="${out}" SILK_PROFILE_SECS="${PROFILE_SECS}" DISPLAY="${hdisp}" \
+	SILK_PROFILE_OUT="${part}" SILK_PROFILE_SECS="${PROFILE_SECS}" DISPLAY="${hdisp}" \
 		"${PROFILE_BIN}" --shell "python3 ${abs_script} ${PROFILE_WORKLOAD_ARGS}" || prc=$?
 	"${headless}" stop >/dev/null 2>&1 || true
-	((prc == 0)) || fDie "profiler run failed (non-zero exit - app problem)"
-	[[ -s "$out" ]] || fDie "profiler produced no SVG (app problem): ${out}"
+	((prc == 0)) || { rm -f "${part}"; fDie "profiler run failed (non-zero exit - app problem)"; }
+	[[ -s "$part" ]] || { rm -f "${part}"; fDie "profiler produced no SVG (app problem): ${out}"; }
+	mv -f "${part}" "${out}"
 	gfs_rotate "${profile_dir}" flame svg
 	## Rotation renamed this run's file (newest) to the "latest" role.
 	local latest="${profile_dir}/flame_${stamp}_latest.svg"
@@ -927,6 +951,9 @@ fEcho_Clean
 
 
 ##	History:
+##		- 2026-09-17: The run log and the flamegraph are written under a .part name
+##		              and renamed once whole, so the startup gates cannot mark one as
+##		              seen part way through.
 ##		- 2026-09-17: A blank answer at the publish prompt commits the automatic
 ##		              message, and the plan and the prompt name it. They promised an
 ##		              editor that the quiet publisher never opens.
