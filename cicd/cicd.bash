@@ -582,6 +582,13 @@ if [[ -x "${root}/cicd/tests/scroll/verdict-test.bash" ]]; then
 	"${root}/cicd/tests/scroll/verdict-test.bash" >/dev/null || fDie "scroll harness verdict test failed"
 	fEcho "OK: scroll harness verdict"
 fi
+## The demo recorder's own window manager session, which once wrote over the
+## desktop's settings and outlived the recording.
+if [[ -x "${root}/cicd/tests/demo/run.py" ]]; then
+	fEcho_Clean "demo recorder session ..."
+	"${root}/cicd/tests/demo/run.py" >/dev/null || fDie "demo recorder session test failed"
+	fEcho "OK: demo recorder session"
+fi
 ## Graphical scenarios on the Windows boxes. Neither box is build hardware, so an
 ## unreachable or locked one is reported and stepped over; a scenario that actually
 ## ran and failed aborts.
