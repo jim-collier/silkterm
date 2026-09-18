@@ -49,6 +49,14 @@ pub struct App {
 	// context, so it can be larger than the main window.
 	dialog: Option<crate::dialog::DialogWin>,
 	dialog_dirty: bool,
+	// A save that could not be written, waiting to be said, and the notice
+	// saying one. It is its own window so it can stand over an open Settings.
+	// Windows shows the system's message box instead, and `notice` stays None.
+	notice: Option<crate::dialog::DialogWin>,
+	notice_dirty: bool,
+	notice_owed: Option<config::Refusal>,
+	// files already reported this session (see notice_due)
+	told: Vec<std::path::PathBuf>,
 	// where the Settings dialog was when it last closed, and when that was
 	settings_view: Option<(Instant, crate::settings_ui::View)>,
 	// and the size it was dragged to, which outlives the view above and lasts
@@ -82,6 +90,10 @@ impl App {
 			cli,
 			dialog: None,
 			dialog_dirty: false,
+			notice: None,
+			notice_dirty: false,
+			notice_owed: None,
+			told: Vec::new(),
 			settings_view: None,
 			settings_size: None,
 			raise_reassert: 0,
@@ -349,6 +361,120 @@ impl App {
 		self.dialog = None;
 	}
 
+	// Events for the notice window. It has one button, so everything that means
+	// OK or close closes it.
+	fn handle_notice_event(&mut self, event: WindowEvent) {
+		let Some(n) = self.notice.as_mut() else {
+			return;
+		};
+		let mut close = false;
+		match event {
+			WindowEvent::CloseRequested => close = true,
+			WindowEvent::Resized(size) => {
+				n.resize(size.width, size.height);
+				self.notice_dirty = true;
+			}
+			WindowEvent::RedrawRequested => n.render(),
+			WindowEvent::CursorMoved { position, .. } => {
+				n.set_cursor(position.x as f32, position.y as f32);
+				self.notice_dirty = true;
+			}
+			WindowEvent::MouseInput {
+				state: ElementState::Pressed,
+				button: MouseButton::Left,
+				..
+			} => close = n.mouse_down(None).is_some(),
+			WindowEvent::KeyboardInput {
+				event: key_event,
+				is_synthetic,
+				..
+			} if key_is_typed(key_event.state, is_synthetic) => {
+				close = match &input::name_typed(key_event).logical_key {
+					Key::Named(NamedKey::Escape) => n.key_escape().is_some(),
+					Key::Named(NamedKey::Enter) => n.key_enter(None).is_some(),
+					Key::Named(NamedKey::Space) => n.key_space().is_some(),
+					_ => false,
+				};
+			}
+			_ => {}
+		}
+		if close {
+			self.notice = None;
+		}
+	}
+
+	// While a notice is up, the windows under it take no input, and a click on
+	// one brings the notice forward: the same rule a dialog holds the terminal to.
+	fn notice_holds(&self, event: &WindowEvent) -> bool {
+		let Some(n) = &self.notice else {
+			return false;
+		};
+		match event {
+			WindowEvent::KeyboardInput { .. }
+			| WindowEvent::MouseWheel { .. }
+			| WindowEvent::Ime(_) => true,
+			WindowEvent::MouseInput {
+				state: ElementState::Pressed,
+				..
+			} => {
+				n.window.focus_window();
+				true
+			}
+			_ => false,
+		}
+	}
+
+	// Put an owed notice up, once nothing is saying one already. In front of
+	// Settings when that is open, since an OK there is the usual way to meet it.
+	fn show_notice(&mut self, event_loop: &ActiveEventLoop) {
+		use winit::raw_window_handle::HasWindowHandle;
+		#[cfg(target_os = "windows")]
+		if NOTICE_UP.load(std::sync::atomic::Ordering::SeqCst) {
+			return;
+		}
+		if self.notice.is_some() {
+			return;
+		}
+		let Some(refusal) = self.notice_owed.take() else {
+			return;
+		};
+		let (title, paras) = crate::dialog::refusal_notice(&refusal);
+		let parent = self
+			.dialog
+			.as_ref()
+			.map(|d| &d.window)
+			.or(self.state.as_ref().map(|s| &s.window))
+			.and_then(|w| w.window_handle().ok().map(|h| h.as_raw()));
+		#[cfg(target_os = "windows")]
+		{
+			let _ = event_loop;
+			let owner = match parent {
+				Some(winit::raw_window_handle::RawWindowHandle::Win32(h)) => h.hwnd.get(),
+				_ => 0,
+			};
+			// the path goes right under the sentence that introduces it
+			let body = format!("{}\n{}\n\n{}", paras[0], paras[1], paras[2..].join("\n\n"));
+			message_box(owner, &title, &body);
+		}
+		#[cfg(not(target_os = "windows"))]
+		{
+			let warm = self.gpu_warm.get();
+			match crate::dialog::DialogWin::new_notice(
+				event_loop,
+				title,
+				&paras,
+				parent,
+				warm.as_ref(),
+			) {
+				Ok(n) => {
+					self.notice = Some(n);
+					self.notice_dirty = true;
+				}
+				Err(e) => eprintln!("{}: notice window failed: {e}", config::APP_NAME),
+			}
+		}
+	}
+
 	fn apply_dialog_action(&mut self, action: crate::dialog::DialogAction) {
 		use crate::dialog::DialogAction as DA;
 		match action {
@@ -358,9 +484,9 @@ impl App {
 				self.apply_dialog_settings();
 			}
 			DA::ApplyAndClose => {
-				// Only close on OK if the save actually worked; if the file looked
+				// Only close on OK if the save worked or cannot; if the file looked
 				// open elsewhere the change applied live but wasn't written, so we
-				// keep the dialog up (the FYI went to stderr).
+				// keep the dialog up to try again (the FYI went to stderr).
 				if self.apply_dialog_settings() {
 					self.close_dialog();
 				}
@@ -371,10 +497,12 @@ impl App {
 	// Pull the edited Settings from the dialog window and live-apply them to the
 	// main window (config + persist + rebuild). The dialog has its own surface,
 	// so it's unaffected.
-	// Returns true when the change was written to disk (false = file open elsewhere,
-	// applied live but not saved - OK then leaves the dialog open).
+	// Returns true when the change was written to disk, or when it never can be
+	// until the file is fixed, which a notice says. False means the file looked
+	// open elsewhere: applied live but not saved, and OK leaves the dialog open.
 	fn apply_dialog_settings(&mut self) -> bool {
 		let mut wrote = true;
+		let mut refused = false;
 		if let Some((orig, edited, sys)) = self
 			.dialog
 			.as_ref()
@@ -382,6 +510,12 @@ impl App {
 		{
 			if let Some(state) = self.state.as_mut() {
 				wrote = state.apply_settings_values(&orig, edited, sys);
+			}
+			if let Some(refusal) = config::take_refusal() {
+				refused = true;
+				if notice_due(&mut self.told, &refusal.path, true) {
+					self.notice_owed = Some(refusal);
+				}
 			}
 			// Reverted-to-default keys: after persist wrote the diffs, comment
 			// them back out so the file returns to the template's default line.
@@ -403,7 +537,7 @@ impl App {
 			}
 			self.dialog_dirty = true;
 		}
-		wrote
+		wrote || refused
 	}
 }
 
@@ -1183,6 +1317,47 @@ fn refresh_hz(window: &Window) -> f32 {
 		.current_monitor()
 		.and_then(|m| m.refresh_rate_millihertz())
 		.map_or(60.0, |mhz| mhz as f32 / 1000.0)
+}
+
+// Whether a refused save gets a notice. One the user asked for, an OK or Apply
+// in Settings, is answered every time, or the button would seem to do nothing.
+// The others (a resize, a menu switch, shells found at launch) are said once a
+// session for each file, or every resize would raise it again.
+fn notice_due(told: &mut Vec<std::path::PathBuf>, path: &std::path::Path, asked: bool) -> bool {
+	let first = !told.iter().any(|seen| seen == path);
+	if first {
+		told.push(path.to_path_buf());
+	}
+	asked || first
+}
+
+// The system's own message box, from a thread of its own: it runs a message
+// loop until OK, and on the window's thread that would stop every pane drawing.
+// Owned by `owner`, so it stays in front of it and keeps its input while up.
+#[cfg(target_os = "windows")]
+static NOTICE_UP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(target_os = "windows")]
+fn message_box(owner: isize, title: &str, body: &str) {
+	use std::sync::atomic::Ordering;
+	use windows_sys::Win32::UI::WindowsAndMessaging::{
+		MB_ICONWARNING, MB_OK, MB_SETFOREGROUND, MessageBoxW,
+	};
+	let wide = |text: &str| text.encode_utf16().chain(Some(0)).collect::<Vec<u16>>();
+	let (title, body) = (wide(title), wide(body));
+	NOTICE_UP.store(true, Ordering::SeqCst);
+	std::thread::spawn(move || {
+		// SAFETY: both strings are NUL-terminated and outlive the call
+		unsafe {
+			MessageBoxW(
+				owner as windows_sys::Win32::Foundation::HWND,
+				body.as_ptr(),
+				title.as_ptr(),
+				MB_OK | MB_ICONWARNING | MB_SETFOREGROUND,
+			);
+		}
+		NOTICE_UP.store(false, Ordering::SeqCst);
+	});
 }
 
 // A remote screen wears the Remote profile for the session. Nothing is written
@@ -6651,13 +6826,20 @@ impl ApplicationHandler<UserEvent> for App {
 				// Rebuild unconditionally: focus may move to another window or
 				// nowhere, and an unfocused window must heal too.
 				vramdbg("vt return -> heal_gpu");
-				state.heal_gpu(self.dialog.is_some());
+				state.heal_gpu(self.dialog.is_some() || self.notice.is_some());
 				state.vt_heal.returned(Instant::now());
 			}
 		}
 	}
 
 	fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+		if self.notice.as_ref().is_some_and(|n| n.id() == id) {
+			self.handle_notice_event(event);
+			return;
+		}
+		if self.notice_holds(&event) {
+			return;
+		}
 		// route events for a pop-out dialog window to its own handler
 		if self.dialog.as_ref().is_some_and(|d| d.id() == id) {
 			self.handle_dialog_event(event);
@@ -7806,6 +7988,23 @@ impl ApplicationHandler<UserEvent> for App {
 			}
 			self.dialog_dirty = false;
 		}
+		// A save that could not be written. Asked for from Settings, it was
+		// taken there already (apply_dialog_settings); anything here is one of
+		// the saves nobody asked for.
+		if let Some(refusal) = config::take_refusal() {
+			if notice_due(&mut self.told, &refusal.path, false) {
+				self.notice_owed = Some(refusal);
+			}
+		}
+		if self.notice_owed.is_some() {
+			self.show_notice(event_loop);
+		}
+		if self.notice_dirty {
+			if let Some(n) = &mut self.notice {
+				n.render();
+			}
+			self.notice_dirty = false;
+		}
 		let dlg_wake = self
 			.dialog
 			.as_ref()
@@ -7869,7 +8068,7 @@ impl ApplicationHandler<UserEvent> for App {
 		}
 		if state.vt_heal.due(Instant::now()) {
 			vramdbg("vt return, second pass -> heal_gpu");
-			state.heal_gpu(self.dialog.is_some());
+			state.heal_gpu(self.dialog.is_some() || self.notice.is_some());
 		}
 		// "resources restored" comes down on its own after a few seconds
 		if state.conserve.wake().is_some_and(|at| Instant::now() >= at) {
@@ -7992,7 +8191,7 @@ impl ApplicationHandler<UserEvent> for App {
 				state.rebuild_gpu();
 			}
 			None
-		} else if self.dialog.is_none() {
+		} else if self.dialog.is_none() && self.notice.is_none() {
 			let due = state.release_deadline(&config::settings(), hidden);
 			if due.is_some_and(|due| Instant::now() >= due) {
 				state.release_gpu();
@@ -8240,13 +8439,29 @@ mod tests {
 		Caret, CloseScope, Conserve, ContextMenu, CopyMetrics, Entry, Idle, IdleClock, MenuAction,
 		RESTORED_SHOWN, TAB_CLOSE_M, TabEdit, VT_SETTLE, ViewState, VtHeal, accel_at, accel_clash,
 		close_scope, copybox_fit, copybox_place, fit_px, focus_ring, is_copy_chord, key_is_typed,
-		menu_metrics, mia, msub, mta, needs_folder_read, new_window_command, pace_frame,
-		rating_step, release_deadline, remember_resize, rotation_next, settings_after_reload,
-		tab_close_box, tab_command_line, tab_title_w, typed_title, view_menu_items, window_px,
+		menu_metrics, mia, msub, mta, needs_folder_read, new_window_command, notice_due,
+		pace_frame, rating_step, release_deadline, remember_resize, rotation_next,
+		settings_after_reload, tab_close_box, tab_command_line, tab_title_w, typed_title,
+		view_menu_items, window_px,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
 	use winit::event::ElementState;
+
+	// A save nobody asked for can be refused at every resize, so it is said once
+	// a session for each file. An OK in Settings that could not save is said
+	// every time, or the button would seem to do nothing.
+	#[test]
+	fn a_refused_save_is_said_once_unless_it_was_asked_for() {
+		let mut told = Vec::new();
+		let file = std::path::Path::new("/c/config.shcl");
+		let other = std::path::Path::new("/c/other.shcl");
+		assert!(notice_due(&mut told, file, false));
+		assert!(!notice_due(&mut told, file, false), "the next resize");
+		assert!(notice_due(&mut told, other, false), "another file");
+		assert!(notice_due(&mut told, file, true), "an OK in Settings");
+		assert!(notice_due(&mut told, file, true), "and the next one");
+	}
 
 	// A menu outlives the pane it was opened for when that pane's shell ends, and
 	// the tab can go with it. Close pane then found no such pane in the current tab

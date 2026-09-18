@@ -35,15 +35,18 @@ struct Line {
 // the label.
 struct AboutLink {
 	rect: Rect,
-	url: String,
+	// None closes the window, which is a notice's OK
+	url: Option<String>,
 	tooltip: Option<String>,
 	button: bool,
 }
 
 enum Content {
+	// the About box, or a notice laid out the same way
 	About {
 		lines: Vec<Line>,
 		links: Vec<AboutLink>,
+		notice: bool,
 	},
 	Settings(SettingsDialog),
 }
@@ -98,6 +101,7 @@ impl DialogWin {
 
 	fn kind(&self) -> &'static str {
 		match self.content {
+			Content::About { notice: true, .. } => "Notice",
 			Content::About { .. } => "About",
 			Content::Settings(_) => "Settings",
 		}
@@ -206,7 +210,51 @@ impl DialogWin {
 			gfx,
 			text,
 			rects,
-			content: Content::About { lines, links },
+			content: Content::About {
+				lines,
+				links,
+				notice: false,
+			},
+			mouse: (0.0, 0.0),
+			last_frame: std::time::Instant::now(),
+			anim_wake: None,
+			tip: crate::tip::Dwell::default(),
+			parent,
+			snapped: false,
+			caps: (f32::MAX, f32::MAX),
+		})
+	}
+
+	// A message and an OK button, standing in for the system's message box on a
+	// platform that has none SilkTerm can count on.
+	#[cfg(not(target_os = "windows"))]
+	pub fn new_notice(
+		el: &ActiveEventLoop,
+		title: String,
+		paras: &[String],
+		parent: Option<RawWindowHandle>,
+		warm: Option<&crate::gfx::DialogGpu>,
+	) -> anyhow::Result<Self> {
+		let (window, mut gfx, mut text, rects) =
+			Self::make(el, title, 480.0, 200.0, false, parent, warm)?;
+		let (lines, links, size) = layout_notice(&mut text, paras);
+		let requested_size =
+			winit::dpi::PhysicalSize::new(size.0.ceil() as u32, size.1.ceil() as u32);
+		if let Some(applied) = window.request_inner_size(requested_size) {
+			gfx.resize(applied.width, applied.height);
+		}
+		#[cfg(target_os = "linux")]
+		window.set_visible(true);
+		Ok(Self {
+			window,
+			gfx,
+			text,
+			rects,
+			content: Content::About {
+				lines,
+				links,
+				notice: true,
+			},
 			mouse: (0.0, 0.0),
 			last_frame: std::time::Instant::now(),
 			anim_wake: None,
@@ -374,7 +422,11 @@ impl DialogWin {
 			Content::About { links, .. } => links
 				.iter()
 				.find(|link| link.rect.contains(mx, my))
-				.map(|link| DialogAction::OpenUrl(link.url.clone())),
+				.map(|link| {
+					link.url
+						.clone()
+						.map_or(DialogAction::Close, DialogAction::OpenUrl)
+				}),
 			Content::Settings(dialog) => {
 				let (w, h) = dialog.size();
 				// ignore clicks outside the panel (would otherwise Cancel)
@@ -479,7 +531,8 @@ impl DialogWin {
 	pub fn key_space(&mut self) -> Option<DialogAction> {
 		match &mut self.content {
 			Content::Settings(dialog) => map_action(dialog.key_space()),
-			Content::About { .. } => None,
+			// a notice's one button has the focus
+			Content::About { notice, .. } => notice.then_some(DialogAction::Close),
 		}
 	}
 
@@ -589,7 +642,7 @@ impl DialogWin {
 				}
 				map_action(action)
 			}
-			Content::About { .. } => None,
+			Content::About { notice, .. } => notice.then_some(DialogAction::Close),
 		}
 	}
 
@@ -721,10 +774,21 @@ impl DialogWin {
 		let clear: [u8; 3];
 
 		match &self.content {
-			Content::About { lines, links } => {
+			Content::About {
+				lines,
+				links,
+				notice,
+			} => {
 				clear = crate::settings_ui::dialog_bg();
 				let (mx, my) = self.mouse;
 				let border_col = crate::settings_ui::dialog_border();
+				// a notice's OK is the default button, outlined the way Settings
+				// outlines its own
+				let btn_border = if *notice {
+					crate::settings_ui::dialog_btn_hl()
+				} else {
+					border_col
+				};
 				let q = |x: f32, y: f32, bw: f32, bh: f32, color: [u8; 3]| RectInstance {
 					pos: [x, y],
 					size: [bw, bh],
@@ -746,7 +810,7 @@ impl DialogWin {
 						r.y - b,
 						r.w + 2.0 * b,
 						r.h + 2.0 * b,
-						border_col,
+						btn_border,
 					));
 					rect_inst.push(q(r.x, r.y, r.w, r.h, fill));
 				}
@@ -1379,7 +1443,7 @@ fn layout_about(
 					w: widths[i],
 					h: line_h,
 				},
-				url: repo_url.clone(),
+				url: Some(repo_url.clone()),
 				tooltip: None,
 				button: false,
 			});
@@ -1405,7 +1469,7 @@ fn layout_about(
 			w: btn_w,
 			h: btn_h,
 		},
-		url: config::DONATE_URL.to_string(),
+		url: Some(config::DONATE_URL.to_string()),
 		tooltip: Some(config::DONATE_URL.to_string()),
 		button: true,
 	});
@@ -1422,6 +1486,149 @@ fn layout_about(
 	// leave room below the button for the URL flyover to appear on hover
 	let box_h = y + pad + line_h + text.dip(ABOUT_TIP_ROOM);
 	(lines, links, (box_w, box_h))
+}
+
+// A notice's window title and its paragraphs. The path is a paragraph of its
+// own, since it is the one part that cannot be wrapped at a space.
+pub fn refusal_notice(refusal: &config::Refusal) -> (String, Vec<String>) {
+	let which = match refusal.lines.as_slice() {
+		[] if refusal.lost == 1 => "A line".to_string(),
+		[] => format!("{} lines", refusal.lost),
+		[one] => format!("Line {one}"),
+		many => {
+			let shown: Vec<String> = many.iter().take(5).map(ToString::to_string).collect();
+			match many.len() - shown.len() {
+				0 => format!(
+					"Lines {} and {}",
+					shown[..shown.len() - 1].join(", "),
+					shown[shown.len() - 1]
+				),
+				more => format!("Lines {} and {more} more", shown.join(", ")),
+			}
+		}
+	};
+	let it = if refusal.lines.len() > 1 || (refusal.lines.is_empty() && refusal.lost > 1) {
+		"them"
+	} else {
+		"it"
+	};
+	(
+		"Settings not saved".to_string(),
+		vec![
+			format!("{} cannot save its settings file.", config::APP_NAME),
+			refusal.path.display().to_string(),
+			format!("{which} cannot be read, and saving now would delete {it}."),
+			"Until that is fixed, changes such as the window size, new shells and anything set in Settings are used now but not kept.".to_string(),
+		],
+	)
+}
+
+// Notice geometry, DIP (see config::dip). Windows draws its own message box.
+#[cfg(not(target_os = "windows"))]
+const NOTICE_WRAP: f32 = 440.0; // widest a paragraph runs before it wraps
+#[cfg(not(target_os = "windows"))]
+const NOTICE_PARA_GAP: f32 = 10.0;
+#[cfg(not(target_os = "windows"))]
+const NOTICE_BTN_MIN_W: f32 = 88.0;
+
+// A notice laid out at the window origin: its paragraphs wrapped at word
+// breaks, and an OK button at the bottom right. Physical px, like layout_about.
+#[cfg(not(target_os = "windows"))]
+fn layout_notice(text: &mut TextCtx, paras: &[String]) -> (Vec<Line>, Vec<AboutLink>, (f32, f32)) {
+	let fg = crate::settings_ui::dialog_text();
+	let dim = crate::settings_ui::dialog_dim();
+	let attrs = ui_attrs();
+	let pad = text.dip(ABOUT_PAD);
+	let line_h = text.ui_line_h;
+	let wrap = text.dip(NOTICE_WRAP);
+	let para_gap = text.dip(NOTICE_PARA_GAP);
+
+	let mut rows: Vec<(String, [u8; 3], f32)> = Vec::new();
+	for (i, para) in paras.iter().enumerate() {
+		// the path sits right under the sentence that introduces it
+		let gap = match i {
+			0 => 0.0,
+			1 => text.dip(ABOUT_TIGHT_GAP),
+			_ => para_gap,
+		};
+		let color = if i == 1 { dim } else { fg };
+		// a path breaks after a separator, where the rest break at a space
+		let (words, joiner): (Vec<&str>, &str) = if i == 1 {
+			(para.split_inclusive(['/', '\\']).collect(), "")
+		} else {
+			(para.split(' ').collect(), " ")
+		};
+		let mut row = String::new();
+		let mut first = true;
+		for word in words {
+			let tried = if row.is_empty() {
+				word.to_string()
+			} else {
+				format!("{row}{joiner}{word}")
+			};
+			if !row.is_empty() && text.measure_ui_text(&tried, &attrs) > wrap {
+				rows.push((
+					std::mem::take(&mut row),
+					color,
+					if first { gap } else { 0.0 },
+				));
+				first = false;
+				row = word.to_string();
+			} else {
+				row = tried;
+			}
+		}
+		rows.push((row, color, if first { gap } else { 0.0 }));
+	}
+
+	let label = "OK";
+	let (btn_pad_x, btn_pad_y) = (text.dip(ABOUT_BTN_PAD_X), text.dip(ABOUT_BTN_PAD_Y));
+	let label_w = text.measure_ui_text(label, &attrs);
+	let btn_w = (label_w + btn_pad_x * 2.0).max(text.dip(NOTICE_BTN_MIN_W));
+	let btn_h = line_h + btn_pad_y * 2.0;
+	let mut content_w = btn_w;
+	for (row, _, _) in &rows {
+		content_w = content_w.max(text.measure_ui_text(row, &attrs));
+	}
+
+	let mut lines = Vec::with_capacity(rows.len() + 1);
+	let mut y = pad;
+	for (row, color, gap) in rows {
+		y += gap;
+		lines.push(Line {
+			text: row,
+			x: pad,
+			y,
+			color,
+			bold: false,
+			scale: 1.0,
+		});
+		y += line_h;
+	}
+	// clear of the text above it, the way the Settings footer is
+	y += text.dip(config::MENU_SEP_H) * 2.0;
+	let btn_x = pad + content_w - btn_w;
+	let links = vec![AboutLink {
+		rect: Rect {
+			x: btn_x,
+			y,
+			w: btn_w,
+			h: btn_h,
+		},
+		url: None,
+		tooltip: None,
+		button: true,
+	}];
+	lines.push(Line {
+		text: label.into(),
+		x: btn_x + (btn_w - label_w) * 0.5,
+		y: y + btn_pad_y,
+		color: fg,
+		bold: false,
+		scale: 1.0,
+	});
+	y += btn_h;
+	(lines, links, (content_w + pad * 2.0, y + pad))
 }
 
 // The part of the screen a window can actually occupy: the monitor minus the
@@ -1575,8 +1782,46 @@ mod tests {
 	use std::time::Instant;
 
 	use super::{
-		DLG_DECOR_HEADROOM, DLG_MAX_H, DLG_SNAP, Rect, caps_from, snap_to, tip_gate, usable_screen,
+		DLG_DECOR_HEADROOM, DLG_MAX_H, DLG_SNAP, Rect, caps_from, refusal_notice, snap_to,
+		tip_gate, usable_screen,
 	};
+
+	// What a refused save says: which file, which lines, and what that costs.
+	#[test]
+	fn a_refused_save_names_the_file_and_the_lines() {
+		let said = |lines: &[usize], lost: usize| {
+			let refusal = crate::config::Refusal {
+				path: std::path::PathBuf::from("/home/me/.config/silkterm/config.shcl"),
+				lines: lines.to_vec(),
+				lost,
+			};
+			refusal_notice(&refusal)
+		};
+		let (title, paras) = said(&[12], 1);
+		assert_eq!(title, "Settings not saved");
+		assert_eq!(paras[1], "/home/me/.config/silkterm/config.shcl");
+		assert_eq!(
+			paras[2],
+			"Line 12 cannot be read, and saving now would delete it."
+		);
+		assert!(paras[3].contains("not kept"));
+		assert_eq!(
+			said(&[3, 40], 2).1[2],
+			"Lines 3 and 40 cannot be read, and saving now would delete them."
+		);
+		assert_eq!(
+			said(&[1, 2, 3, 4, 5, 6, 7], 7).1[2],
+			"Lines 1, 2, 3, 4, 5 and 2 more cannot be read, and saving now would delete them."
+		);
+		assert_eq!(
+			said(&[], 1).1[2],
+			"A line cannot be read, and saving now would delete it."
+		);
+		assert_eq!(
+			said(&[], 3).1[2],
+			"3 lines cannot be read, and saving now would delete them."
+		);
+	}
 
 	// A tip in a dialog waits for the pointer to rest, the way one in the tab
 	// strip or a menu does. Drawing it needs a GPU, so what is pinned here is the
