@@ -71,6 +71,9 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
+- 🔘 The PowerShell prompt shows no ahead or behind count, and names only an `origin` remote. The bash prompt does both since 20260917, and the two are meant to read the same.
+	- Opened: 20260917
+
 - 🔬 After a crash in VSCodium required switching to VT-1, the terminal on the same virtual desktop came back with background-only, no text visible. (This looks a lot like a previous bug many weeks ago.)
 	- On some other silkterm windows (but not all), text is visible, but the background is gray, not the theme's black. (Even after changing the theme.) Some silkterm windows seem fine.
 	- After a second switch to VT-1 and back, another silkterm window got a gray background, and invisible text.
@@ -353,7 +356,10 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Both are rendered again from the pack, 104 images. Every remaining record keeps its credit and licence unchanged.
 		- The pipeline now fails when the gallery names other images than the pack, or the sheet has the wrong number of rows. A change inside one row of the sheet is not caught, since the sheet can only be checked by its size.
 		- The live gallery follows once `main` has the new page, at the next release.
-	- Code review 20260914 item 80 (F112, should-fix): The git-aware bash prompt shows nothing in a repository without an `origin` remote, and never shows how far ahead or behind a branch is.
+	- ✅ Code review 20260914 item 80 (F112, should-fix): The git-aware bash prompt shows nothing in a repository without an `origin` remote, and never shows how far ahead or behind a branch is.
+		- Fixed in x9ps1-git first, then the copy taken again unchanged. The git part shows anywhere inside a working tree. It names the remote the branch tracks, then `origin`, then the first one, or none.
+		- The marks and the counts come from git's porcelain status, which reads the same in every language. The counts show as `↑2↓1` when the branch is not level.
+		- Pinned by `the_prompt_shows_any_repository_and_how_far_it_is_from_upstream`, and by a "Git part" section in x9ps1-git's own test. Both were red on the old prompt.
 	- ✅ Code review 20260914 item 81 (F113, should-fix): Each demo recording leaves background daemons running after it ends.
 		- The session runs in its own process group, and stopping it ends the whole group, so the bus and the settings service go with it.
 		- Pinned by the same test, which looks for anything from the session still running.

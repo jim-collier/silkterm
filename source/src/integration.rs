@@ -709,6 +709,93 @@ mod tests {
 		);
 	}
 
+	// The git part used to need a remote named origin, and read its marks from
+	// git's English status text, so it never showed a count.
+	#[cfg(unix)]
+	#[test]
+	fn the_prompt_shows_any_repository_and_how_far_it_is_from_upstream() {
+		use std::path::Path;
+		use std::process::Command;
+		let dir = std::env::temp_dir().join(format!("silkterm_x9ps1git_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).expect("temp dir");
+		let script = dir.join(super::BASH_PROMPT_FILE);
+		std::fs::write(&script, BASH_PROMPT).expect("write script");
+
+		let run = |cwd: &Path, program: &str, args: &[&str]| {
+			let out = Command::new(program)
+				.args(args)
+				.current_dir(cwd)
+				.env("GIT_CONFIG_GLOBAL", "/dev/null")
+				.env("GIT_CONFIG_NOSYSTEM", "1")
+				.env("GIT_AUTHOR_NAME", "test")
+				.env("GIT_AUTHOR_EMAIL", "test@example.com")
+				.env("GIT_COMMITTER_NAME", "test")
+				.env("GIT_COMMITTER_EMAIL", "test@example.com")
+				.env_remove("GIT_DIR")
+				.env_remove("GIT_WORK_TREE")
+				.env_remove("GIT_INDEX_FILE")
+				.env_remove("X9PS1_STANDARD")
+				.output()
+				.unwrap_or_else(|e| panic!("run {program}: {e}"));
+			assert!(out.status.success(), "{program} {args:?}: {out:?}");
+			String::from_utf8_lossy(&out.stdout).into_owned()
+		};
+		let git = |cwd: &Path, args: &[&str]| run(cwd, "git", args);
+		let commit =
+			|cwd: &Path, msg: &str| git(cwd, &["commit", "-q", "--allow-empty", "-m", msg]);
+
+		// No remote at all
+		git(&dir, &["init", "-q", "-b", "lonebranch", "lone"]);
+
+		// A clone whose remote is not origin, two ahead of its upstream and one behind
+		let up = dir.join("up.git");
+		let up_str = up.to_string_lossy().into_owned();
+		git(&dir, &["init", "-q", "--bare", "-b", "main", "up.git"]);
+		git(&dir, &["init", "-q", "-b", "main", "other"]);
+		let other = dir.join("other");
+		commit(&other, "one");
+		git(&other, &["push", "-q", &up_str, "main"]);
+		git(&dir, &["clone", "-q", "-o", "upstream", &up_str, "tracked"]);
+		commit(&other, "two");
+		git(&other, &["push", "-q", &up_str, "main"]);
+		let tracked = dir.join("tracked");
+		git(&tracked, &["fetch", "-q", "upstream"]);
+		commit(&tracked, "three");
+		commit(&tracked, "four");
+
+		let shown = |cwd: &Path| {
+			run(
+				cwd,
+				"bash",
+				&[
+					"--noprofile",
+					"--norc",
+					"-c",
+					r#"PS1=$("$BASH" "$1") && printf '%s' "${PS1@P}""#,
+					"bash",
+					&script.to_string_lossy(),
+				],
+			)
+		};
+		let lone = shown(&dir.join("lone"));
+		let far = shown(&tracked);
+		let _ = std::fs::remove_dir_all(&dir);
+
+		assert!(
+			lone.contains("lonebranch"),
+			"no git part without a remote: {lone:?}"
+		);
+		assert!(
+			far.contains(&up_str),
+			"remote not named origin not shown: {far:?}"
+		);
+		assert!(
+			far.contains("\u{2191}2\u{2193}1"),
+			"no ahead and behind count: {far:?}"
+		);
+	}
+
 	// A profile is a script run at every shell start, and it often holds tokens.
 	// The write used to replace a linked profile with a copy at the umask's mode,
 	// and wrote through a link left at its temp or backup name.

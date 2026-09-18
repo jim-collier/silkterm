@@ -94,6 +94,8 @@ function fMain() {
 #	local -r unicodeCheckmark="\\xe2\\x9c\\x94"  ## ✔
 	local -r unicodeXmark="✘"
 	local -r unicodeCheckmark="✔"
+	local -r unicodeUp="↑"
+	local -r unicodeDown="↓"
 
 	## Styles and background colors (sorf of mutually exclusive)
 	local -r styleRegular="    0"
@@ -192,47 +194,62 @@ function fMain() {
 	## To save time, see if git is even installed.
 	if [[ -n "$(which git 2>/dev/null || true)" ]]; then
 
-		## Git repo
-		local -r gitRepo="$(git config --get remote.origin.url 2>/dev/null | cut -f 2 -d "@" || true)"
-		if [[ -n "${gitRepo}" ]]; then
+		## One call answers the branch, whether it's committed, and where it stands against its upstream.
+		## The porcelain form is the same in every language, where the plain status text is translated.
+		local -r gitStatus="$(git status --porcelain=v2 --branch 2>/dev/null || true)"
+		if [[ -n "${gitStatus}" ]]; then
 
-			## Encoded repo
-			local -r encodedPartial_Repo="${colorRepo}$(fPromptSafe "${gitRepo}")${colorRESET}"
+			local gitBranch=""  gitAheadBehind=""  line=""
+			local -i isCommitted=1  isInSyncWithUpstream=0  gitAhead=0  gitBehind=0
+			while IFS= read -r line; do
+				case "${line}" in
+					"# branch.head "*)  gitBranch="${line#"# branch.head "}"     ;;
+					"# branch.ab "*)    gitAheadBehind="${line#"# branch.ab "}"  ;;
+					"#"*)               ;;
+					*)                  isCommitted=0                           ;;
+				esac
+			done <<< "${gitStatus}"
 
-			## Git branch
-			local -r gitBranch="$(git branch 2>/dev/null | grep -i "*" | grep -iPo "[^\*\ ]+" || true)"
-			if [[ -n "${gitBranch}" ]]; then
+			## No 'branch.ab' line means no upstream, so there's nothing to be level with.
+			if [[ "${gitAheadBehind}" =~ ^\+([0-9]+)\ -([0-9]+)$ ]]; then
+				gitAhead="${BASH_REMATCH[1]}"
+				gitBehind="${BASH_REMATCH[2]}"
+				isInSyncWithUpstream=$((gitAhead == 0 && gitBehind == 0))
+			fi
 
-				## Encoded branch
-				local -r encodedPartial_Branch="${colorBranch}$(fPromptSafe "${gitBranch}")${colorRESET}"
-
-				## Git status
-				local -r gitStatus="$(git status 2>/dev/null || true)"
-				if [[ -n "${gitStatus}" ]]; then
-					## Committed locally
-					if [[ -n "$(echo "${gitStatus}" | grep -iPo "nothing to commit" 2>/dev/null || true)" ]]; then
-						local -r -i isCommitted=1
-					else
-						local -r -i isCommitted=0
-					fi
-					## In sync with origin
-					if [[ -n "$(echo "${gitStatus}" | grep -iPo "Your branch is up to date with \'origin\/" 2>/dev/null || true)" ]]; then
-						local -r -i isInSyncWithOrigin=1
-					else
-						local -r -i isInSyncWithOrigin=0
-					fi
+			## The remote the branch tracks, else origin, else the first one. None is fine too.
+			local gitRemote=""  gitRemotes=""  gitRepo=""
+			if [[ "${gitBranch}" != "(detached)" ]]; then
+				gitRemote="$(git config --get "branch.${gitBranch}.remote" 2>/dev/null || true)"
+			fi
+			if [[ -z "${gitRemote}" || "${gitRemote}" == "." ]]; then
+				gitRemotes="$(git remote 2>/dev/null || true)"
+				if [[ $'\n'"${gitRemotes}"$'\n' == *$'\n'origin$'\n'* ]]; then gitRemote="origin"
+				else                                                            gitRemote="${gitRemotes%%$'\n'*}"
 				fi
+			fi
+			if [[ -n "${gitRemote}" ]]; then
+				gitRepo="$(git config --get "remote.${gitRemote}.url" 2>/dev/null || true)"
+				gitRepo="${gitRepo#*@}"  ## An ssh remote starts with 'git@' on every line, so it says nothing.
+			fi
 
-				## Encoded status
-				encodedPartial_GitStatus=""
-				if [[ ${isCommitted}        -eq 1 ]]; then encodedPartial_GitStatus="${encodedPartial_GitStatus}${colorStatus_Yes}${unicodeCheckmark}"
-				else                                       encodedPartial_GitStatus="${encodedPartial_GitStatus}${colorStatus_Not}${unicodeXmark}"
-				fi
-				if [[ ${isInSyncWithOrigin} -eq 1 ]]; then encodedPartial_GitStatus="${encodedPartial_GitStatus}${colorStatus_Yes}${unicodeCheckmark}"
-				else                                       encodedPartial_GitStatus="${encodedPartial_GitStatus}${colorStatus_Not}${unicodeXmark}"
-				fi
+			## Encoded repo and branch
+			[[ -z "${gitRepo}" ]] || encodedPartial_Repo="${colorRepo}$(fPromptSafe "${gitRepo}")${colorRESET}"
+			[[ -z "${gitBranch}" ]] || encodedPartial_Branch="${colorBranch}$(fPromptSafe "${gitBranch}")${colorRESET}"
+
+			## Encoded status
+			if ((isCommitted));          then encodedPartial_GitStatus="${colorStatus_Yes}${unicodeCheckmark}"
+			else                              encodedPartial_GitStatus="${colorStatus_Not}${unicodeXmark}"
+			fi
+			if ((isInSyncWithUpstream)); then encodedPartial_GitStatus="${encodedPartial_GitStatus}${colorStatus_Yes}${unicodeCheckmark}"
+			else                              encodedPartial_GitStatus="${encodedPartial_GitStatus}${colorStatus_Not}${unicodeXmark}"
+			fi
+			encodedPartial_GitStatus="${encodedPartial_GitStatus}${colorRESET}"
+			if ((gitAhead || gitBehind)); then
+				encodedPartial_GitStatus="${encodedPartial_GitStatus} ${colorAttn}"
+				((gitAhead == 0))  || encodedPartial_GitStatus="${encodedPartial_GitStatus}${unicodeUp}${gitAhead}"
+				((gitBehind == 0)) || encodedPartial_GitStatus="${encodedPartial_GitStatus}${unicodeDown}${gitBehind}"
 				encodedPartial_GitStatus="${encodedPartial_GitStatus}${colorRESET}"
-
 			fi
 
 			## Assemble git part of final encoded prompt
@@ -311,3 +328,4 @@ set +eE
 ##			- Chanced license from GPLv3 to MIT.
 ##			- Added X9PS1_STANDARD flag.
 ##		- 20260915 JC: Branch and remote names are escaped before going into PS1. A name holding $(...) or backticks ran as a command at every prompt.
+##		- 20260917 JC: Git part shows with any remote or none, reads the porcelain status, and shows ahead/behind counts.
