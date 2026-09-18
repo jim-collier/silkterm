@@ -186,7 +186,7 @@ def speed_grid_ok(any_size):
 	return False
 
 
-def measure_here(reps, quick, label, write_readme):
+def measure_here(reps, quick, label, write_readme, publish):
 	"""Measure the terminal this is running inside."""
 	cmd = [sys.executable, os.path.join(INCLUDE, "termbench.py")]
 	if quick:
@@ -198,6 +198,9 @@ def measure_here(reps, quick, label, write_readme):
 	if not write_readme:
 		#	Same meaning as on the rig path: measure and print, record nothing anywhere.
 		cmd.append("--no-save")
+	elif not publish:
+		#	Kept in the tool's own history, where a quick run has its own table.
+		cmd.append("--no-readme")
 	return run_plain(cmd)
 
 
@@ -221,7 +224,7 @@ def write_size_row(row, file_deps, mem):
 	return wrote
 
 
-def size_here(label, write_readme, any_size):
+def size_here(label, publish, any_size):
 	"""Size and memory of the terminal this is running inside.
 
 	The row has to be named to be written. Guessing it from the executable would quietly
@@ -236,7 +239,7 @@ def size_here(label, write_readme, any_size):
 	if not got:
 		echo("WARNING: no size measurement came back")
 		return False
-	if not write_readme:
+	if not publish:
 		return True
 	if not label:
 		echo("NOTE: pass --label with the table's row name to write these into the README")
@@ -341,19 +344,27 @@ def main(argv):
 				    % ("%dx%d" % got if got else "not a terminal",
 				       SPEED_GRID[0], SPEED_GRID[1], SIZE_GRID[0], SIZE_GRID[1]))
 
+		#	A quick run and an --any-size one are for looking, and the table only takes
+		#	figures measured the way the rows beside them were.
+		publish = write_readme and not args.quick and not args.any_size
 		ok = True
 		if do_speed:
 			if args.quick:
 				echo("NOTE: a quick run is aggregated separately and never reaches the table")
 			section("Speed: this terminal")
 			ok = speed_grid_ok(args.any_size) and measure_here(
-				args.reps, args.quick, args.label, write_readme)
+				args.reps, args.quick, args.label, write_readme, publish)
 		if do_size:
 			section("Size and memory: this terminal")
-			ok = size_here(args.label, write_readme, args.any_size) and ok
+			ok = size_here(args.label, publish, args.any_size) and ok
 		echo_clean()
-		echo("README updated - check the diff before committing"
-		     if write_readme and ok else "nothing written")
+		if publish and ok:
+			echo("README updated - check the diff before committing")
+		elif write_readme and not publish:
+			echo("README not touched - a %s run is not comparable with the table"
+			     % ("quick" if args.quick else "--any-size"))
+		else:
+			echo("nothing written")
 		echo_clean()
 		return 0 if ok else 1
 

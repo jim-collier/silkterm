@@ -612,6 +612,12 @@ if [[ -x "${root}/cicd/tests/demo/run.py" ]]; then
 	"${root}/cicd/tests/demo/run.py" >/dev/null || fDie "demo recorder session test failed"
 	fEcho "OK: demo recorder session"
 fi
+## The showdown table writers, which once took quick, scaled and wrong-grid runs.
+if [[ -x "${root}/cicd/tests/showdown/run.py" ]]; then
+	fEcho_Clean "showdown table writers ..."
+	"${root}/cicd/tests/showdown/run.py" >/dev/null || fDie "showdown table test failed"
+	fEcho "OK: showdown table writers"
+fi
 ## The startup gates, which once marked a run as seen while it was being written.
 if [[ -x "${root}/cicd/tests/gates/run.bash" ]]; then
 	fEcho_Clean "startup gates ..."

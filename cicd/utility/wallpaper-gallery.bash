@@ -5,7 +5,7 @@
 ##	Purpose:
 ##		Render the two browsable views of the shipped wallpaper pack.
 ##		  1. The README contact sheet: every image centre-cropped to one tile size and
-##		     tiled into a single JPEG, so the README costs one request, not 113.
+##		     tiled into a single JPEG, so the README costs one request, not one per image.
 ##		  2. The Pages gallery under docs/: a thumbnail grid whose tiles open the full
 ##		     image in place, with prev/next paging. Full images are NOT copied - the
 ##		     page fetches them from the pack in the repository, so nothing is duplicated.
@@ -128,6 +128,15 @@ if ((doCheck)); then
 			echo "wallpaper-gallery: the contact sheet has ${sheetRows} rows, and ${count} images need ${rows}" >&2
 			bad=1
 		fi
+	fi
+	## README names the pack's size in a sentence, which goes stale the same way.
+	said="$(grep -oE 'ships with the [0-9]+ wallpapers' "${repoDir}/README.md" 2>/dev/null | grep -oE '[0-9]+' || true)"
+	if [[ -z "$said" ]]; then
+		echo "wallpaper-gallery: README.md no longer says 'ships with the N wallpapers', so its count goes unchecked" >&2
+		exit 1
+	elif [[ "$said" != "$count" ]]; then
+		echo "wallpaper-gallery: README.md says ${said} wallpapers, and the pack has ${count}" >&2
+		exit 1
 	fi
 	((bad)) && { echo "wallpaper-gallery: re-run cicd/utility/wallpaper-gallery.bash and commit what it writes" >&2; exit 1; }
 	echo "wallpaper-gallery: the gallery matches the pack (${count} images)"

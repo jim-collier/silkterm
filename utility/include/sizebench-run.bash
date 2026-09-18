@@ -64,7 +64,7 @@ fTermBinary() {
 	local -r key="$1"
 	local path=""
 	case "${key}" in
-		silkterm|silkplain) path="${repoDir}/target/release/silkterm" ;;
+		silkterm|silkplain) path="$(fTargetDir "${repoDir}")/release/silkterm" ;;
 		alacritty)          path="$(command -v alacritty || true)"
 		                    [[ -z "${path}" ]] && path="${termsDir}/usr/bin/alacritty" ;;
 		xterm)              path="$(command -v xterm || true)" ;;
@@ -147,7 +147,10 @@ fMain() {
 	[[ -n "${key}" ]] || { fUsage; fDie "--term is required"; }
 
 	local -i cols="${grid%x*}" rows="${grid#*x}"
-	local -r bin="$(fTermBinary "${key}")"
+	## Apart from the assignment, or 'local' hides the failure and the rig goes on to
+	## launch an empty command.
+	local bin=""
+	bin="$(fTermBinary "${key}")" || exit 1
 
 	_work="$(mktemp -d /tmp/sizebench.XXXXXX)"
 

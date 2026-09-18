@@ -229,6 +229,11 @@ declare benchArgs="--reps ${reps}"
 if [[ -n "${scene}" ]]; then benchArgs+=" --scene ${scene}"; fi
 if ((noSave)); then benchArgs+=" --no-save --no-readme"; fi
 
+declare -r silkBin="$(fTargetDir "${_repo}")/release/silkterm"
+case "${termKey}" in
+	silkterm|silkplain) [[ -x "${silkBin}" ]] || fDie "no build at ${silkBin}" ;;
+esac
+
 start_rig
 
 ## The scene script waits on the go file, reporting its grid meanwhile, so the fitter
@@ -239,10 +244,10 @@ declare -r sceneCmd="/bin/dash ${_here}/termbench-scene.sh"
 
 case "${termKey}" in
 	silkterm)
-		"${_repo}/target/release/silkterm" --shell "${sceneCmd}" > "${_work}/term.log" 2>&1 & ;;
+		"${silkBin}" --shell "${sceneCmd}" > "${_work}/term.log" 2>&1 & ;;
 	silkplain)
 		write_plain_config
-		"${_repo}/target/release/silkterm" --config "${_work}/plain.shcl" --shell "${sceneCmd}" > "${_work}/term.log" 2>&1 & ;;
+		"${silkBin}" --config "${_work}/plain.shcl" --shell "${sceneCmd}" > "${_work}/term.log" 2>&1 & ;;
 	alacritty)
 		write_alacritty_config
 		"$(find_bin alacritty || fDie "alacritty not found - see showdown-README.md")" \
