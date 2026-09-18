@@ -4,7 +4,9 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use alacritty_terminal::grid::{Dimensions, Grid, Row, Scroll as GridScroll};
+use alacritty_terminal::grid::{
+	BidirectionalIterator, Dimensions, Grid, Row, Scroll as GridScroll,
+};
 use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::Term;
@@ -3072,6 +3074,13 @@ impl Pane {
 		))
 	}
 
+	// A double-click on a bracket, when neither a shape nor a pair took it
+	// (bracket_reach).
+	pub fn bracket_span(&self, point: Point) -> Option<(Point, Point)> {
+		let guard = self.term.term.lock_unfair();
+		bracket_reach(guard.grid(), point)
+	}
+
 	// The shape (URL, path, scp target) covering `point`, if there is one, as
 	// (first, last) cells. Spans a soft-wrapped line the way a hyperlink does,
 	// since a long path is exactly the thing that wraps.
@@ -3756,6 +3765,48 @@ fn paste_payload(text: &str, bracket: bool) -> String {
 // encloses `col` on `row`. `pairs` is (open, close) in precedence order; the
 // first enclosing non-empty pair wins (so e.g. inside `()` selects the `()`
 // contents even if a lower-precedence `[]` is nested within). None -> no pair.
+// How far a double-click on a bracket looks for its partner, in rows.
+const BRACKET_REACH_ROWS: usize = 200;
+
+// A double-click on a bracket selects from it to its partner, or the bracket
+// alone when none is in reach, and None means the cell is not a bracket. The
+// engine does the same when handed a word selection on one, but it looks
+// through the whole scrollback under the terminal lock, and again on every
+// rebuild while the selection stands: 86 ms a time at 100,000 lines.
+fn bracket_reach(grid: &Grid<Cell>, point: Point) -> Option<(Point, Point)> {
+	const PAIRS: [(char, char); 3] = [('(', ')'), ('[', ']'), ('{', '}')];
+	let here = grid[point].c;
+	let (forward, partner) = PAIRS.iter().find_map(|&(open, close)| {
+		if here == open {
+			Some((true, close))
+		} else if here == close {
+			Some((false, open))
+		} else {
+			None
+		}
+	})?;
+	let mut cells = grid.iter_from(point);
+	let mut nested = 0usize;
+	for _ in 0..BRACKET_REACH_ROWS * grid.columns() {
+		let Some(cell) = (if forward { cells.next() } else { cells.prev() }) else {
+			break;
+		};
+		if cell.c == partner {
+			if nested == 0 {
+				return Some(if forward {
+					(point, cell.point)
+				} else {
+					(cell.point, point)
+				});
+			}
+			nested -= 1;
+		} else if cell.c == here {
+			nested += 1;
+		}
+	}
+	Some((point, point))
+}
+
 fn pair_inside(row: &[char], col: usize, pairs: &[(char, char)]) -> Option<(usize, usize)> {
 	for &(open, close) in pairs {
 		let found = if open == close {
@@ -4453,14 +4504,14 @@ fn band_row_line(screen_row: i32, display_offset: i32, split_row: i32, ob: usize
 #[cfg(test)]
 mod tests {
 	use super::{
-		APP_SCROLL_MAX, BAR_MIN_THUMB, CURSOR_MAX_LAG, Dir, LinkHit, Node, OffStrip,
-		PROMPT_SKEL_MIN, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell, adopt_band,
+		APP_SCROLL_MAX, BAR_MIN_THUMB, BRACKET_REACH_ROWS, CURSOR_MAX_LAG, Dir, LinkHit, Node,
+		OffStrip, PROMPT_SKEL_MIN, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell, adopt_band,
 		band_row_line, bar_applies_to, bar_pos_to_lines, bar_thumb_span, bell_brighten,
-		capture_grid_text, capture_start, child_areas, cursor_cycle, cursor_slide_step,
-		distinct_pair, divider_at, equalize_dir_run, fingerprint_frame, fnv_row, fnv_row_skel,
-		glide_to_full, layout, ledger_step, link_at, logical_line_bounds, move_is_input,
-		next_capture_poll, output_advance, output_band, pair_inside, paste_payload, prompt_strip,
-		pushed_since, render_char, repainted_edge, resume_delay, same_char_pair,
+		bracket_reach, capture_grid_text, capture_start, child_areas, cursor_cycle,
+		cursor_slide_step, distinct_pair, divider_at, equalize_dir_run, fingerprint_frame, fnv_row,
+		fnv_row_skel, glide_to_full, layout, ledger_step, link_at, logical_line_bounds,
+		move_is_input, next_capture_poll, output_advance, output_band, pair_inside, paste_payload,
+		prompt_strip, pushed_since, render_char, repainted_edge, resume_delay, same_char_pair,
 		scroll_shift_signed, shown_cursor_shape, slide_bands, slide_is_visible, snapshot_rows,
 		static_bands, strip_rows, translate_span, vanished_range, weld_region_clip,
 	};
@@ -4657,6 +4708,42 @@ mod tests {
 			accented.grid()[Line(0)][Column(0)].zerowidth(),
 			Some(&['\u{301}'][..]),
 			"an ordinary accent is kept"
+		);
+	}
+
+	// A double-click on an unmatched bracket had the engine look through the
+	// whole scrollback for its partner, under the lock and on every rebuild.
+	#[test]
+	fn a_bracket_looks_for_its_partner_only_so_far() {
+		let text = "x (a\r\nb) c )\r\n";
+		let term = term_fed(20, 3, 10, text);
+		let grid = term.grid();
+		let at = |line: i32, col: usize| Point::new(Line(line), Column(col));
+		let top = -(grid.history_size() as i32);
+		// across a line break, from either end
+		assert_eq!(
+			bracket_reach(grid, at(top, 2)),
+			Some((at(top, 2), at(top + 1, 1)))
+		);
+		assert_eq!(
+			bracket_reach(grid, at(top + 1, 1)),
+			Some((at(top, 2), at(top + 1, 1)))
+		);
+		assert_eq!(bracket_reach(grid, at(top, 0)), None, "not a bracket");
+
+		// a partner past the reach is not looked for, so the bracket stands alone
+		let far = BRACKET_REACH_ROWS + 50;
+		let mut text = String::from("(\r\n");
+		text.push_str(&"-\r\n".repeat(far));
+		text.push(')');
+		let term = term_fed(4, 3, far + 10, &text);
+		let grid = term.grid();
+		let close = Point::new(Line(2), Column(0));
+		assert_eq!(grid[close].c, ')');
+		assert_eq!(bracket_reach(grid, close), Some((close, close)));
+		assert!(
+			term.bracket_search(close).is_some(),
+			"the engine would have found it"
 		);
 	}
 
