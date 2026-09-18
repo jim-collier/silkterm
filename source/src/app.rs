@@ -1398,6 +1398,49 @@ fn pace_frame(next: &mut Option<Instant>, ivl: Duration) -> ControlFlow {
 	ControlFlow::WaitUntil(at)
 }
 
+// When the window last saw a person or a shell: input, focus either way, or
+// output while it could be seen. The idle release counts from `since` (see
+// `release_deadline`). `wake_owed` says something wants the window back since
+// it let its device go, so the device is owed as soon as there is a screen to
+// draw on.
+struct IdleClock {
+	since: Instant,
+	wake_owed: bool,
+}
+
+impl IdleClock {
+	fn new() -> Self {
+		IdleClock {
+			since: Instant::now(),
+			wake_owed: false,
+		}
+	}
+
+	// A sign of life. True when it is the one that makes the device owed.
+	fn active(&mut self, released: bool) -> bool {
+		self.since = Instant::now();
+		self.owe(released)
+	}
+
+	fn owe(&mut self, released: bool) -> bool {
+		let newly = released && !self.wake_owed;
+		self.wake_owed |= released;
+		newly
+	}
+
+	// A shell printing. Output nobody can see does not keep a hidden window's
+	// device, or a program that prints forever would hold it for good. It is
+	// still owed at the reveal, so a desktop that says nothing about showing
+	// the window again cannot leave old pixels up.
+	fn output(&mut self, released: bool, hidden: bool) -> bool {
+		if hidden {
+			self.owe(released)
+		} else {
+			self.active(released)
+		}
+	}
+}
+
 // What the idle release reads of the window (see `release_deadline`).
 struct Idle {
 	focused: bool,
@@ -1888,12 +1931,7 @@ struct State {
 	surface_px: (u32, u32),
 	gl: bool, // born on the glutin GL path (X11): the one with a VT watcher and sentinels
 	adapter_info: wgpu::AdapterInfo, // for the About dialog, which may open before a rebuild
-	// When the window last saw a person or a shell: input, focus either way, or
-	// PTY output. The idle release counts from here (see `release_deadline`).
-	idle_since: Instant,
-	// Something wants the window back since it let its device go, so the device
-	// is owed as soon as the window is on screen to draw in.
-	wake_owed: bool,
+	idle: IdleClock,
 }
 
 impl State {
@@ -3599,12 +3637,16 @@ impl State {
 	// A sign of life: the idle clock starts over, and a window that let its
 	// device go is owed it back.
 	fn note_active(&mut self, why: &'static str) {
-		self.idle_since = Instant::now();
-		if self.gpu.is_none() {
-			if !self.wake_owed {
-				idledbg(&format!("wake: {why}"));
-			}
-			self.wake_owed = true;
+		if self.idle.active(self.gpu.is_none()) {
+			idledbg(&format!("wake: {why}"));
+		}
+	}
+
+	// Output, which counts only while the window can be seen (IdleClock::output).
+	// The hidden flag is the one the last pass settled on.
+	fn note_output(&mut self) {
+		if self.idle.output(self.gpu.is_none(), self.was_hidden) {
+			idledbg("wake: output");
 		}
 	}
 
@@ -3616,7 +3658,7 @@ impl State {
 				hidden,
 				revealed: self.revealed,
 				bench_busy: self.bench.is_some() || self.bench_at.is_some(),
-				since: self.idle_since,
+				since: self.idle.since,
 			},
 		)
 	}
@@ -3634,7 +3676,7 @@ impl State {
 		self.chrome = None;
 		self.invalidate_prepared();
 		self.rebirth = Some(gpu.release());
-		self.wake_owed = false;
+		self.idle.wake_owed = false;
 		trim_heap();
 		idledbg(&format!("device released in {:?}", start.elapsed()));
 	}
@@ -3655,7 +3697,7 @@ impl State {
 					"{}: could not bring the GPU device back ({e}); trying again on the next input",
 					config::APP_NAME
 				);
-				self.wake_owed = false;
+				self.idle.wake_owed = false;
 				return;
 			}
 		};
@@ -3673,8 +3715,8 @@ impl State {
 			wallpaper_img: None,
 			scrim,
 		});
-		self.wake_owed = false;
-		self.idle_since = Instant::now();
+		self.idle.wake_owed = false;
+		self.idle.since = Instant::now();
 		self.vram_next = Instant::now() + VRAM_CHECK_IVL;
 		// the window may have been resized while there was no surface to follow
 		self.relayout_all();
@@ -6411,8 +6453,7 @@ impl ApplicationHandler<UserEvent> for App {
 			surface_px,
 			gl,
 			adapter_info,
-			idle_since: Instant::now(),
-			wake_owed: false,
+			idle: IdleClock::new(),
 		});
 		// A wallpaper given on the command line (--wallpaper-file, incl. an explicit
 		// clear) owns this session: rotation is skipped entirely, whatever the config
@@ -6457,7 +6498,7 @@ impl ApplicationHandler<UserEvent> for App {
 						p.note_history();
 					}
 				});
-				state.note_active("output"); // a shell that prints is not idle
+				state.note_output(); // a shell that prints is not idle, if seen
 			}
 			UserEvent::PtyWrite(id, bytes) => {
 				// a reply the terminal owes the program (cursor position, device
@@ -7837,7 +7878,7 @@ impl ApplicationHandler<UserEvent> for App {
 		// reveal. One left alone for long enough lets it go, unless a dialog is
 		// up (on X11 the dialog's context cannot outlive the terminal's).
 		let idle_wake = if state.gpu.is_none() {
-			if state.wake_owed && !hidden {
+			if state.idle.wake_owed && !hidden {
 				state.rebuild_gpu();
 			}
 			None
@@ -8070,12 +8111,12 @@ impl State {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Caret, CloseScope, ContextMenu, CopyMetrics, Entry, Idle, MenuAction, TAB_CLOSE_M, TabEdit,
-		ViewState, accel_at, accel_clash, close_scope, copybox_fit, copybox_place, fit_px,
-		focus_ring, is_copy_chord, key_is_typed, menu_metrics, mia, msub, mta, needs_folder_read,
-		new_window_command, pace_frame, rating_step, release_deadline, remember_resize,
-		rotation_next, settings_after_reload, tab_close_box, tab_command_line, tab_title_w,
-		typed_title, view_menu_items, window_px,
+		Caret, CloseScope, ContextMenu, CopyMetrics, Entry, Idle, IdleClock, MenuAction,
+		TAB_CLOSE_M, TabEdit, ViewState, accel_at, accel_clash, close_scope, copybox_fit,
+		copybox_place, fit_px, focus_ring, is_copy_chord, key_is_typed, menu_metrics, mia, msub,
+		mta, needs_folder_read, new_window_command, pace_frame, rating_step, release_deadline,
+		remember_resize, rotation_next, settings_after_reload, tab_close_box, tab_command_line,
+		tab_title_w, typed_title, view_menu_items, window_px,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
@@ -8168,6 +8209,36 @@ mod tests {
 			release_deadline(&cfg, &unshown).is_none(),
 			"not on screen yet"
 		);
+	}
+
+	// A program printing in a minimized window held its device for good, since
+	// every output started the idle clock over. Output nobody can see leaves the
+	// clock alone, but a released window is still owed its device for the reveal.
+	#[test]
+	fn output_into_a_hidden_window_does_not_hold_its_device() {
+		let long_ago = Instant::now()
+			.checked_sub(Duration::from_secs(1))
+			.expect("a second of uptime");
+		let mut clock = IdleClock {
+			since: long_ago,
+			wake_owed: false,
+		};
+		assert!(!clock.output(false, true));
+		assert_eq!(clock.since, long_ago, "hidden output restarted the clock");
+		assert!(!clock.wake_owed);
+		assert!(clock.output(true, true), "a released window is owed it");
+		assert!(clock.wake_owed);
+		assert_eq!(clock.since, long_ago);
+		assert!(!clock.output(true, true), "owed once");
+
+		let mut seen = IdleClock {
+			since: long_ago,
+			wake_owed: false,
+		};
+		assert!(!seen.output(false, false));
+		assert!(seen.since > long_ago, "output on screen is a sign of life");
+		assert!(seen.output(true, false));
+		assert!(seen.wake_owed);
 	}
 
 	// --fullscreen asks for fullscreen before the first frame, and the window
