@@ -33,6 +33,11 @@
 ##	Notes:
 ##		Display/size is overridable via CICD_HEADLESS_DISPLAY / CICD_HEADLESS_SIZE
 ##		(legacy RPD_* names still honored as fallbacks).
+##		A server belongs to the process that ran `start` (the calling script).
+##		While that process lives, only it may stop the server, and another run's
+##		`start` on the same number is refused rather than shared. Once it has
+##		exited, as after a start by hand, anyone may stop the server or take it
+##		over. A number some other X server holds is refused outright.
 ##	History: At bottom of script.
 
 ##	Copyright (c) 2026 Bubbles
@@ -70,30 +75,65 @@ wm_pid="$run_dir/wm-${num}.pid"
 apps_pids="$run_dir/apps-${num}.pids"
 auth="$run_dir/Xauthority-${num}"
 
-alive() { [[ -f "$1" ]] && kill -0 "$(cat "$1")" 2>/dev/null; }
+owner_file="$run_dir/owner-${num}"
+x_lock="/tmp/.X${num}-lock"
+
+## A pid alone is not a process: a run killed before `stop` leaves its pid file,
+## and the number can come back as anything. The start time from /proc goes with
+## it, so a record names one process and no other.
+started_at() { local s; s="$(cat "/proc/$1/stat" 2>/dev/null)" || return 1; s="${s##*) }"; set -- $s; echo "${20}"; }
+record() { echo "$1 $(started_at "$1")"; }
+same() { local p t; read -r p t <<<"$1"; [[ -n "$t" && "$(started_at "$p" || true)" == "$t" ]]; }
+alive() { [[ -f "$1" ]] && same "$(cat "$1")"; }
+pid_of() { local p _; read -r p _ <"$1"; echo "$p"; }
+
+## Who is asking: the script that ran this one.
+me="$(record "$PPID")"
+owned_by_other() { [[ -f "$owner_file" ]] && [[ "$(cat "$owner_file")" != "$me" ]] && same "$(cat "$owner_file")"; }
 
 start() {
 	if alive "$xvfb_pid"; then
-		echo "Xvfb already on $display (pid $(cat "$xvfb_pid"))"
+		if owned_by_other; then
+			echo "Xvfb on $display belongs to another run (pid $(pid_of "$owner_file")); not sharing it" >&2
+			exit 1
+		fi
+		echo "$me" > "$owner_file"
+		echo "Xvfb already on $display (pid $(pid_of "$xvfb_pid"))"
 	else
+		## Another X server on this number would answer xdpyinfo in our place,
+		## while our own Xvfb quits at once.
+		local held; held="$(tr -dc '0-9' 2>/dev/null <"$x_lock" || true)"
+		if [[ -n "$held" && -d "/proc/$held" ]]; then
+			echo "$display is taken by another X server (pid $held)" >&2
+			exit 1
+		fi
 		## The cookie is a key to the display; the ambient umask left it readable.
 		(umask 077; : > "$auth")
 		Xvfb "$display" -screen 0 "$size" -nolisten tcp -auth "$auth" \
 			>"$run_dir/xvfb-${num}.log" 2>&1 &
-		echo $! > "$xvfb_pid"
-		# Wait for the server to accept connections before returning.
+		local pid=$!
+		record "$pid" > "$xvfb_pid"
+		echo "$me" > "$owner_file"
+		## Up means ours is still running, holds the number, and takes connections.
 		local ok=""
 		for _ in $(seq 1 50); do
-			if DISPLAY="$display" xdpyinfo >/dev/null 2>&1; then ok=1; break; fi
+			kill -0 "$pid" 2>/dev/null || break
+			if [[ "$(tr -dc '0-9' 2>/dev/null <"$x_lock" || true)" == "$pid" ]] \
+				&& DISPLAY="$display" xdpyinfo >/dev/null 2>&1; then ok=1; break; fi
 			sleep 0.1
 		done
-		[[ -n "$ok" ]] || { echo "Xvfb did not come up; see $run_dir/xvfb-${num}.log" >&2; exit 1; }
-		echo "Started Xvfb on $display (pid $(cat "$xvfb_pid"), $size)"
+		if [[ -z "$ok" ]]; then
+			kill "$pid" 2>/dev/null || true
+			rm -f "$xvfb_pid" "$owner_file"
+			echo "Xvfb did not come up on $display; see $run_dir/xvfb-${num}.log" >&2
+			exit 1
+		fi
+		echo "Started Xvfb on $display (pid $pid, $size)"
 	fi
 	if [[ "${1:-}" == "--wm" ]] && ! alive "$wm_pid"; then
 		onX xfwm4 --compositor=off >"$run_dir/wm-${num}.log" 2>&1 &
-		echo $! > "$wm_pid"
-		echo "Started xfwm4 on $display (pid $(cat "$wm_pid"))"
+		record $! > "$wm_pid"
+		echo "Started xfwm4 on $display (pid $(pid_of "$wm_pid"))"
 	fi
 }
 
@@ -101,7 +141,7 @@ launch() {
 	[[ $# -gt 0 ]] || { echo "usage: launch <cmd...>" >&2; exit 2; }
 	alive "$xvfb_pid" || start
 	onX "$@" >"$run_dir/app-${num}.log" 2>&1 &
-	echo $! >> "$apps_pids"
+	record $! >> "$apps_pids"
 	echo "Launched on $display (pid $!); log: $run_dir/app-${num}.log"
 }
 
@@ -114,13 +154,21 @@ shot() {
 }
 
 stop() {
+	if alive "$xvfb_pid" && owned_by_other; then
+		echo "Xvfb on $display belongs to another run (pid $(pid_of "$owner_file")); leaving it" >&2
+		return 1
+	fi
+	local line
 	if [[ -f "$apps_pids" ]]; then
-		while read -r p; do kill "$p" 2>/dev/null || true; done < "$apps_pids"
+		while read -r line; do same "$line" && kill "${line%% *}" 2>/dev/null || true; done < "$apps_pids"
 		rm -f "$apps_pids"
 	fi
 	for f in "$wm_pid" "$xvfb_pid"; do
-		[[ -f "$f" ]] && { kill "$(cat "$f")" 2>/dev/null || true; rm -f "$f"; }
+		[[ -f "$f" ]] || continue
+		alive "$f" && { kill "$(pid_of "$f")" 2>/dev/null || true; }
+		rm -f "$f"
 	done
+	rm -f "$owner_file"
 	echo "Stopped headless session on $display"
 }
 
@@ -128,7 +176,7 @@ case "${1:-}" in
 	start)  shift; start "${1:-}" ;;
 	launch) shift; launch "$@" ;;
 	shot)   shift; shot "${1:-}" ;;
-	status) alive "$xvfb_pid" && echo "Xvfb up on $display (pid $(cat "$xvfb_pid"))" || echo "no Xvfb on $display" ;;
+	status) alive "$xvfb_pid" && echo "Xvfb up on $display (pid $(pid_of "$xvfb_pid"))" || echo "no Xvfb on $display" ;;
 	stop)   stop ;;
 	*) echo "usage: gui-headless.bash {start [--wm]|launch <cmd...>|shot <out.png>|status|stop}" >&2; exit 2 ;;
 esac
@@ -136,3 +184,6 @@ esac
 
 ##	Script history:
 ##		- 20260701: Created.
+##		- 20260917: A pid file carries the start time, so a reused pid is not
+##		  ours; start refuses a number another server holds and reports success
+##		  only for its own; a server belongs to the run that started it.

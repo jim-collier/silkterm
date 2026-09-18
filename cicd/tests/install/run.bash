@@ -156,8 +156,61 @@ fCheck "one of our own is used" test "${rc}" -eq 0
 fCheck "and is not readable by anyone else" test "$(stat -c %a "${runDir}")" = "700"
 rm -rf "${runDir}"
 
+## The rig's display: a number it did not start, a pid file whose pid is now
+## something else, and a second run's stop. Each on a free number, with the
+## sandbox's own run directory.
+fFreeDisplay(){ local n; for n in $(seq "${1}" 299); do [[ -e "/tmp/.X${n}-lock" || -e "/tmp/.X11-unix/X${n}" ]] || { echo "${n}"; return 0; }; done; return 1; }
+fGone(){ local i; for i in {1..50}; do [[ -d "/proc/${1}" ]] || return 0; sleep 0.1; done; return 1; }
+if command -v Xvfb >/dev/null && command -v xdpyinfo >/dev/null; then
+	mkdir -p "${runDir}"; chmod 700 "${runDir}"
+	fRig(){ USER="${sandboxUser}" CICD_HEADLESS_DISPLAY=":${1}" CICD_HEADLESS_SIZE=320x200x24 "${headless}" "${@:2}"; }
+
+	## Taken: someone else's server already holds the number.
+	n="$(fFreeDisplay 250)"
+	Xvfb ":${n}" -screen 0 640x480x24 -nolisten tcp >/dev/null 2>&1 &
+	foreign=$!
+	for _ in {1..50}; do [[ -e "/tmp/.X${n}-lock" ]] && break; sleep 0.1; done
+	rc=0; out="$(fRig "${n}" start 2>&1)" || rc=$?
+	fCheck "a number another server holds is refused" test "${rc}" -ne 0
+	fCheck "and not reported as started" bash -c '[[ "$1" != *Started* ]]' _ "${out}"
+	fCheck "and the other server is left alone" test -d "/proc/${foreign}"
+	kill "${foreign}" 2>/dev/null || true; fGone "${foreign}" || true
+
+	## Stale: the pid file names a process that is not our server.
+	n="$(fFreeDisplay 250)"
+	sleep 60 &
+	decoy=$!
+	echo "${decoy}" >"${runDir}/xvfb-${n}.pid"
+	fCheck "a stale pid file is not a running server" bash -c '[[ "$(USER="$1" CICD_HEADLESS_DISPLAY=":$2" "$3" status)" == no\ Xvfb* ]]' _ "${sandboxUser}" "${n}" "${headless}"
+	fRig "${n}" stop >/dev/null 2>&1 || true
+	fCheck "and stop leaves its process alone" test -d "/proc/${decoy}"
+	kill "${decoy}" 2>/dev/null || true
+
+	## Two runs: the one that started the server keeps it until it stops it.
+	n="$(fFreeDisplay 250)"
+	gate="$(mktemp -d)"
+	bash -c 'USER="$1" CICD_HEADLESS_DISPLAY=":$2" "$3" start >/dev/null 2>&1; touch "$4/up"; while [[ ! -e "$4/go" ]]; do sleep 0.1; done; USER="$1" CICD_HEADLESS_DISPLAY=":$2" "$3" stop >/dev/null 2>&1' \
+		_ "${sandboxUser}" "${n}" "${headless}" "${gate}" &
+	firstRun=$!
+	for _ in {1..100}; do [[ -e "${gate}/up" ]] && break; sleep 0.1; done
+	server="$(tr -dc '0-9' <"/tmp/.X${n}-lock" 2>/dev/null || true)"
+	fCheck "the first run's server is up" test -n "${server}"
+	rc=0; fRig "${n}" start >/dev/null 2>&1 || rc=$?
+	fCheck "a second run's start is refused rather than shared" test "${rc}" -ne 0
+	rc=0; fRig "${n}" stop >/dev/null 2>&1 || rc=$?
+	fCheck "a second run's stop is refused" test "${rc}" -ne 0
+	fCheck "and the first run's server is still up" test -d "/proc/${server:-0}"
+	touch "${gate}/go"; wait "${firstRun}" || true
+	fCheck "the first run's own stop ends it" fGone "${server:-0}"
+	rm -f "${gate}/up" "${gate}/go"; rmdir "${gate}"
+	rm -rf "${runDir}"
+else
+	echo "  skip the rig's display checks (no Xvfb or xdpyinfo)"
+fi
+
 if ((failures)); then echo "${failures} failed"; exit 1; fi
 echo "all passed"
 
 ##	History:
 ##		- 20260908 JC: Created.
+##		- 20260917 JC: The rig's display: taken, stale and shared.
