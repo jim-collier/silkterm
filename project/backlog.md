@@ -71,6 +71,8 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
+- 🔘 Two terminals running for around 24 to 48 hours, disappeared the moment they got focus.
+
 - 🔘 The PowerShell prompt shows no ahead or behind count, and names only an `origin` remote. The bash prompt does both since 20260917, and the two are meant to read the same.
 	- Opened: 20260917
 
@@ -440,7 +442,9 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- If user changes it, deselect "Choose automatically".
 	- Exception: If user chooses "Remote (temporary)", don't change state of "Choose automatically".
 
-- 🔘 Minimap: Make text lines even MORE text-like. Still looks to blobbish and not like text viewed from a distance. Needs fewer output pixels per input line, and possibly more anti-aliasing.
+- 🔘 Minimap:
+	- 🔘 Make text lines even MORE text-like. Still looks to blobbish and not like text viewed from a distance. Needs fewer output pixels per input line, and possibly more anti-aliasing.
+	- 🔘 When drawing new output, don't exceed what is currently shown on screen. The bottom line of the minimap should never show more than the bottom of real output.
 
 - 🔘 Make text scrim falloff "Exponential" more agressive. E.g., increase the exponent.
 
