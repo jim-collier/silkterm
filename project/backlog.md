@@ -377,13 +377,28 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- A run that cannot start exits 3, and the pipeline says skipped for that display system.
 	- Code review 20260914 item 89 (F121, should-fix): The Windows interface checks test whichever build was last made on the test box, not the change being checked.
 	- Code review 20260914 item 90 (F122, should-fix): The Windows interface checks close every SilkTerm on the test box, not only the one they started.
-	- Code review 20260914 item 91 (F123, should-fix): A quick, scaled or wrong-size benchmark run rewrites the README speed table, though the tools say such runs never reach it.
+	- ✅ Code review 20260914 item 91 (F123, should-fix): A quick, scaled or wrong-size benchmark run rewrites the README speed table, though the tools say such runs never reach it.
+		- Only a full, unscaled run at the table's 160x42 grid reaches the table now, from either tool. A run that cannot says why.
+		- A quick or `--any-size` run from `update-showdown.py` writes no speed or size figure.
+		- The Ver cell keeps a prerelease tag, and drops only the build stamp.
+		- Pinned by `cicd/tests/showdown/run.py`, which runs in the pipeline.
 	- Code review 20260914 item 92 (F124, should-fix): The speed benchmark runs SilkTerm and the other terminals on the measuring user's own settings, and changes that user's settings file and PowerShell profile.
 	- Code review 20260914 item 93 (F125, should-fix): The size benchmark measures the "SilkTerm +candy" row with its effects turned down.
-	- Code review 20260914 item 94 (F126, should-fix): The benchmark rigs and the wine launcher look for SilkTerm under `target/` even when `CARGO_TARGET_DIR` puts the build elsewhere.
-	- Code review 20260914 item 95 (F127, should-fix): README note 9 says every showdown figure came from a GPU rig, but the size and memory columns did not.
-	- Code review 20260914 item 96 (F128, should-fix): The publish and installer tests still pass when the exclude list handling or the temp folder step they guard is changed.
-	- Code review 20260914 item 97 (F129, should-fix): README gives a wrong wallpaper count, a wrong size ratio against the Alacritty core, and an unreleased version for SilkTerm in the showdown table.
+	- ✅ Code review 20260914 item 94 (F126, should-fix): The benchmark rigs and the wine launcher look for SilkTerm under `target/` even when `CARGO_TARGET_DIR` puts the build elsewhere.
+		- All three look under `CARGO_TARGET_DIR` when it is set, and a relative one is taken from the repository.
+		- The size rig stops with its own message when there is no build, before it starts a display. The speed rig does the same.
+		- Note: the wine launcher is a shared helper, and only this project's copy is fixed.
+		- Pinned by the same test.
+	- ✅ Code review 20260914 item 95 (F127, should-fix): README note 9 says every showdown figure came from a GPU rig, but the size and memory columns did not.
+		- Note 9 names both rigs now, and which rows came from a Windows machine. It also says a GPU terminal's window buffers count toward Mem when drawn in software.
+		- Pinned by the same test, which checks each named rig against its script.
+	- ✅ Code review 20260914 item 96 (F128, should-fix): The publish and installer tests still pass when the exclude list handling or the temp folder step they guard is changed.
+		- The publish test runs the publisher itself with a stand-in `rar` and checks what reaches it.
+		- The install test runs install.ps1's own temp folder step and checks that a folder already there is refused. The Windows pipeline runs it too.
+		- Both go red on the changes the review named.
+	- ✅ Code review 20260914 item 97 (F129, should-fix): README gives a wrong wallpaper count, a wrong size ratio against the Alacritty core, and an unreleased version for SilkTerm in the showdown table.
+		- 104 wallpapers, about five times the core, and 1.0.0-beta2 for the build both SilkTerm rows were measured on.
+		- The gallery check in the pipeline now also fails when README's count differs from the pack.
 	- Opened: 20260914-124200
 
 - ✅ Over ssh with X forwarding, a performance rating can be saved for the forwarded screen and replace the one the machine had.
