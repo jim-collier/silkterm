@@ -80,9 +80,15 @@ declare -r  stagedExe="${stageDir}/app/${appId}.exe"
 declare -r  logFile="${stageDir}/wine-run.log"
 declare -r  mingwCc="x86_64-w64-mingw32-gcc"
 
+## CARGO_TARGET_DIR moves the build, and a relative one is taken from the
+## repository, where cargo runs.
+declare     targetDir="${CARGO_TARGET_DIR:-target}"
+[[ "${targetDir}" == /* ]] || targetDir="${repoRoot}/${targetDir}"
+readonly targetDir
+
 ## Where a freshly cross-built exe shows up, newest wins.
 declare -ar exeCandidates=(
-	"${repoRoot}/target/x86_64-pc-windows-gnu/release/${appId}.exe"
+	"${targetDir}/x86_64-pc-windows-gnu/release/${appId}.exe"
 	"${repoRoot}/cicd/artifacts/release/${appId}-"*"-windows-x86_64.exe"
 )
 

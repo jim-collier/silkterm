@@ -4,7 +4,8 @@
 ##		The README's showdown table only holds figures measured the same way as the
 ##		rows beside them. A quick run, a scaled run and a run at another grid each
 ##		used to rewrite their row anyway. This drives both table writers with the
-##		terminal and the measuring faked out, against a scratch README.
+##		terminal and the measuring faked out, against a scratch README. It also
+##		checks the rigs find the build where CARGO_TARGET_DIR puts it.
 ##	- History: At bottom of file.
 
 ##	Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
@@ -12,7 +13,9 @@
 
 import importlib.util
 import io
+import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from contextlib import redirect_stdout
@@ -129,6 +132,49 @@ check("an --any-size size run writes no size figure",
 us.terminal_grid = lambda: us.SIZE_GRID
 check("a size run at the size grid still writes its figure",
 	wrote_size(showdown("--size-only", "--label", "XTerm")))
+
+## The rigs and the wine launcher find the build under CARGO_TARGET_DIR. Nothing
+## here may start a display: sway, Xvfb and xdpyinfo are stubs that fail.
+target = scratch / "elsewhere"
+(target / "release").mkdir(parents=True)
+stubs = scratch / "stubs"
+stubs.mkdir()
+for name in ("sway", "Xvfb", "xdpyinfo"):
+	(stubs / name).write_text("#!/bin/sh\nexit 1\n")
+	(stubs / name).chmod(0o755)
+env = dict(os.environ, CARGO_TARGET_DIR=str(target), PATH=f"{stubs}:{os.environ['PATH']}")
+env.pop("DISPLAY", None)
+env.pop("WAYLAND_DISPLAY", None)
+
+def bash(script, *args):
+	return subprocess.run(["bash", "-c", script, "bash", *args], env=env,
+		capture_output=True, text=True, timeout=60)
+
+size_rig = UTILITY / "include/sizebench-run.bash"
+got = bash('source "$1" && fMain --term silkterm --settle 0', str(size_rig))
+check("the size rig refuses when the build is not under CARGO_TARGET_DIR",
+	got.returncode != 0 and str(target / "release/silkterm") in got.stderr, got.stderr)
+check("and stops before it starts anything", "Rig" not in got.stdout, got.stdout)
+fake = target / "release/silkterm"
+fake.write_text("#!/bin/sh\n")
+fake.chmod(0o755)
+got = bash('source "$1" && fTermBinary silkterm', str(size_rig))
+check("the size rig finds the build under CARGO_TARGET_DIR", got.stdout == str(fake), got.stdout)
+fake.unlink()
+
+got = bash('"$1" --term silkterm', str(UTILITY / "include/termbench-run.bash"))
+check("the speed rig looks under CARGO_TARGET_DIR",
+	f"no build at {fake}" in got.stderr, got.stderr)
+
+wine = (UTILITY / "run-windows-build-via-wine.bash").read_text(encoding="utf-8")
+lookup = wine.split("declare -r  mingwCc=", 1)[1].split("\n", 1)[1].split("\n)\n", 1)[0] + "\n)\n"
+got = bash('repoRoot=/repo; appId=silkterm\n' + lookup + 'printf "%s" "${exeCandidates[0]}"')
+check("the wine launcher looks under CARGO_TARGET_DIR",
+	got.stdout == f"{target}/x86_64-pc-windows-gnu/release/silkterm.exe", got.stdout + got.stderr)
+env["CARGO_TARGET_DIR"] = "tgt"
+got = bash('repoRoot=/repo; appId=silkterm\n' + lookup + 'printf "%s" "${exeCandidates[0]}"')
+check("and takes a relative one from the repository",
+	got.stdout == "/repo/tgt/x86_64-pc-windows-gnu/release/silkterm.exe", got.stdout + got.stderr)
 
 shutil.rmtree(scratch, ignore_errors=True)
 if failures:

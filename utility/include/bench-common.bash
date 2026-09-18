@@ -38,6 +38,13 @@ fKillPids(){
 	return 0
 }
 
+##	Where cargo put the build. CARGO_TARGET_DIR moves it, and a relative one is taken
+##	from the repository, where cargo runs.
+fTargetDir(){
+	local -r repo="$1" dir="${CARGO_TARGET_DIR:-target}"
+	if [[ "${dir}" == /* ]]; then printf '%s' "${dir}"; else printf '%s' "${repo}/${dir}"; fi
+}
+
 ##	A launched pid plus everything under it. Diffing the system-wide process list instead
 ##	would sweep in whatever else the desktop started meanwhile, and a name match would find
 ##	copies that were already running.
