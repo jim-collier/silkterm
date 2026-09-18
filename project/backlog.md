@@ -331,11 +331,18 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 73 (F105, blocking): Recording the demo can replace the desktop's own window manager theme, title font and button layout.
 		- The recorder's window manager gets every XDG folder inside its own throwaway home, not only HOME. Its settings service had kept writing to the desktop's config folder.
 		- Pinned by `cicd/tests/demo/run.py`, which runs the session with the caller's XDG folders pointed at empty ones and checks they stay empty.
-	- Code review 20260914 item 74 (F106, should-fix): When the publish step cannot reach the remote, uncommitted work is left in a git stash with no word of where it went.
+	- ✅ Code review 20260914 item 74 (F106, should-fix): When the publish step cannot reach the remote, uncommitted work is left in a git stash with no word of where it went.
+		- A failed pull puts the stash back before stopping. That came in with the 09-15 utility sync. What was missing was a test.
+		- Pinned by the publish test, which runs the real script against a remote that has been moved away, one that is reachable, and a pop that conflicts.
 	- Code review 20260914 item 75 (F107, should-fix): The startup lint and profiler checks can mark a pipeline run as seen while it is still being written, so its later warnings are never shown.
 	- Code review 20260914 item 76 (F108, should-fix): `cicd/utility/gui-headless.bash` can report a display it did not start, and can stop a display or process that another run started.
-	- Code review 20260914 item 77 (F109, should-fix): A blank publish message at the pipeline prompt commits an automatic message instead of opening the editor the prompt promises.
-	- Code review 20260914 item 78 (F110, should-fix): The publish script changes quote marks in a `--message`, and does nothing at all when the message contains `-v` or `-h`.
+	- ✅ Code review 20260914 item 77 (F109, should-fix): A blank publish message at the pipeline prompt commits an automatic message instead of opening the editor the prompt promises.
+		- Decided: keep the automatic message and fix the words. The message is asked for before the build so the run can finish unattended, and an editor at the end would stop it.
+		- A blank answer now takes the same message `--yes` does, and the plan and the prompt both show it.
+		- Pinned by the publish test, which checks the plan, the prompt and the message the publisher commits.
+	- ✅ Code review 20260914 item 78 (F110, should-fix): The publish script changes quote marks in a `--message`, and does nothing at all when the message contains `-v` or `-h`.
+		- The message is committed as given, and only an argument that is exactly `-h` or `-v` asks for help or the version.
+		- Pinned by the publish test, with a message holding both quote marks and both flags, and an inline `--msg=` one.
 	- Code review 20260914 item 79 (F111, should-fix): The wallpaper gallery and the README contact sheet still show nine wallpapers that were removed from the pack.
 	- Code review 20260914 item 80 (F112, should-fix): The git-aware bash prompt shows nothing in a repository without an `origin` remote, and never shows how far ahead or behind a branch is.
 	- ✅ Code review 20260914 item 81 (F113, should-fix): Each demo recording leaves background daemons running after it ends.

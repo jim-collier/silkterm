@@ -137,13 +137,22 @@ if ((no_windows)) && declare -p CROSS_TARGETS &>/dev/null; then
 fi
 declare -p PACKAGE_ENABLE &>/dev/null || PACKAGE_ENABLE=0   ## tolerate a config predating the packages stage
 
-## Publish commit message: -m wins, then config, then a default when unattended.
-## Empty -> publish interactively (git commit opens an editor); when interactive
-## we offer to capture a message at the preflight prompt below.
+## Publish commit message: -m wins, then config, then what is typed at the
+## prompt below. A blank answer, or --yes, takes the automatic one. The publisher
+## runs quiet and never opens an editor, so the plan and the prompt name the
+## message a blank answer commits. They used to promise an editor.
+auto_msg="${APP_NAME} CI/CD ${stamp}"
+## fPublishMessage <cli> <config> <answer>
+fPublishMessage(){
+	if   [[ -n "${1}" ]]; then echo "${1}"
+	elif [[ -n "${2}" ]]; then echo "${2}"
+	elif [[ -n "${3}" ]]; then echo "${3}"
+	else echo "${auto_msg}"
+	fi
+}
 publish_msg=""
-if   [[ -n "$cli_message" ]];              then publish_msg="$cli_message"
-elif [[ -n "${PUBLISH_AUTO_MESSAGE:-}" ]]; then publish_msg="$PUBLISH_AUTO_MESSAGE"
-elif ((assume_yes));                       then publish_msg="${APP_NAME} CI/CD ${stamp}"
+if [[ -n "$cli_message" || -n "${PUBLISH_AUTO_MESSAGE:-}" ]] || ((assume_yes)); then
+	publish_msg="$(fPublishMessage "$cli_message" "${PUBLISH_AUTO_MESSAGE:-}" "")"
 fi
 
 ## Output helpers: fEcho / fEcho_Clean, blank-collapsing.
@@ -393,7 +402,7 @@ if ((${#GIT_PUBLISH[@]} == 0)); then
 elif [[ -n "$publish_msg" ]]; then
 	fEcho_Clean "Publish (last) ......: ${GIT_PUBLISH[*]} (hands-off: \"${publish_msg}\")"
 else
-	fEcho_Clean "Publish (last) ......: ${GIT_PUBLISH[*]} (will prompt for message; blank = editor)"
+	fEcho_Clean "Publish (last) ......: ${GIT_PUBLISH[*]} (will prompt for message; blank = \"${auto_msg}\")"
 fi
 fEcho_Clean
 fEcho_Clean "Fail-fast: any error aborts before the next stage."
@@ -404,9 +413,9 @@ if ((! assume_yes)); then
 	## is the natural place to bail on the common (publish) path - Ctrl+C here
 	## aborts; there is no separate "Proceed? [y/N]" (removed to cut friction).
 	if ((${#GIT_PUBLISH[@]})) && [[ -z "$publish_msg" ]]; then
-		read -r -p "Publish commit message (blank = editor; Ctrl+C aborts): " m
+		read -r -p "Publish commit message (blank = \"${auto_msg}\"; Ctrl+C aborts): " m
 		fEcho_ResetBlankCounter
-		[[ -n "$m" ]] && publish_msg="$m"
+		publish_msg="$(fPublishMessage "" "" "$m")"
 	fi
 fi
 
@@ -900,19 +909,16 @@ fi
 ## Stage 8: backup + publish.
 fSection "8/8  Backup + publish"
 ## Always run the publisher quiet: cicd already gave the initial prompt, so skip
-## its redundant continue-prompt. With no message it still lets git open the editor.
+## its redundant continue-prompt. The message was settled before stage 0.
 pub_flags=(--quiet)
 if ((${#GIT_PUBLISH[@]} == 0)); then
 	fEcho_Clean "publish disabled"
-elif [[ -n "$publish_msg" ]]; then
-	## Hands-off: quiet env skips the script's continue-prompt; the GIT_EDITOR
-	## helper fills the empty commit message so `git commit` won't open an editor.
+else
+	## The publisher commits with -m, so no editor opens. GIT_EDITOR is there in
+	## case some other git step ever wants one, so it cannot stall the run.
 	fEcho_Clean "hands-off publish (commit message: \"${publish_msg}\")"
 	GIT_BACKUP_AND_PUBLISH_QUIET=1 GIT_AUTO_MESSAGE="${publish_msg}" \
 		GIT_EDITOR="${here}/utility/git-auto-msg.bash" "${GIT_PUBLISH[@]}" "${pub_flags[@]}"
-	fEcho "OK: published"
-else
-	"${GIT_PUBLISH[@]}" "${pub_flags[@]}"
 	fEcho "OK: published"
 fi
 
@@ -921,6 +927,9 @@ fEcho_Clean
 
 
 ##	History:
+##		- 2026-09-17: A blank answer at the publish prompt commits the automatic
+##		              message, and the plan and the prompt name it. They promised an
+##		              editor that the quiet publisher never opens.
 ##		- 2026-08-24: Name and date the rotating dogfood copy from the build, not
 ##		              from when the run started. The two were ~8 min apart, which
 ##		              the launchers read as a newer build.
