@@ -674,6 +674,8 @@ Three defects came out of building it, all fixed with it: a program could put co
 
 - Memory found on the way: glibc lets its mmap threshold rise with each large buffer freed, after which a wallpaper's decode is carved out of the worker thread's arena and stays resident there once freed, and `malloc_trim` never shrinks an arena that is not the main one. Every window kept the first decode's 50 MB for life, and each rebuild kept 40 MB more. The threshold is pinned at 4 MB now, so an image buffer comes from the OS and goes back to it. Launch memory dropped by about 60 MB with a wallpaper.
 
+- The same release and rebuild heals a window after a return to its console from a text one, twice: at once, and again three seconds later, after the X server has set the mode. The older fix rebuilt only the glyphs and the wallpaper, and each thing added to the device since then was one more that a switch could leave spoiled.
+
 - Rejected: dropping the uploads and keeping the device. The device and its context are the fixed cost the feature exists to remove, and the uploads are the smaller half.
 
 - Rejected: disabling the feature under transparency. The X11 GL path survives the teardown, since the ARGB visual belongs to the window and a new context on the kept config binds to it.

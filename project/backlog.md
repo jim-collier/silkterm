@@ -71,10 +71,18 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
-- 🔘 After a crash in VSCodium required switching to VT-1, the terminal on the same virtual desktop came back with background-only, no text visible. (This looks a lot like a previous bug many weeks ago.)
+- 🔬 After a crash in VSCodium required switching to VT-1, the terminal on the same virtual desktop came back with background-only, no text visible. (This looks a lot like a previous bug many weeks ago.)
 	- On some other silkterm windows (but not all), text is visible, but the background is gray, not the theme's black. (Even after changing the theme.) Some silkterm windows seem fine.
 	- After a second switch to VT-1 and back, another silkterm window got a gray background, and invisible text.
 	- Additional info: All terminals actually "came back", eventually, after more than an hour of stepping away from the system.
+	- Note: the X log shows returns at 16:36, 16:42 and 17:59 on 20260917. Four windows were open across all three, on four different builds, all on the GL path, so all had the July console watcher.
+	- Note: VSCodium, python, rustc and a shcl build all crashed with SIGSEGV the same afternoon. Crashes spread across unrelated programs are how a memory fault shows on this box.
+	- Cause, not confirmed: on a return the watcher rebuilt only the glyphs and the wallpaper. Anything else on the device kept what the switch left. The watcher also fires within half a second of the console coming back, before the X server has set the mode again, so a purge after that would spoil the fresh glyphs too.
+	- Fixed: a return now lets the whole device go and builds it again, the same way the idle release does, and does it a second time three seconds later. With a dialog open it keeps the old partial rebuild, since the dialog's context cannot outlive the window's.
+	- Fixed: the debug log no longer records every probe that finds nothing wrong. Those lines filled its size cap in a day in July, so it has recorded nothing since.
+	- Pinned by: `a_return_to_this_console_is_healed_again_once_settled`, watched failing with the second pass pushed out. On the rig, a faked switch and return released and rebuilt the device twice and the window drew normally after.
+	- To confirm: a real switch to a text console and back on the reference box. `~/silk_vramdbg.txt` is full, so move it aside first; with `~/silk_vramdbg.on` in place a return then logs both heals.
+	- Opened: 20260917
 
 - 🔬 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
 	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even muffer's autocopy doesn't work.)

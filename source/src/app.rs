@@ -1086,6 +1086,8 @@ const BENCH_MAX_WAIT: Duration = Duration::from_secs(10);
 // appeared, let alone read it.
 const BENCH_BANNER_MIN: Duration = Duration::from_secs(4);
 const VRAM_CHECK_IVL: Duration = Duration::from_secs(2); // GL sentinel probe tick (VT-switch texture loss)
+// After a return to this console, how long until the second heal (VtHeal).
+const VT_SETTLE: Duration = Duration::from_secs(3);
 const CAPTURE_SETTLE: Duration = Duration::from_millis(120); // copy-output: idle-at-prompt debounce marking a command done
 // Chrome geometry, all DIP (see config::dip).
 const MENU_BAR_PAD: f32 = 10.0; // around each top-level title
@@ -1564,6 +1566,30 @@ fn vramdbg(msg: &str) {
 	}
 }
 
+// A return to this console is healed twice: at once, and again once the X
+// server has had time to take the display back. The watcher sees the console
+// change before the mode set, so a purge that comes after the first rebuild
+// would spoil it too.
+#[derive(Default)]
+struct VtHeal {
+	again: Option<Instant>,
+}
+
+impl VtHeal {
+	fn returned(&mut self, now: Instant) {
+		self.again = Some(now + VT_SETTLE);
+	}
+
+	// True once, when the second heal comes due.
+	fn due(&mut self, now: Instant) -> bool {
+		if self.again.is_some_and(|at| now >= at) {
+			self.again = None;
+			return true;
+		}
+		false
+	}
+}
+
 // Watch the active virtual console (/sys/class/tty/tty0/active). A VT switch
 // away and back breaks sampling of long-lived textures in ways the readback
 // probes cannot see (field logs: every witness read back intact across a switch
@@ -1932,6 +1958,7 @@ struct State {
 	gl: bool, // born on the glutin GL path (X11): the one with a VT watcher and sentinels
 	adapter_info: wgpu::AdapterInfo, // for the About dialog, which may open before a rebuild
 	idle: IdleClock,
+	vt_heal: VtHeal,
 }
 
 impl State {
@@ -4144,6 +4171,22 @@ impl State {
 	// atlases + chrome via rebuild_text, and the wallpaper. rebuild_text also drops
 	// the prepared/scrim signatures, so the next frame rebuilds the scrim source
 	// instead of reusing a texture that no longer holds anything.
+	// Everything on the device again, after a return to this console. The whole
+	// device when nothing else shares it, since a switch can spoil any texture
+	// and `recover_gpu` only knows the text and the wallpaper. An open dialog's
+	// context cannot outlive the terminal's on X11, so that case stays partial.
+	fn heal_gpu(&mut self, dialog_open: bool) {
+		if self.gpu.is_none() {
+			return; // a released window rebuilds from nothing anyway
+		}
+		if dialog_open {
+			self.recover_gpu();
+			return;
+		}
+		self.release_gpu();
+		self.rebuild_gpu();
+	}
+
 	fn recover_gpu(&mut self) {
 		if self.gpu.is_none() {
 			return; // nothing uploaded to lose; the rebuild starts from nothing anyway
@@ -6454,6 +6497,7 @@ impl ApplicationHandler<UserEvent> for App {
 			gl,
 			adapter_info,
 			idle: IdleClock::new(),
+			vt_heal: VtHeal::default(),
 		});
 		// A wallpaper given on the command line (--wallpaper-file, incl. an explicit
 		// clear) owns this session: rotation is skipped entirely, whatever the config
@@ -6554,8 +6598,9 @@ impl ApplicationHandler<UserEvent> for App {
 				// Return to our console (the watcher signals only returns).
 				// Rebuild unconditionally: focus may move to another window or
 				// nowhere, and an unfocused window must heal too.
-				vramdbg("vt return -> recover_gpu");
-				state.recover_gpu();
+				vramdbg("vt return -> heal_gpu");
+				state.heal_gpu(self.dialog.is_some());
+				state.vt_heal.returned(Instant::now());
 			}
 		}
 	}
@@ -7766,6 +7811,10 @@ impl ApplicationHandler<UserEvent> for App {
 		if state.wp_next.is_some_and(|next| Instant::now() >= next) && state.gpu.is_some() {
 			state.advance_wallpaper();
 		}
+		if state.vt_heal.due(Instant::now()) {
+			vramdbg("vt return, second pass -> heal_gpu");
+			state.heal_gpu(self.dialog.is_some());
+		}
 		// GL path: the VT watcher (spawn_vt_watch) is the real loss trigger; the
 		// readback probes below stay as field evidence + a fallback for a missed
 		// switch, since a real purge read back "intact" (driver restores readback
@@ -7793,20 +7842,20 @@ impl ApplicationHandler<UserEvent> for App {
 						if rendered { "gone" } else { "ok" }
 					));
 				}
-				Some(VramProbe::Intact) => vramdbg("probe: sentinels intact"),
+				// not logged: every window every two seconds filled the log's
+				// cap within a day, and it then missed the switches it was for
+				Some(VramProbe::Intact) | None => {}
 				Some(VramProbe::MapFailed) => {
 					vramdbg("probe: sentinel readback map FAILED (inconclusive)");
 				}
-				None => {}
 			}
 			if let Some(wp) = gpu.wallpaper_img.as_mut() {
 				match wp.vram_check_poll(&gpu.gfx.device) {
 					Some(WpProbe::Lost) => lost = Some("wallpaper block gone".into()),
-					Some(WpProbe::Intact) => vramdbg("probe: wallpaper intact"),
+					Some(WpProbe::Intact) | None => {}
 					Some(WpProbe::MapFailed) => {
 						vramdbg("probe: wallpaper readback map FAILED (inconclusive)");
 					}
-					None => {}
 				}
 			}
 			if Instant::now() >= state.vram_next {
@@ -8008,6 +8057,12 @@ impl ApplicationHandler<UserEvent> for App {
 			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
 			(other_flow, _) => other_flow,
 		};
+		// wake for the second heal after a return to this console
+		let flow = match (flow, state.vt_heal.again) {
+			(ControlFlow::Wait, Some(wake)) => ControlFlow::WaitUntil(wake),
+			(ControlFlow::WaitUntil(until), Some(wake)) => ControlFlow::WaitUntil(until.min(wake)),
+			(other_flow, _) => other_flow,
+		};
 		// wake to rotate the wallpaper when its interval is up, even when idle
 		// (not while the device is gone: the rebuild picks up where it left off)
 		let flow = match (flow, state.wp_next.filter(|_| state.gpu.is_some())) {
@@ -8112,11 +8167,11 @@ impl State {
 mod tests {
 	use super::{
 		Caret, CloseScope, ContextMenu, CopyMetrics, Entry, Idle, IdleClock, MenuAction,
-		TAB_CLOSE_M, TabEdit, ViewState, accel_at, accel_clash, close_scope, copybox_fit,
-		copybox_place, fit_px, focus_ring, is_copy_chord, key_is_typed, menu_metrics, mia, msub,
-		mta, needs_folder_read, new_window_command, pace_frame, rating_step, release_deadline,
-		remember_resize, rotation_next, settings_after_reload, tab_close_box, tab_command_line,
-		tab_title_w, typed_title, view_menu_items, window_px,
+		TAB_CLOSE_M, TabEdit, VT_SETTLE, ViewState, VtHeal, accel_at, accel_clash, close_scope,
+		copybox_fit, copybox_place, fit_px, focus_ring, is_copy_chord, key_is_typed, menu_metrics,
+		mia, msub, mta, needs_folder_read, new_window_command, pace_frame, rating_step,
+		release_deadline, remember_resize, rotation_next, settings_after_reload, tab_close_box,
+		tab_command_line, tab_title_w, typed_title, view_menu_items, window_px,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
@@ -8239,6 +8294,26 @@ mod tests {
 		assert!(seen.since > long_ago, "output on screen is a sign of life");
 		assert!(seen.output(true, false));
 		assert!(seen.wake_owed);
+	}
+
+	// A return to this console is healed at once and once more when the X
+	// server has settled, since a purge after the first rebuild spoiled it
+	// (20260917: text gone and a gray background after a switch to VT 1).
+	#[test]
+	fn a_return_to_this_console_is_healed_again_once_settled() {
+		let back = Instant::now();
+		let mut heal = VtHeal::default();
+		assert!(!heal.due(back), "nothing owed before a switch");
+		heal.returned(back);
+		assert!(!heal.due(back), "the first heal is the event's own");
+		assert!(!heal.due(back + VT_SETTLE / 2));
+		assert!(heal.due(back + VT_SETTLE), "the second heal");
+		assert!(!heal.due(back + VT_SETTLE * 2), "and only once");
+		// a second switch before the first settled pushes the pass out
+		heal.returned(back);
+		heal.returned(back + VT_SETTLE / 2);
+		assert!(!heal.due(back + VT_SETTLE));
+		assert!(heal.due(back + VT_SETTLE + VT_SETTLE / 2));
 	}
 
 	// --fullscreen asks for fullscreen before the first frame, and the window
