@@ -30,6 +30,13 @@ fCheck "https is pinned (wget)" \
 	fPresent '\-\-https-only' "${root}/install.bash"
 fCheck "the ps1 does not adopt an existing temp directory" \
 	fAbsent 'New-Item -ItemType Directory -Force -Path \$tmpDir' "${root}/install.ps1"
+## The line above only knows one spelling. This runs install.ps1's own step.
+if command -v pwsh >/dev/null 2>&1; then
+	fCheck "the ps1's temp folder step refuses a folder already there" \
+		pwsh -NoProfile -File "${meDir}/tempdir.ps1" -Installer "${root}/install.ps1"
+else
+	echo "  skip the ps1's temp folder step (no pwsh)"
+fi
 
 ## Everything below installs for real. One scratch tree, thrown away at the end.
 work="$(mktemp -d)"

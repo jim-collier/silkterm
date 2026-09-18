@@ -761,6 +761,9 @@ function fMain {
 	## install.ps1's signature check, with the OpenSSH that ships on Windows.
 	fExec "installer signing" (Join-Path $Root "cicd\tests\release\verify-sign.ps1")
 	fEcho "OK: installer signing"
+	## ...and its temp folder step, where the shared temp folder is the one it guards against.
+	fExec "installer temp folder" (Join-Path $Root "cicd\tests\install\tempdir.ps1")
+	fEcho "OK: installer temp folder"
 	fLintAdvisory
 
 	## Stage 4: release builds (x86_64 msvc + gnu always; ARM64 when ready).

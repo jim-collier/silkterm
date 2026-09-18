@@ -20,34 +20,6 @@ fCheck(){ local -r what="${1}"; shift; if "${@}"; then echo "  ok   ${what}"; el
 fCheck "nothing in the publish script is eval'd" \
 	bash -c '! grep -Eq "(^|[^[:alnum:]_])eval[[:space:]]" "$1"' _ "${publish}"
 
-## The exclude list is read line by line now. Replay that here with a value that
-## would have run a command under the old eval, and check nothing ran.
-canary="$(mktemp -u "${TMPDIR:-/tmp}/silk-publish-canary.XXXXXX")"
-GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES="*/ok
-\$(touch '${canary}')
-\`touch '${canary}'\`"
-declare -a args=()
-while IFS= read -r pattern; do
-	[[ -n "${pattern}" ]] && args+=("-x${pattern}")
-done <<<"${GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES}"
-
-fCheck "every line becomes one argument" test "${#args[@]}" -eq 3
-fCheck "and the first is the pattern it was given" test "${args[0]}" = "-x*/ok"
-fCheck "nothing in the value ran" test ! -e "${canary}"
-rm -f "${canary}"
-
-## The shipped list and the reader still agree.
-# shellcheck disable=SC1090
-source "${config}"
-declare -a shipped=()
-while IFS= read -r pattern; do
-	[[ -n "${pattern}" ]] && shipped+=("-x${pattern}")
-done <<<"${GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES}"
-fCheck "the shipped excludes are plain patterns" \
-	bash -c 'for a in "$@"; do case "$a" in *\'"'"'*|*\"*) exit 1 ;; esac; done' _ "${shipped[@]}"
-fCheck "and cicd/artifacts is among them" \
-	bash -c 'for a in "$@"; do [[ "$a" == "-x*/cicd/artifacts" ]] && exit 0; done; exit 1' _ "${shipped[@]}"
-
 ## Runs against a real repository from here on: a bare remote and a clone of it,
 ## with git's own config kept out so nothing on this box decides the result.
 work="$(mktemp -d "${TMPDIR:-/tmp}/silk-publish.XXXXXX")"
@@ -77,6 +49,39 @@ fUpstream(){  ## fUpstream <name> <line1>: another clone pushes a change to line
 	git -C "${dir}/other" commit -qam upstream; git -C "${dir}/other" push -q origin main 2>/dev/null
 }
 fLastMsg(){ git -C "${work}/${1}/remote.git" log -1 --format=%B main; }
+
+## The exclude list reaches rar through the publisher's own reader, one argument
+## per line. A value that would have run a command under the old eval is only a
+## pattern. The stub rar writes down what it was given and archives nothing.
+stubs="${work}/stubs"
+mkdir -p "${stubs}"
+cat >"${stubs}/rar" <<EOF
+#!/bin/sh
+printf '%s\n' "\$@" >"${work}/rar-args"
+EOF
+chmod +x "${stubs}/rar"
+fRarArgs(){  ## fRarArgs <name> <excludes>: publish with a backup; the args rar got are in rar-args
+	rm -f "${work}/rar-args"
+	fRepo "${1}"
+	echo more >>"${work}/${1}/proj/file.txt"
+	rc=0; out="$(cd "${work}/${1}/proj" && PATH="${stubs}:${PATH}" GIT_BACKUP_AND_PUBLISH_NOBACKUP=0 \
+		GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES="${2}" bash "${publish}" -q -m excludes 2>&1)" || rc=$?
+	touch "${work}/rar-args"
+}
+canary="${work}/canary"
+fRarArgs hostile "*/ok
+\$(touch '${canary}')
+\`touch '${canary}'\`"
+fCheck "a publish with a backup runs rar" test "${rc}" -eq 0 -a -s "${work}/rar-args"
+fCheck "every line becomes one argument" grep -qFx -- "-x\$(touch '${canary}')" "${work}/rar-args"
+fCheck "and the first is the pattern it was given" grep -qFx -- "-x*/ok" "${work}/rar-args"
+fCheck "nothing in the value ran" test ! -e "${canary}"
+
+## The shipped list and the reader still agree.
+shipped="$(bash -c 'source "$1" && printf "%s" "${GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES}"' _ "${config}")"
+fRarArgs shipped "${shipped}"
+fCheck "the shipped excludes reach rar" grep -qFx -- "-x*/cicd/artifacts" "${work}/rar-args"
+fCheck "as plain patterns" bash -c '! grep -q "^-x.*[\"'"'"']" "$1"' _ "${work}/rar-args"
 
 ## A failed pull leaves the work where it was, tracked and untracked, with no stash.
 fRepo gone
@@ -147,3 +152,4 @@ echo "all passed"
 ##	History:
 ##		- 20260908 JC: Created.
 ##		- 20260917 JC: A failed pull, a message as given, and the blank prompt answer.
+##		- 20260917 JC: The excludes go through the publisher's own reader to a stub rar.
