@@ -1298,11 +1298,45 @@ fn delete_pending(real: &std::path::Path) -> bool {
 	status == STATUS_DELETE_PENDING
 }
 
+// A save refused because the file has a line that cannot be read, and a write
+// would drop it. The save happens wherever it was called from, and only the
+// window can put a message in front of anybody, so it waits here to be asked.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Refusal {
+	pub path: std::path::PathBuf,
+	pub lines: Vec<usize>,
+	pub lost: usize,
+}
+
+static REFUSED: std::sync::Mutex<Option<Refusal>> = std::sync::Mutex::new(None);
+
+pub fn take_refusal() -> Option<Refusal> {
+	REFUSED.lock().ok()?.take()
+}
+
+fn unreadable_lines(doc: &shcl::Document) -> Vec<usize> {
+	doc.diagnostics()
+		.iter()
+		.filter(|d| matches!(d.severity, shcl::Severity::Error))
+		.map(|d| d.line)
+		.filter(|line| *line > 0)
+		.collect()
+}
+
 // The same gate and text as shcl's own save, through the writer above, which
 // can put the file back when a replace took it.
 #[must_use]
 fn write_doc(path: &std::path::Path, doc: &shcl::Document) -> bool {
 	let lost = doc.lost_count();
+	if lost > 0 {
+		if let Ok(mut refused) = REFUSED.lock() {
+			*refused = Some(Refusal {
+				path: path.to_path_buf(),
+				lines: unreadable_lines(doc),
+				lost,
+			});
+		}
+	}
 	let written = if lost > 0 {
 		Err(shcl::SaveError::Refused {
 			path: path.display().to_string(),
@@ -1951,12 +1985,7 @@ fn config_complaints(text: &str) -> Vec<String> {
 
 	let lost = doc.lost_count();
 	if lost > 0 {
-		let lines: Vec<usize> = doc
-			.diagnostics()
-			.iter()
-			.filter(|d| matches!(d.severity, shcl::Severity::Error))
-			.map(|d| d.line)
-			.collect();
+		let lines = unreadable_lines(&doc);
 		out.push(format!(
 			"{lost} line(s) could not be read{} - settings cannot be saved until that is fixed",
 			line_list(&lines)
@@ -5693,6 +5722,36 @@ mod tests {
 			raw.is_empty(),
 			"these truncate the config before writing it: {raw:?}"
 		);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// On Windows nothing said a file with a line it cannot read could no longer
+	// be saved. Only the window can say so, so a refused write leaves word of it.
+	#[test]
+	fn a_refused_save_leaves_word_for_the_window() {
+		let _guard = super::test_config_lock();
+		let dir = std::env::temp_dir().join(format!("silkterm_refused_{}", std::process::id()));
+		let _ = std::fs::create_dir_all(&dir);
+		let path = dir.join("config.shcl");
+		let doc = shcl::Document::parse("window:\n\topacity: 1.0\n    margin: 4\n");
+		assert_eq!(doc.lost_count(), 1);
+		// whatever another test refused before this one
+		let _ = take_refusal();
+		assert!(!write_doc(&path, &doc));
+		assert_eq!(
+			take_refusal(),
+			Some(Refusal {
+				path: path.clone(),
+				lines: vec![3],
+				lost: 1,
+			})
+		);
+		assert_eq!(take_refusal(), None, "taken once");
+		assert!(write_doc(
+			&path,
+			&shcl::Document::parse("font:\n\tsize: 12.0\n")
+		));
+		assert_eq!(take_refusal(), None, "a save that went through");
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 

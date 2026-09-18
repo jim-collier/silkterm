@@ -139,8 +139,14 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✋ Held with that item.
 	- Opened: 20260910-230211
 
-- 🔘 On Windows, nothing says that a settings file with an unreadable line can no longer be saved.
+- 🔬 On Windows, nothing says that a settings file with an unreadable line can no longer be saved.
 	- Shells found at launch are then never kept, and menu switches and the window size go through the same save. The only report goes to a console that a Windows build does not show.
+	- Decided: a standard error box. Windows shows its own, and elsewhere a plain window drawn like About stands in. Said once a session per file for saves nobody asked for, and every time for OK or Apply in Settings.
+	- Decided: making the save itself work, by editing only the lines it changes, waits for shcl 3.0. It has its own item under features.
+	- Fixed: a refused save leaves the file and its unreadable lines for the window, which puts the notice up. OK in Settings now closes when the save cannot happen, since the change is in use and trying again cannot help.
+	- Pinned by: `a_refused_save_leaves_word_for_the_window`, `a_refused_save_names_the_file_and_the_lines` and `a_refused_save_is_said_once_unless_it_was_asked_for`. The first and last go red with their fix taken out.
+	- Seen on Linux, on the private display: the notice at launch from the shell scan, none on a later resize, one over Settings on Apply that holds its clicks, and one again on OK after Settings closed.
+	- To confirm: the Windows message box, with the Windows batch.
 	- Opened: 20260910-230211
 
 - ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text, nor is the auto-copy of a program running in a pane. Right-click then copy does work when CTRL+shift+C doesn't. This is a regression.
@@ -423,6 +429,10 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
+- ✋ Save settings by editing only the lines that changed, so a file with a line that cannot be read still takes the window size, menu switches and new shells.
+	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
+	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
+	- Opened: 20260918
 - 🔘 Settings dialog: it does not follow a change of display scale.
 	- Nothing handles a scale-factor change for a dialog window, so its scale is whatever it was when the dialog opened. Dragging it to a monitor at a different scale leaves every measurement in it wrong until it is closed and reopened.
 	- It has always been like this. The dialog can be dragged and resized now, which makes it easier to reach.
