@@ -1326,7 +1326,8 @@ impl Pane {
 		}
 		let step = step.filter(|&step| {
 			let chunk = chunk.as_deref().unwrap_or_default();
-			let room = !SLIDE_DOWN_INTO_ROOM && ledger_makes_room(step, &region, lines, chunk);
+			let room = !SLIDE_DOWN_INTO_ROOM
+				&& ledger_makes_room(step, &region, lines, &self.last_cells, chunk);
 			if room {
 				// still traced, so the harness can tell a pop from no scroll at all
 				shift_dbg = step;
@@ -4275,17 +4276,26 @@ fn has_ink(row: &[StripCell]) -> bool {
 	row.iter().any(|c| c.c != ' ' || c.bg.is_some())
 }
 
-// A recorded scroll down whose rows pushed off the bottom (`chunk`, the rows the
-// engine kept) were all blank: room, per SLIDE_DOWN_INTO_ROOM. The region has to
-// reach the bottom of the screen. vim and nano scroll back inside a region above
-// their own status rows, and a blank file line leaving it is not room.
+// A recorded scroll down whose rows pushed off the bottom were blank: room, per
+// SLIDE_DOWN_INTO_ROOM. Blank both in the last frame (`last`) and as the engine
+// kept them (`chunk`). less blanks its prompt row and scrolls back in one write,
+// so the kept row alone reads as room. The region has to reach the bottom of the
+// screen: vim and nano scroll back inside a region above their own status rows,
+// and a blank file line leaving it is not room.
 fn ledger_makes_room(
 	step: i32,
 	region: &std::ops::Range<usize>,
 	lines: usize,
+	last: &[Vec<StripCell>],
 	chunk: &[Vec<StripCell>],
 ) -> bool {
-	step < 0 && region.end == lines && !chunk.is_empty() && !chunk.iter().any(|r| has_ink(r))
+	let k = (step.unsigned_abs() as usize).min(region.len());
+	step < 0
+		&& region.end == lines
+		&& last.len() == lines
+		&& !last[region.end - k..].iter().any(|r| has_ink(r))
+		&& !chunk.is_empty()
+		&& !chunk.iter().any(|r| has_ink(r))
 }
 
 // The same rule for a shift read off the row fingerprints, which is how an app
@@ -4555,7 +4565,7 @@ mod tests {
 		band_row_line, bar_applies_to, bar_pos_to_lines, bar_thumb_span, bell_brighten,
 		bracket_reach, capture_grid_text, capture_start, child_areas, cursor_cycle,
 		cursor_slide_step, distinct_pair, divider_at, equalize_dir_run, fingerprint_frame, fnv_row,
-		fnv_row_skel, glide_to_full, layout, ledger_makes_room, ledger_step, link_at,
+		fnv_row_skel, glide_to_full, has_ink, layout, ledger_makes_room, ledger_step, link_at,
 		logical_line_bounds, move_is_input, next_capture_poll, output_advance, output_band,
 		pair_inside, paste_payload, prompt_strip, pushed_since, render_char, repainted_edge,
 		resume_delay, same_char_pair, scroll_shift_signed, shift_makes_room, shown_cursor_shape,
@@ -6183,44 +6193,88 @@ mod tests {
 			slide_is_visible(-2, &region, &last, &chunk),
 			"the footer moved, so the old rule slid it"
 		);
-		assert!(ledger_makes_room(-2, &region, lines, &chunk));
+		assert!(ledger_makes_room(-2, &region, lines, &last, &chunk));
 
 		// the same insert on a screen with no room pushes the footer's last row off
 		let mut full = term_fed(cols, 8, 1000, &input_box(1));
 		full.set_scroll_ledger_rows(crate::scroll::SLIDE_ROWS);
+		let mut full_last = Vec::new();
+		snapshot_rows(
+			full.grid(),
+			8,
+			cols,
+			Some((full.colors(), &settings, &mut full_last)),
+		);
 		full.scroll_ledger_mut().clear();
 		feed(&mut full, "\x1b[6;1H\x1b[L| in 2 |");
 		let ledger = full.scroll_ledger();
 		let region = ledger.region().start.0 as usize..ledger.region().end.0 as usize;
 		let chunk = strip_rows(ledger.rows(), cols, full.colors(), &settings);
 		assert_eq!(ledger.lines(), -1);
-		assert!(
-			!ledger_makes_room(-1, &region, 8, &chunk),
-			"the footer left"
-		);
+		assert!(!ledger_makes_room(-1, &region, 8, &full_last, &chunk));
 
 		// vim and nano scroll back in a region above their status rows; a blank
 		// file line leaving it is not room
+		let empty = vec![cells("", cols); lines];
+		let gone = [cells("", cols)];
+		let whole = 1..lines;
 		assert!(!ledger_makes_room(
 			-1,
 			&(1..lines - 2),
 			lines,
-			&[cells("", cols)]
+			&empty,
+			&gone
 		));
-		assert!(ledger_makes_room(
-			-1,
-			&(1..lines),
+		assert!(ledger_makes_room(-1, &whole, lines, &empty, &gone));
+		assert!(!ledger_makes_room(1, &whole, lines, &empty, &gone), "up");
+		assert!(
+			!ledger_makes_room(-1, &whole, lines, &empty, &[]),
+			"none kept"
+		);
+		assert!(
+			!ledger_makes_room(-1, &whole, lines, &[], &gone),
+			"no frame"
+		);
+	}
+
+	#[test]
+	fn a_pager_scrolling_back_is_not_room() {
+		// less (and man) answer a step back by clearing the prompt row, then a
+		// reverse index at the top, then the prompt again, all in one write. The
+		// row the engine keeps is the prompt row already blanked, so only the last
+		// frame shows it held ink.
+		use std::fmt::Write as _;
+		let (cols, lines) = (12usize, 24usize);
+		let mut text = String::from("\x1b[?1049h\x1b[H");
+		for i in 0..lines - 1 {
+			let _ = write!(text, "\x1b[{};1Hline {}", i + 1, 100 + i);
+		}
+		let _ = write!(text, "\x1b[{lines};1H:");
+		let mut term = term_fed(cols, lines, 1000, &text);
+		term.set_scroll_ledger_rows(crate::scroll::SLIDE_ROWS);
+		let settings = config::Settings::default();
+		let mut last = Vec::new();
+		snapshot_rows(
+			term.grid(),
 			lines,
-			&[cells("", cols)]
-		));
-		assert!(
-			!ledger_makes_room(1, &(1..lines), lines, &[cells("", cols)]),
-			"up"
+			cols,
+			Some((term.colors(), &settings, &mut last)),
 		);
-		assert!(
-			!ledger_makes_room(-1, &(1..lines), lines, &[]),
-			"nothing kept"
+		term.scroll_ledger_mut().clear();
+		feed(
+			&mut term,
+			"\r\x1b[K\x1b[H\x1bMline 99\r\n\x1b[24;1H\r\x1b[K:\x1b[K",
 		);
+		let ledger = term.scroll_ledger();
+		let region = ledger.region().start.0 as usize..ledger.region().end.0 as usize;
+		assert_eq!((ledger.lines(), region.clone()), (-1, 0..lines));
+		let chunk = strip_rows(ledger.rows(), cols, term.colors(), &settings);
+		assert!(
+			!chunk.iter().any(|r| has_ink(r)),
+			"the kept row was blanked"
+		);
+		assert!(slide_is_visible(-1, &region, &last, &chunk));
+		assert!(!ledger_makes_room(-1, &region, lines, &last, &chunk));
 	}
 
 	#[test]
