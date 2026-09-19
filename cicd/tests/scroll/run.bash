@@ -17,6 +17,7 @@
 ##		   altenter     - a burst still easing when an alt screen takes over comes to rest
 ##		   chrome       - output easing under a live block redrawn in place holds the block still
 ##		   aptbar       - lines above a pinned status row still ease once the scrollback is full
+##		   paste/pasteil - an input box growing into blank rows pops in rather than sliding down
 ##		Plain shell-output easing is covered by the library tests (cargo test); the
 ##		"jumping / re-listing / bottom-up" symptoms map to those monotonicity checks.
 ##		Scenes self-scroll on a timer - no key injection (unreliable here), so the
@@ -300,6 +301,11 @@ run_scene chrome chrome pinned -1 4
 ## apt's progress bar with the scrollback full: the lines above the bar still ease,
 ## and the bar's row is held.
 run_scene aptbar aptbar pinned -1 1
+## An input box growing on a half-empty screen, repainted and then with
+## insert-line: the new lines pop in rather than sliding down from behind the
+## rows above.
+run_scene paste   paste   popin -1
+run_scene pasteil pasteil popin -1
 
 ## Best-effort real-app smoke (never fails the suite): prove the real apps render
 ## under SilkTerm (enter alt-screen, no hang) - regresses e.g. the cosmic-text hang

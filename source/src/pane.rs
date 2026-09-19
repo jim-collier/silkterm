@@ -80,6 +80,12 @@ const APP_SCROLL_MAX: usize = 24; // max per-step shift the fingerprint slide de
 // slide is on for top-band apps again. Apps that fill from the top with only a
 // bottom status line (less, vim) have no top band and slide regardless.
 const SLIDE_TOP_BAND_APPS: bool = true;
+// Whether a slide DOWN into rows that were blank to the bottom of the screen
+// eases. That is content making room for itself, not a scroll: a paste growing
+// an input box pushes the footer under it into empty rows, and sliding it drops
+// the new lines out from behind the rows above, last line first. A terminal
+// just shows them, so they pop in. True brings the slide back.
+const SLIDE_DOWN_INTO_ROOM: bool = false;
 
 const PROMPT_ABOVE_MAX: usize = 4; // rows above the prompt considered for multi-line-prompt learning
 // Skeleton segments a row must carry before it can be learned as a prompt row.
@@ -1319,12 +1325,14 @@ impl Pane {
 			guard.scroll_ledger_mut().clear();
 		}
 		let step = step.filter(|&step| {
-			slide_is_visible(
-				step,
-				&region,
-				&self.last_cells,
-				chunk.as_deref().unwrap_or_default(),
-			)
+			let chunk = chunk.as_deref().unwrap_or_default();
+			let room = !SLIDE_DOWN_INTO_ROOM
+				&& ledger_makes_room(step, &region, lines, &self.last_cells, chunk);
+			if room {
+				// still traced, so the harness can tell a pop from no scroll at all
+				shift_dbg = step;
+			}
+			slide_is_visible(step, &region, &self.last_cells, chunk) && !room
 		});
 		// The fingerprints also feed the output band, which belongs to the output
 		// ease and so works with app easing off. The styled cells stay app-only.
@@ -1408,11 +1416,19 @@ impl Pane {
 				self.scroll.app_scroll(step as f32, cover, region_rows);
 			} else if apps {
 				let shift = if fingerprint_frame(alt, follow, grew, scrolled) {
-					scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX)
+					let shift = scroll_shift_signed(&rows, &self.last_rows, APP_SCROLL_MAX);
+					let blank = fnv_row(std::iter::repeat_n(' ', cols));
+					shift_dbg = shift;
+					if SLIDE_DOWN_INTO_ROOM
+						|| !shift_makes_room(&rows, &self.last_rows, shift, blank)
+					{
+						shift
+					} else {
+						0
+					}
 				} else {
 					0
 				};
-				shift_dbg = shift;
 				if shift != 0 {
 					// Freeze the band sizes on the gesture's first step (a clean
 					// settled-vs-scrolled diff); re-measuring per step fluctuates by a row
@@ -4248,13 +4264,53 @@ fn slide_is_visible(
 	if moved > height || last.len() < region.end {
 		return true;
 	}
-	let ink = |row: &Vec<StripCell>| row.iter().any(|c| c.c != ' ' || c.bg.is_some());
 	let sources = if step > 0 {
 		region.start + moved..region.end
 	} else {
 		region.start..region.end - moved
 	};
-	chunk.iter().any(ink) || last[sources].iter().any(ink)
+	chunk.iter().any(|r| has_ink(r)) || last[sources].iter().any(|r| has_ink(r))
+}
+
+fn has_ink(row: &[StripCell]) -> bool {
+	row.iter().any(|c| c.c != ' ' || c.bg.is_some())
+}
+
+// A recorded scroll down whose rows pushed off the bottom were blank: room, per
+// SLIDE_DOWN_INTO_ROOM. Blank both in the last frame (`last`) and as the engine
+// kept them (`chunk`). less blanks its prompt row and scrolls back in one write,
+// so the kept row alone reads as room. The region has to reach the bottom of the
+// screen: vim and nano scroll back inside a region above their own status rows,
+// and a blank file line leaving it is not room.
+fn ledger_makes_room(
+	step: i32,
+	region: &std::ops::Range<usize>,
+	lines: usize,
+	last: &[Vec<StripCell>],
+	chunk: &[Vec<StripCell>],
+) -> bool {
+	let k = (step.unsigned_abs() as usize).min(region.len());
+	step < 0
+		&& region.end == lines
+		&& last.len() == lines
+		&& !last[region.end - k..].iter().any(|r| has_ink(r))
+		&& !chunk.is_empty()
+		&& !chunk.iter().any(|r| has_ink(r))
+}
+
+// The same rule for a shift read off the row fingerprints, which is how an app
+// that repaints its frame shows up (muffer's input box on the normal screen).
+// The rows the shift pushed out of its span, and every row under them, were
+// blank in the last frame.
+fn shift_makes_room(cur: &[u64], last: &[u64], shift: i32, blank: u64) -> bool {
+	let k = shift.unsigned_abs() as usize;
+	if shift >= 0 {
+		return false;
+	}
+	match translate_span(cur, last, shift) {
+		Some((_, hi)) if hi + 1 >= k => last[hi + 1 - k..].iter().all(|&r| r == blank),
+		_ => false,
+	}
 }
 
 // Rows at the strip-side edge of a recorded region scroll that the scroll does
@@ -4509,11 +4565,12 @@ mod tests {
 		band_row_line, bar_applies_to, bar_pos_to_lines, bar_thumb_span, bell_brighten,
 		bracket_reach, capture_grid_text, capture_start, child_areas, cursor_cycle,
 		cursor_slide_step, distinct_pair, divider_at, equalize_dir_run, fingerprint_frame, fnv_row,
-		fnv_row_skel, glide_to_full, layout, ledger_step, link_at, logical_line_bounds,
-		move_is_input, next_capture_poll, output_advance, output_band, pair_inside, paste_payload,
-		prompt_strip, pushed_since, render_char, repainted_edge, resume_delay, same_char_pair,
-		scroll_shift_signed, shown_cursor_shape, slide_bands, slide_is_visible, snapshot_rows,
-		static_bands, strip_rows, translate_span, vanished_range, weld_region_clip,
+		fnv_row_skel, glide_to_full, has_ink, layout, ledger_makes_room, ledger_step, link_at,
+		logical_line_bounds, move_is_input, next_capture_poll, output_advance, output_band,
+		pair_inside, paste_payload, prompt_strip, pushed_since, render_char, repainted_edge,
+		resume_delay, same_char_pair, scroll_shift_signed, shift_makes_room, shown_cursor_shape,
+		slide_bands, slide_is_visible, snapshot_rows, static_bands, strip_rows, translate_span,
+		vanished_range, weld_region_clip,
 	};
 	use crate::config;
 	use alacritty_terminal::event::{Event, EventListener};
@@ -6092,6 +6149,175 @@ mod tests {
 		assert!(
 			text.windows(2).all(|w| w[0] < w[1]),
 			"screen order: {text:?}"
+		);
+	}
+
+	// An input box on a half-empty screen: three transcript rows, a border, `h`
+	// input lines, a border and two footer rows, the rest blank.
+	fn input_box(h: usize) -> String {
+		use std::fmt::Write as _;
+		let mut input = String::new();
+		for i in 1..=h {
+			let _ = write!(input, "\r\n| in {i} |");
+		}
+		format!(
+			"\x1b[2J\x1b[H  one\r\n  two\r\n  three\r\n+------+{input}\r\n+------+\r\n  ? help\r\n  footer"
+		)
+	}
+
+	#[test]
+	fn a_box_growing_into_blank_rows_by_insert_line_pops_in() {
+		// muffer's input box taking a paste: insert-line pushes the border and
+		// footer down into rows that were blank, which the engine records as a
+		// region scroll down. Sliding it dropped the new lines out from behind the
+		// rows above, last line first.
+		let (cols, lines) = (12usize, 16usize);
+		let mut term = term_fed(cols, lines, 1000, &input_box(1));
+		term.set_scroll_ledger_rows(crate::scroll::SLIDE_ROWS);
+		let settings = config::Settings::default();
+		let mut last = Vec::new();
+		snapshot_rows(
+			term.grid(),
+			lines,
+			cols,
+			Some((term.colors(), &settings, &mut last)),
+		);
+		term.scroll_ledger_mut().clear();
+		feed(&mut term, "\x1b[6;1H\x1b[2L| in 2 |\r\n| in 3 |");
+		let ledger = term.scroll_ledger();
+		let region = ledger.region().start.0 as usize..ledger.region().end.0 as usize;
+		assert_eq!((ledger.lines(), region.clone()), (-2, 5..lines));
+		let chunk = strip_rows(ledger.rows(), cols, term.colors(), &settings);
+		assert_eq!(ledger_step(false, true, 0, false, -2), Some(-2));
+		assert!(
+			slide_is_visible(-2, &region, &last, &chunk),
+			"the footer moved, so the old rule slid it"
+		);
+		assert!(ledger_makes_room(-2, &region, lines, &last, &chunk));
+
+		// the same insert on a screen with no room pushes the footer's last row off
+		let mut full = term_fed(cols, 8, 1000, &input_box(1));
+		full.set_scroll_ledger_rows(crate::scroll::SLIDE_ROWS);
+		let mut full_last = Vec::new();
+		snapshot_rows(
+			full.grid(),
+			8,
+			cols,
+			Some((full.colors(), &settings, &mut full_last)),
+		);
+		full.scroll_ledger_mut().clear();
+		feed(&mut full, "\x1b[6;1H\x1b[L| in 2 |");
+		let ledger = full.scroll_ledger();
+		let region = ledger.region().start.0 as usize..ledger.region().end.0 as usize;
+		let chunk = strip_rows(ledger.rows(), cols, full.colors(), &settings);
+		assert_eq!(ledger.lines(), -1);
+		assert!(!ledger_makes_room(-1, &region, 8, &full_last, &chunk));
+
+		// vim and nano scroll back in a region above their status rows; a blank
+		// file line leaving it is not room
+		let empty = vec![cells("", cols); lines];
+		let gone = [cells("", cols)];
+		let whole = 1..lines;
+		assert!(!ledger_makes_room(
+			-1,
+			&(1..lines - 2),
+			lines,
+			&empty,
+			&gone
+		));
+		assert!(ledger_makes_room(-1, &whole, lines, &empty, &gone));
+		assert!(!ledger_makes_room(1, &whole, lines, &empty, &gone), "up");
+		assert!(
+			!ledger_makes_room(-1, &whole, lines, &empty, &[]),
+			"none kept"
+		);
+		assert!(
+			!ledger_makes_room(-1, &whole, lines, &[], &gone),
+			"no frame"
+		);
+	}
+
+	#[test]
+	fn a_pager_scrolling_back_is_not_room() {
+		// less (and man) answer a step back by clearing the prompt row, then a
+		// reverse index at the top, then the prompt again, all in one write. The
+		// row the engine keeps is the prompt row already blanked, so only the last
+		// frame shows it held ink.
+		use std::fmt::Write as _;
+		let (cols, lines) = (12usize, 24usize);
+		let mut text = String::from("\x1b[?1049h\x1b[H");
+		for i in 0..lines - 1 {
+			let _ = write!(text, "\x1b[{};1Hline {}", i + 1, 100 + i);
+		}
+		let _ = write!(text, "\x1b[{lines};1H:");
+		let mut term = term_fed(cols, lines, 1000, &text);
+		term.set_scroll_ledger_rows(crate::scroll::SLIDE_ROWS);
+		let settings = config::Settings::default();
+		let mut last = Vec::new();
+		snapshot_rows(
+			term.grid(),
+			lines,
+			cols,
+			Some((term.colors(), &settings, &mut last)),
+		);
+		term.scroll_ledger_mut().clear();
+		feed(
+			&mut term,
+			"\r\x1b[K\x1b[H\x1bMline 99\r\n\x1b[24;1H\r\x1b[K:\x1b[K",
+		);
+		let ledger = term.scroll_ledger();
+		let region = ledger.region().start.0 as usize..ledger.region().end.0 as usize;
+		assert_eq!((ledger.lines(), region.clone()), (-1, 0..lines));
+		let chunk = strip_rows(ledger.rows(), cols, term.colors(), &settings);
+		assert!(
+			!chunk.iter().any(|r| has_ink(r)),
+			"the kept row was blanked"
+		);
+		assert!(slide_is_visible(-1, &region, &last, &chunk));
+		assert!(!ledger_makes_room(-1, &region, lines, &last, &chunk));
+	}
+
+	#[test]
+	fn a_repainted_box_growing_into_blank_rows_pops_in() {
+		// The same box redrawn in place, the way muffer paints: nothing scrolls the
+		// grid, and the fingerprints read the border and footer moving down.
+		let (cols, lines) = (12usize, 16usize);
+		let rows = |text: &str| {
+			let term = term_fed(cols, lines, 1000, text);
+			snapshot_rows(term.grid(), lines, cols, None)
+		};
+		let blank = fnv_row(std::iter::repeat_n(' ', cols));
+		let (last, cur) = (rows(&input_box(1)), rows(&input_box(3)));
+		let shift = scroll_shift_signed(&cur, &last, APP_SCROLL_MAX);
+		assert_eq!(shift, -2, "the detector reads it as a scroll down");
+		assert!(shift_makes_room(&cur, &last, shift, blank));
+		// shrinking back is a scroll up into the same blank rows, and slides
+		let shift = scroll_shift_signed(&last, &cur, APP_SCROLL_MAX);
+		assert_eq!(shift, 2);
+		assert!(
+			!shift_makes_room(&last, &cur, shift, blank),
+			"up is never room"
+		);
+
+		// A box with no room under it scrolls the grid instead, which the output
+		// ease owns. vim scrolling back over its file with a status row under it
+		// is a shift down that is not room. Lines from 21 on are blank, so the
+		// rows leaving the span are blank while the status row under them is not.
+		let file = |first: usize| {
+			use std::fmt::Write as _;
+			let mut text = String::new();
+			for i in (0..lines - 1).filter(|i| first + i < 21) {
+				let _ = write!(text, "\x1b[{};1Hline {}", i + 1, first + i);
+			}
+			format!("\x1b[2J\x1b[H{text}\x1b[{lines};1H-- status --")
+		};
+		let (last, cur) = (rows(&file(10)), rows(&file(8)));
+		let shift = scroll_shift_signed(&cur, &last, APP_SCROLL_MAX);
+		assert_eq!(shift, -2);
+		assert_eq!((last[13], last[14]), (blank, blank));
+		assert!(
+			!shift_makes_room(&cur, &last, shift, blank),
+			"the status row"
 		);
 	}
 

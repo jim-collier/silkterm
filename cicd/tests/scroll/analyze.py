@@ -23,6 +23,10 @@ supposed to hold:
                     only when something changes. The output must be seen easing
                     before the swap, or there was nothing to stop and the check
                     tested nothing.
+  --mode popin    : content growing down into blank rows on a half-empty screen
+                    (an input box taking a paste). That is room, not a scroll, so
+                    a step down must never slide: app_off never goes below 0.
+                    Steps back up may slide. No step down at all is a skip.
 
 Exit codes: 0 pass, 1 real regression (a genuine violation with data), 2 skip
 (not enough trace / the scene never scrolled - an environment/timing miss, not a
@@ -48,7 +52,7 @@ TRACE = re.compile(
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", required=True, choices=["slide", "hardcut", "still", "pinned"])
+    ap.add_argument("--mode", required=True, choices=["slide", "hardcut", "still", "pinned", "popin"])
     ap.add_argument("--expect-st", type=int, default=-1)
     ap.add_argument("--expect-sb", type=int, default=-1)
     ap.add_argument("--label", default="scene")
@@ -127,6 +131,20 @@ def main() -> int:
         return 2
 
     engaged = [f for f in frames if abs(f["app_off"]) > a.eps]
+
+    if a.mode == "popin":
+        down = [f for f in frames if f["sh"] < 0]
+        if not down:
+            out("SKIP", f"no step down across {len(frames)} frames")
+            return 2
+        slid = [f for f in frames if f["app_off"] < -a.eps]
+        if slid:
+            worst = min(f["app_off"] for f in slid)
+            out("FAIL", f"slid down into empty rows on {len(slid)} frame(s) "
+                       f"(app_off {worst:.3f})")
+            return 1
+        out("PASS", f"popped in: {len(down)} steps down, none slid")
+        return 0
 
     if a.mode == "hardcut":
         if engaged:

@@ -71,8 +71,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
-- 🔘 New text added to a screen with enough room to not have to scroll up to make new space, should never "smooth-scroll DOWN" from "beneath" the content above, last-line-first. (E.g. when pasting several lines of content at once.) It appear first-line-first. If it can all fit on the same screen without scrolling, maybe that means popping in fully-formed, all at once. That would be peferrable to oddly scrolling in from beneathe an invisible horizontal curtain, last-line-first. (Make this change gated to a global tunable in-code variable, so this behavior could be restored if desired. It does look kind of cool, it's just "wrong" from a "terminal experience" perspective.
-
 - 🔘 With the minimap on, heavy output runs at about half the speed it does with it off. The minimap has been on by default since 2026-09-17, so the published speed rows no longer describe a default install.
 	- Measured on the speed rig, 2026-09-18, the plain row at 160x42: 36.5 MB/s ASCII and a score of 33.9 with the minimap on, against 67.8 and 57.5 with it off. The +candy row reads 38.4 with it on, against 77.4 published.
 	- xfce4-terminal read 94.0 against 94.2 published in the same sitting, so the machine and the rig were not the cause.
@@ -138,267 +136,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- It might also have been due to a stuck UnrealEngine process holding 3.7 GB of RAM.
 		- If it's a real bug, it's new, not a regression.
 	- ✋ Update: It was probably due to running out of GPU memory. Keep an eye on it.
-
-- 🛠️ Code review 20260914 round 1 (review 20260914-124200).
-	- ✅ Code review 20260914 item 1 (F33, blocking): A settings file with one old-style setting at the left margin is converted wholesale, and its shell list is lost.
-		- The shell list carries whole and in order when a file converts.
-	- ✅ Code review 20260914 item 2 (F34, blocking): The retired `shell.default` is deleted without moving that shell to the top of the list when the file also has a line that cannot be read.
-		- It stays in the file until the move to the top of the list can be saved.
-	- ✅ Code review 20260914 item 3 (F35, should-fix): Several commented `## Default` lines in a new settings file name values that are not the defaults, among them transparency and blur behind.
-		- All seven name the real default now, so removing the `# ` changes nothing. Where the old text was a useful example it moved into the comment above the line.
-		- An existing config gets its commented lines refreshed, the way any other changed default is.
-		- Pinned by `every_commented_default_line_loads_as_the_default`, which uncomments each one in turn and compares the whole load. It reads the template, so a line added later is checked on its own.
-	- ✅ Code review 20260914 item 4 (F36, should-fix): A saved theme makes every launch report its settings as unread typos.
-		- Saved themes are skipped under the name they are really stored under. The check's own test had used the wrong name, which is why it passed, and now uses the right one.
-	- ✅ Code review 20260914 item 5 (F37, should-fix): A `$` or `%` in a shell's arguments is expanded as a variable, so `cmd /k prompt $P$G` loses its prompt.
-		- Decided: expand the program name only, and go on reading every spelling in a setting. A command's arguments belong to the program being started.
-		- Fixed: `command_argv` splits the command first, expands the first word, and hands every argument to the program as written.
-		- Fixed: `shell.startup_directory` defaults to the home variable in the platform's own spelling. Either spelling is read on either platform, so a config carried between machines still finds home.
-		- Pinned by: `a_config_command_expands_the_program_and_nothing_after_it`.
-		- Note: reading only the local platform's spelling was tried first and dropped the same day. It fixed the cross-platform cases, left the same-platform ones, and cost a config that could be carried.
-	- ✅ Code review 20260914 item 6 (F38, should-fix): A color override in the settings file is dropped for the session when the system switches between dark and light.
-		- A color that is not the theme's own stays when the system switches. That covers one from the command line or from Settings too, not only the file.
-	- ✅ Code review 20260914 item 7 (F39, should-fix): The wallpaper metadata fuzz test never reaches the metadata it is meant to check.
-		- It builds readable packets with bad values now, and fails if none of them read. A small tagged PNG and JPEG seed it.
-	- ✅ Code review 20260914 item 8 (F40, should-fix): On Windows, the shell scan can offer Python 3 when only the Microsoft Store shortcut is there.
-		- A Store alias whose program is App Installer's install prompt no longer counts as installed. A Store-installed Python's own alias, and winget, still do.
-		- Pinned by `a_store_install_prompt_is_not_a_shell` from any box, and `the_store_python_prompt_on_this_box_is_not_found` against the real alias on Windows. Red on b29w with the check taken out.
-	- ✅ Code review 20260914 item 11 (F43, blocking): A setting reverted to its default and then changed again before Apply is saved as the default, so the change is gone at the next launch.
-		- Apply puts back the default line only for rows still at their default. Checked for every row in Settings.
-	- ✅ Code review 20260914 item 12 (F44, should-fix): A program's own name, or the name of the folder it runs in, can put control characters into the window title and the tab.
-		- A tab label is held to the rule a window title is now. The shell name, the running program and the directory are all cleaned where they go in, so the shortened forms are measured against what is actually drawn.
-		- The title fuzz target feeds those three raw text rather than text a title parser had already cleaned, which is what let this through.
-	- ✅ Code review 20260914 item 13 (F45, should-fix): On Windows, the Size checkbox beside "Use system font" in Settings does not respond to a click.
-		- A pair row is gated one part at a time now, not on the row's key, which is only its first part. A grayed part still takes no click.
-		- The dialog reads the desktop's font report once when it opens and keeps it, rather than asking at each use. That report is the only thing that grays this row, so holding it is what lets the case be tested from a machine whose desktop does name a font.
-	- ✅ Code review 20260914 item 14 (F46, should-fix): Flyover help in the Settings and About windows appears at once, without the rest the tabs and menus wait for.
-		- Both windows wait the same as the tab strip and the menus do, and crossing to another control starts the wait over.
-		- A pointer left resting still gets its tip, with no further input: the dialog asks the loop to come back for it, the way a field edit part-way through its animation already does.
-		- Pinned by `a_dialog_tip_waits_for_the_pointer_to_rest`, which covers the decision the drawing asks for. Drawing itself needs a graphics device, so that half stays uncovered.
-	- ✅ Code review 20260914 item 15 (F47, should-fix): The Settings flyover's padding and border do not grow with the display scale.
-		- The padding, the gap, the edge, the rule and the wrap margin are all DIP now, converted once. A tip at twice the scale is the 1x tip doubled.
-		- Both windows lay their tip out through one function in `tip.rs`, so neither can drift from the other again. The box was the last thing about a tip the two did not share.
-		- Pinned by `a_tip_at_twice_the_scale_is_the_1x_tip_doubled`.
-	- ✅ Code review 20260914 item 16 (F48, should-fix): Renaming a saved theme to its own name, or changing only its capitals, is refused as a name already taken.
-		- A theme is no longer in its own way. Renaming to the same name closes the box and changes nothing, and a change of case alone goes through, which was the only way to make one.
-		- Another saved theme's name is still refused, so two themes cannot merge into one.
-	- ✅ Code review 20260914 item 18 (F50, blocking): A menu left open after its pane's shell ended can close a different tab, or the whole window, with its programs still running.
-		- Close pane acts only on the pane the menu was opened for. With that pane gone it does nothing, and the menu closes with the pane rather than standing open over it.
-		- The cascade of pane, then its tab, then the window is one function now, read by both the menu and a shell that ended.
-	- ✅ Code review 20260914 item 19 (F51, blocking): A window taller or wider than the graphics card can draw crashes at launch, and `window.rows: 1000` in the settings file is enough on some machines.
-		- The window is held to the largest texture the device will make, since the scene is drawn into one at the window's size.
-		- `--rows` and `--columns` are held to the ceiling the config file's own are, so the two agree. The Settings ranges still fit well inside it.
-	- ✅ Code review 20260914 item 20 (F52, blocking): `--font-size nan` or `--wallpaper-opacity nan` replaces that setting in the settings file, so the saved value is lost.
-		- A number on the command line that is not finite is refused with a message. Every other one is held to the range of the setting it stands for, the file's range.
-		- A save no longer reads the same nan on both sides as a change, which is what wrote it over the value in the file.
-	- ✅ Code review 20260914 item 21 (F53, should-fix): A launch with `--fullscreen` stores the screen size as the size to open at next time.
-		- A fullscreen or maximized window is not a size to come back to, so neither is written down. A resize by hand still is, and design.md names the decision.
-	- ✅ Code review 20260914 item 22 (F54, should-fix): A window asked for 24 rows gives the shell 22 while the tab strip shows for a single tab.
-		- The strip counts against the window's height everywhere a row count becomes pixels: at launch, on a Settings Apply, and where the live size is written down.
-	- ✅ Code review 20260914 item 23 (F55, should-fix): Ctrl+Shift+N opens the new window on the default settings file, and not always in the current pane's folder.
-		- A new window gets the settings file its parent was started with, and starts in the pane's folder even when that is home or a root.
-		- Pinned by `a_new_window_keeps_the_settings_file_and_the_panes_directory`.
-	- ✅ Code review 20260914 item 24 (F56, should-fix): `silkterm --wallpaper` reports success and shows nothing while the wallpaper is switched off.
-		- Naming a wallpaper turns it on for the session, the same for both flags. A performance profile that turns it off still wins for both, and design.md says so.
-		- Pinned by `naming_a_wallpaper_turns_it_on_unless_the_profile_says_off`.
-	- ✅ Code review 20260914 item 25 (F57, should-fix): Reload config drops the font and colors given on the command line at launch.
-		- A reload puts the launch options back on over the file. A wallpaper set while running still beats the one given at launch.
-		- Pinned by `a_reload_keeps_the_launch_options_over_the_file`.
-	- ✅ Code review 20260914 item 26 (F58, should-fix): `--wallpaper-file` or `--wallpaper` with no value shows the built-in picture, or nothing when there is a rotation folder, where the help says none.
-		- Decided: a bare flag means no picture, as `--help` and the Done entry already said. design.md names it as the one exception to the built-in standing in.
-		- Pinned by `a_cleared_wallpaper_shows_nothing_with_or_without_a_folder`.
-	- ✅ Code review 20260914 item 27 (F59, should-fix): A build whose binary changed outside the source folder, such as after a dependency update, keeps the previous build number.
-		- The build number is worked out again when the lock file, either manifest or an included file outside `src` changes.
-		- Pinned by `the_build_inputs_cover_every_included_file_and_the_lock`, which fails on any included file nothing watches.
-	- ✅ Code review 20260914 item 28 (F60, should-fix): A window that is killed, or whose first shell cannot start, leaves its control socket file behind.
-		- The file is removed on an exit call, SIGTERM, SIGHUP and a panic. A SIGKILL still leaves it, and the next window with that process id clears it.
-		- Pinned by `the_socket_file_goes_away_however_the_process_ends`, which ends a child process each of those ways.
-	- ✅ Code review 20260914 item 31 (F63, blocking): Adding the shell integration block replaces a linked PowerShell profile with a plain copy, makes a private profile readable by others, and can write through a stray link beside it.
-		- The profile goes through the same writer as the settings file, so a link and the file's mode are kept, and no link at a temp name is written through. A read-only profile is left alone.
-		- The backup is made fresh at the profile's own mode and never through a link.
-		- Pinned by `a_profile_write_keeps_its_link_and_mode_and_follows_no_planted_link`.
-	- ✅ Code review 20260914 item 32 (F64, blocking): The shell integration block breaks a directory-change hook already set in PowerShell, so every directory change prints an error, and a profile that loads the block twice breaks the prompt.
-		- An earlier hook is called the way PowerShell holds it, and a second load keeps the handler or prompt from before the first.
-		- Pinned by `the_block_keeps_an_earlier_hook_and_survives_loading_twice`, which runs the block through PowerShell on both the 7 and 5.1 paths.
-	- ✅ Code review 20260914 item 33 (F65, should-fix): The git-aware bash prompt replaces a prompt set in `.bashrc`, where it should give way to it.
-		- Decided: the prompt keeps replacing a `.bashrc` prompt, since Debian's own files set one. It is off by default now, and the Settings row reads "Use git-aware Bash prompt", with help naming x9ps1-git.
-		- The docs that said the rc file wins are corrected. Pinned by `the_bash_prompt_is_off_until_asked_for`.
-	- ✅ Code review 20260914 item 34 (F66, should-fix): Deleting the shell integration block does not keep it out when an earlier build added it or a later one updated it.
-		- A block found already in a profile is noted, so deleting it sticks.
-		- Pinned by `a_block_already_there_is_noted_so_deleting_it_sticks`.
-	- ✅ Code review 20260914 item 35 (F67, should-fix): A host color added inside the shell integration block, as its own comment suggests, is deleted at the next launch.
-		- The comment now says to set `$SilkTermHostColor` above the block, where a refresh leaves it, and the block reads that first.
-		- Pinned by `a_host_color_is_set_where_a_refresh_leaves_it` and the PowerShell run above.
-	- ✅ Code review 20260914 item 36 (F68, should-fix): On Windows, a PowerShell profile path with a character outside ASCII is misread, so the block goes into a new file PowerShell never loads.
-		- PowerShell now sends the profile path as hex of its UTF-8 bytes, which no code page changes. An answer that is not that hex writes nothing.
-		- Pinned by `a_profile_path_is_read_from_its_hex_and_nothing_else` and `a_powershell_names_a_profile_outside_ascii`, which asks each PowerShell installed. Passes on b29w.
-	- ✅ Code review 20260914 item 37 (F69, should-fix): After a program that reports its directory exits, new tabs and splits start in its last directory instead of where the pane's shell is.
-		- A reported directory is kept with the process group that sent it, and dropped once that group is gone. Unix only, since Windows has no foreground group to ask.
-		- Pinned by `a_report_is_dropped_once_the_program_that_sent_it_exits`.
-	- ✅ Code review 20260914 item 40 (F72, blocking): A wallpaper blur of a tiny fraction such as `1e-40`, in the settings file or in an image's own tags, makes SilkTerm quit with every shell in it.
-		- A blur too small to be a normal number is no blur, whether it comes from the file or a tag.
-		- Pinned by `a_subnormal_blur_is_no_blur`, which runs both through a real tagged PNG.
-	- ✅ Code review 20260914 item 41 (F73, blocking): A small wallpaper file with very large dimensions takes gigabytes of memory while it loads, enough to crash SilkTerm on a machine with less to spare.
-		- An image is cut to 4096 in its own pixel format, before the RGBA copy and with no float copy at full size. What is left is the decode, which the image library already holds to 512 MiB.
-		- Pinned by `a_huge_image_costs_its_decode_and_no_more`. An 8000 by 8000 grayscale file grew the process by 869 MiB before and 141 MiB after, and the test fails over 200.
-	- ✅ Code review 20260914 item 42 (F74, should-fix): With a rotation interval shorter than an image takes to prepare, the wallpaper never changes and the abandoned loads keep running, several gigabytes at once.
-		- A tick that finds a request still working waits for it, and the result serves the tick. A superseded worker stops between stages instead of blurring a photo nobody will see.
-		- Pinned by `rotation_keeps_going_when_preparing_outlasts_the_interval` and `a_superseded_request_stops_before_its_next_stage`. Four 4096 by 4096 photos on a two-second interval now change every eight seconds with one worker at a time.
-	- ✅ Code review 20260914 item 43 (F75, should-fix): In the dark Matrix and Retro Amber themes the character under the cursor is barely readable, because the cursor is the text's own color.
-		- Text on the cursor plate now clears the minimum contrast floor in every built-in theme and mode, pinned by `text_on_the_cursor_plate_clears_the_floor`. Both dark cursors are a darker shade of their own hue. The two light modes needed a darker foreground as well, since a paler one left no room for a cursor that both shows and carries the text. SilkTerm dark's cursor moved a shade for the same rule, and the outgoing default is superseded.
-	- ✅ Code review 20260914 item 44 (F76, should-fix): On Xfce, the menus and "Use system font" can follow GNOME's font settings instead of the desktop's own.
-		- The desktop's own store is asked first, xfconf on Xfce and gsettings elsewhere, for both the interface font and the monospace one. Pinned by `the_desktop_decides_which_font_store_answers_first`. KDE, MATE and Cinnamon are still untested.
-	- ✅ Code review 20260914 item 47 (F79, blocking): With the release signing key filled in, the PowerShell installer refuses every correctly signed release.
-		- On Linux and macOS the checksums file's own bytes now go to ssh-keygen down a pipe. Windows keeps the file handle it already had, since its OpenSSH never sees the end of a pipe that was closed before it started up. The release test now runs each installer's own verify function against a throwaway key, install.ps1 through `verify-sign.ps1`, which the Windows pipeline runs as well. Seen passing on the Linux box and on vm925w under PowerShell 7 and 5.1.
-	- ✅ Code review 20260914 item 48 (F80, blocking): The pre-commit hook commits every change in a partly staged Rust file, the unstaged ones included.
-		- The hook formats the staged content and writes that back to the index, so a file with half its changes staged commits half. The working copy is formatted too, but only where it has nothing unstaged to lose.
-		- The staged copy is formatted outside the tree, so the hook names `rustfmt.toml` rather than leaving rustfmt to hunt for it.
-		- Pinned by: `cicd/tests/hooks/run.bash`, which drives both hooks in a scratch repository and runs in the pipeline.
-	- ✅ Code review 20260914 item 49 (F81, blocking): A commit made while the pipeline builds lets a release publish binaries that were not built from the tagged source.
-		- The note is written from the source read before the first build, not from the tree as it stands when the note is written. A tree that moved, or was dirty at either end, is refused and says which.
-		- A long run cross-builds after the native build, so one release could hold a binary from each side of the commit.
-	- ✅ Code review 20260914 item 50 (F82, should-fix): The bash installer leaves a GitHub token behind in a temporary file.
-		- The token file is made once, before the first API call, and removed on the way out however the run ends. It was being made inside a command substitution, so nothing it set reached the cleanup.
-		- Pinned by an installer run with a token, against a stand-in release, that looks in its own temp folder afterwards.
-	- ✅ Code review 20260914 item 51 (F83, should-fix): The pre-push gate tests the working tree, not the commits being pushed.
-		- The gate runs in a throwaway worktree checked out at the commit being pushed, so an uncommitted fix can no longer carry a push to main. Cargo writes where it always does, so only this crate is rebuilt there.
-		- Pinned by: the same hooks test, with a stub in place of the pipeline - what is being checked is which source the gate is handed, not what it does with it.
-	- ✅ Code review 20260914 item 52 (F84, should-fix): A release can be cut from a partial set of artifacts, such as the one a `--quick` run leaves.
-		- The note lists the artifact files the configuration builds, whatever the run actually did, and the release refuses a set missing any of them by name.
-		- Checked against the published beta3: the ten names the configuration gives are exactly what that release carries.
-	- ✅ Code review 20260914 item 53 (F85, should-fix): With an absolute `CARGO_TARGET_DIR`, the pipeline makes no Windows installer and the Windows pipeline cannot find its builds.
-		- The packaging step takes the binary path as stage 5 recorded it, and only hangs it off the repository when it is relative. The Windows pipeline reads `CARGO_TARGET_DIR` by the same rule instead of spelling `target` itself.
-		- Pinned by a new packaging test that runs the installer step against the real template and makensis, once with each shape of target directory, and checks the Windows pipeline's own resolver.
-	- ✅ Code review 20260914 item 54 (F86, should-fix): The menu launcher both one-line installers write does not start when the install path holds a space.
-		- `Exec=` is quoted and escaped for both rule sets that read it. Both installers share one case list, so they cannot drift apart.
-		- Left alone: a path holding a `%`. The spec says to double it, GLib refuses an entry that does, and there is nothing else to write.
-		- Pinned by an install into a home holding a space, with the entry validated and launched.
-	- ✅ Code review 20260914 item 55 (F87, should-fix): The dogfood launcher changes arguments that hold quotes, and drops empty ones, on the way to the terminal.
-		- Arguments are joined the way the Windows command line is read back, which is also how .NET splits one elsewhere. The elevated relaunch uses the same join.
-		- Pinned by launching a stand-in build that records what it was handed, with the four arguments from the report.
-	- ✅ Code review 20260914 item 56 (F88, should-fix): The dogfood launcher reads the whole build again at every launch instead of trusting its date.
-		- The held stamp comes out of a file name, so the comparison is at whole seconds now. A source mtime carrying a fraction always read as newer.
-		- Pinned by two launches over a source whose mtime has a fraction.
-	- ✅ Code review 20260914 item 57 (F89, should-fix): `utility/rename.bash` leaves a tree whose Windows build fails.
-		- It rewrites every tracked text file that mentions either name, and renames the files and directories carrying the identifier, among them the resource template `build.rs` reads by name. Binaries and `Cargo.lock` are left alone.
-		- Checked once by hand: a renamed clone passes `cargo check --release --target x86_64-pc-windows-gnu`.
-		- Pinned by a test that renames a clone and looks for a path a build reads that is not there, and for the old name left anywhere.
-	- ✅ Code review 20260914 item 60 (F92, blocking): The fix for the Windows freeze on a long run of output has no test, so an engine update could lose it without anything failing.
-		- The engine fork has a test that drains its pipe the way the engine's reader does and waits for word of the next fill. SilkTerm's Windows run has one too, through a real pane under a flood, so an engine update that drops the fix fails here as well.
-		- Both are red on b29w with the fix taken out, at the second round.
-	- ✅ Code review 20260914 item 61 (F93, should-fix): Once the scrollback is full, output above a pinned status line, such as apt's progress bar, stops easing.
-		- The engine now counts every line it sends into the scrollback: a whole-screen scroll, a scroll of a region that starts at the top row, and a screen clear. It counted only the first, and once the scrollback is full that count is all there is.
-		- A clear eases the same way at a full scrollback as before it.
-		- Pinned by a test of the apt stream at a full scrollback, one of a clear, and an engine test that runs random scrolls through a terminal with a full scrollback beside one that never fills. The scroll check has a new scene that fills the scrollback first, and it fails on the build from before.
-	- ✅ Code review 20260914 item 62 (F94, should-fix): The terminal engine handles output in full-screen programs such as tmux about a third slower, because it copies every row that scrolls away.
-		- The engine takes the row that is leaving and gives the grid a spare to reset in its place, so nothing is copied. Keeping rows now costs about 5% of the parse on the alt screen, against about a third.
-		- Pinned by a timing test that holds the cost under 10%, and an engine test that the kept row is the very row that left. The rows kept are the same as before, checked over random scrolls.
-	- ✅ Code review 20260914 item 64 (F96, blocking): A one-column pane crashes on a wide character such as CJK or an emoji, and narrowing a window past one column with wide text on screen runs the memory away and hangs.
-		- A pane is held to at least two columns, the engine's own documented least, at the one place SilkTerm builds or resizes its grid.
-		- Pinned by `a_pane_too_narrow_for_a_wide_character_still_takes_one`, watched failing with the old floor. A window squeezed to 1 px wide with wide text on screen stayed up, with memory flat.
-	- ✅ Code review 20260914 item 65 (F97, blocking): A program printing a long run of combining marks grows SilkTerm's memory without limit, since they pile onto one cell that the scrollback cap never trims.
-		- The engine keeps at most nine per cell now. Upstream's fix is carried on the fork's 0.26.0 branch until a release has it.
-	- ✅ Code review 20260914 item 66 (F98, blocking): On Windows a shell whose path holds a space can be tricked into running a different program, and an inherited directory with a space reaches the shell split in two.
-		- SilkTerm hands the engine its arguments to be quoted, and the engine fork quotes a program path with a space as well.
-		- Pinned by an engine test that starts a program under a spaced path with a decoy beside it, and one on the command line itself. The decoy ran on b29w with the quoting taken out.
-	- ✅ Code review 20260914 item 67 (F99, should-fix): On Linux a program that closes its terminal but keeps running spins a core at 100% until it exits.
-		- Fixed in the engine fork: once the terminal hangs up, the reader leaves it out of the poll for a tenth of a second at a time. What was written just before the hang-up is still read first.
-		- The second part matters for a program that opens its terminal again later. Before, the spin caught that output by luck, and a plain pause lost it.
-		- Pinned by `a_hung_up_terminal_does_not_spin_the_reader`. It used about 1930 ms of CPU in 2 s before and about 1 ms after. It also checks the reopened output and that the pane still ends at once.
-	- ✅ Code review 20260914 item 68 (F100, should-fix): Double-clicking an unmatched bracket scans the whole scrollback under the terminal lock, so it hitches on a large history.
-		- SilkTerm looks for the partner itself now, at most 200 rows away, once at the click. A bracket with no partner in reach is selected alone. A bracket to its partner across lines still works, and so does a word.
-		- Pinned by `a_bracket_looks_for_its_partner_only_so_far`, watched failing with the reach removed.
-	- ✅ Code review 20260914 item 69 (F101, should-fix): Closing a pane whose program ignores the hang-up signal freezes the whole window until that program ends.
-		- A close waits a quarter second for the pane to finish, then goes on and lets it finish on its own. The program is not killed, since a `nohup` job ignores the signal on purpose.
-		- Pinned by `closing_a_pane_does_not_wait_on_a_shell_that_stays`, watched failing with the old wait.
-	- ✅ Code review 20260914 item 70 (F102, should-fix): On Windows each pane leaks a couple of process handles that are never freed while SilkTerm runs.
-		- It was four per pane: the child's process and thread, and SilkTerm's own two ends of the pseudo console's pipes. All four are closed now, in the engine fork.
-		- Pinned by `a_closed_pane_gives_back_its_handles`, which opens and closes 50 panes. The leak put the count up by 200 on b29w.
-	- ✅ Code review 20260914 item 71 (F103, should-fix): A program can force unbounded memory by setting a huge window title and pushing it onto the title stack.
-		- A title is cut to 2 KiB, in the engine fork and again where SilkTerm passes it to the window. The stack keeps 4096 entries, so the most it can hold is 8 MiB.
-		- Pinned by `a_program_title_is_held_to_a_size`, which sets a 1 MiB title, pushes it 64 times and pops it back. It fails against the engine without the cap and without SilkTerm's.
-		- Left alone: the parser keeps room for the longest escape sequence a pane has sent. It is one buffer per pane, reused rather than added to, and a fix would mean patching the parser crate as well.
-	- ✅ Code review 20260914 item 72 (F104, blocking): Opening a bash pane in a cloned repository can run a command hidden in its branch name, through the git-aware prompt.
-		- Branch and remote names are escaped before they go into the prompt. Fixed in x9ps1-git first and the copy taken again, with a test on each side.
-	- ✅ Code review 20260914 item 73 (F105, blocking): Recording the demo can replace the desktop's own window manager theme, title font and button layout.
-		- The recorder's window manager gets every XDG folder inside its own throwaway home, not only HOME. Its settings service had kept writing to the desktop's config folder.
-		- Pinned by `cicd/tests/demo/run.py`, which runs the session with the caller's XDG folders pointed at empty ones and checks they stay empty.
-	- ✅ Code review 20260914 item 74 (F106, should-fix): When the publish step cannot reach the remote, uncommitted work is left in a git stash with no word of where it went.
-		- A failed pull puts the stash back before stopping. That came in with the 09-15 utility sync. What was missing was a test.
-		- Pinned by the publish test, which runs the real script against a remote that has been moved away, one that is reachable, and a pop that conflicts.
-	- ✅ Code review 20260914 item 75 (F107, should-fix): The startup lint and profiler checks can mark a pipeline run as seen while it is still being written, so its later warnings are never shown.
-		- The pipeline writes its run log and its flamegraph under a name both checks skip, and renames each once it is whole. A failed run's log is renamed too.
-		- Pinned by `cicd/tests/gates/run.bash`, which runs the pipeline's own logging block, looks while it is part way through, and looks again after.
-	- ✅ Code review 20260914 item 76 (F108, should-fix): `cicd/utility/gui-headless.bash` can report a display it did not start, and can stop a display or process that another run started.
-		- A number another X server holds is refused, and success means our own server holds the number and answers.
-		- A saved pid carries its start time, so a pid that now belongs to something else is not taken for the server.
-		- A server belongs to the script that started it. While that script runs, another run can neither stop it nor share it. Once it has exited, as after a start by hand, anyone may.
-		- Pinned by the install test, with a foreign server on the number, a pid file naming another process, and two runs on one number.
-	- ✅ Code review 20260914 item 77 (F109, should-fix): A blank publish message at the pipeline prompt commits an automatic message instead of opening the editor the prompt promises.
-		- Decided: keep the automatic message and fix the words. The message is asked for before the build so the run can finish unattended, and an editor at the end would stop it.
-		- A blank answer now takes the same message `--yes` does, and the plan and the prompt both show it.
-		- Pinned by the publish test, which checks the plan, the prompt and the message the publisher commits.
-	- ✅ Code review 20260914 item 78 (F110, should-fix): The publish script changes quote marks in a `--message`, and does nothing at all when the message contains `-v` or `-h`.
-		- The message is committed as given, and only an argument that is exactly `-h` or `-v` asks for help or the version.
-		- Pinned by the publish test, with a message holding both quote marks and both flags, and an inline `--msg=` one.
-	- ✅ Code review 20260914 item 79 (F111, should-fix): The wallpaper gallery and the README contact sheet still show nine wallpapers that were removed from the pack.
-		- Both are rendered again from the pack, 104 images. Every remaining record keeps its credit and licence unchanged.
-		- The pipeline now fails when the gallery names other images than the pack, or the sheet has the wrong number of rows. A change inside one row of the sheet is not caught, since the sheet can only be checked by its size.
-		- The live gallery follows once `main` has the new page, at the next release.
-	- ✅ Code review 20260914 item 80 (F112, should-fix): The git-aware bash prompt shows nothing in a repository without an `origin` remote, and never shows how far ahead or behind a branch is.
-		- Fixed in x9ps1-git first, then the copy taken again unchanged. The git part shows anywhere inside a working tree. It names the remote the branch tracks, then `origin`, then the first one, or none.
-		- The marks and the counts come from git's porcelain status, which reads the same in every language. The counts show as `↑2↓1` when the branch is not level.
-		- Pinned by `the_prompt_shows_any_repository_and_how_far_it_is_from_upstream`, and by a "Git part" section in x9ps1-git's own test. Both were red on the old prompt.
-	- ✅ Code review 20260914 item 81 (F113, should-fix): Each demo recording leaves background daemons running after it ends.
-		- The session runs in its own process group, and stopping it ends the whole group, so the bus and the settings service go with it.
-		- Pinned by the same test, which looks for anything from the session still running.
-	- ✅ Code review 20260914 item 82 (F114, should-fix): The demo recorder fails at start when `USER` is not set.
-		- It falls back to the account name, the way `gui-headless.bash` does, so both find the same folder.
-	- ✅ Code review 20260914 item 83 (F115, should-fix): The demo recorder uses a binary under `target/` even when `CARGO_TARGET_DIR` puts the build elsewhere.
-		- With no `SILK_BIN` it looks under `CARGO_TARGET_DIR`, and a relative one is taken from the repository, where cargo runs.
-	- ✅ Code review 20260914 item 85 (F117, blocking): A release can go out with binaries built from a source file that was never added to git, so the tagged source differs from what was built.
-		- An untracked file that is not ignored counts as dirty now, and the release names the files. An ignored one still leaves the tree clean.
-	- ✅ Code review 20260914 item 86 (F118, should-fix): The scroll regression check counts a full-screen app slide that never starts as skipped, so the pipeline still passes.
-		- A scene that scrolled and never slid fails now.
-	- ✅ Code review 20260914 item 87 (F119, should-fix): The scroll regression check for the nano wobble never runs its own scene, so it passes whether the wobble is fixed or not.
-		- It runs its own scene, and fails when no output was easing at the swap.
-	- ✅ Code review 20260914 item 88 (F120, should-fix): When the scroll regression check cannot run at all, the pipeline prints OK for it.
-		- A run that cannot start exits 3, and the pipeline says skipped for that display system.
-	- ✅ Code review 20260914 item 89 (F121, should-fix): The Windows interface checks test whichever build was last made on the test box, not the change being checked.
-		- The checks build the Windows binary here from the tree under test and send it, and the result names the commit. A box that is off is still stepped over.
-	- ✅ Code review 20260914 item 90 (F122, should-fix): The Windows interface checks close every SilkTerm on the test box, not only the one they started.
-		- A run stops only the processes it started, by process id and start time, with whatever those started in turn.
-		- Pinned by `cicd/tests/wingui/harness-test.bash`, which the pipeline runs. It covers both items and is red on the old harness.
-	- ✅ Code review 20260914 item 91 (F123, should-fix): A quick, scaled or wrong-size benchmark run rewrites the README speed table, though the tools say such runs never reach it.
-		- Only a full, unscaled run at the table's 160x42 grid reaches the table now, from either tool. A run that cannot says why.
-		- A quick or `--any-size` run from `update-showdown.py` writes no speed or size figure.
-		- The Ver cell keeps a prerelease tag, and drops only the build stamp.
-		- Pinned by `cicd/tests/showdown/run.py`, which runs in the pipeline.
-	- ✅ Code review 20260914 item 92 (F124, should-fix): The speed benchmark runs SilkTerm and the other terminals on the measuring user's own settings, and changes that user's settings file and PowerShell profile.
-		- Every terminal the speed rig starts gets a home folder, settings and data folders and a session bus that the rig makes and removes. The session bus is included because GNOME Terminal and xfce4-terminal keep their settings behind it.
-		- Published rows are left as they are. xfce4-terminal re-measured through the new launch reads 94.0 MB/s ASCII against 94.2 published.
-		- The plain row's settings now turn the minimap off as well. It had become a default after that file was written.
-		- The grid fitter takes a size only when two reports agree, and takes the middle of two near misses. A new account's default font made it hop either side of 160x42 forever.
-		- Pinned by `cicd/tests/showdown/run.py`, with a stand-in terminal that rewrites whatever settings file it is given. It fails on the old rigs.
-	- ✅ Code review 20260914 item 93 (F125, should-fix): The size benchmark measures the "SilkTerm +candy" row with its effects turned down.
-		- Both rigs start the +candy row on the shipped settings with the automatic profile pinned off, print the profile that was in force, and refuse the run if it moved.
-		- The size rig now reads 125.6 MiB for that row, against 167.7 published. The drop is from the memory work since, not from this change, and the published row is left alone.
-	- ✅ Code review 20260914 item 94 (F126, should-fix): The benchmark rigs and the wine launcher look for SilkTerm under `target/` even when `CARGO_TARGET_DIR` puts the build elsewhere.
-		- All three look under `CARGO_TARGET_DIR` when it is set, and a relative one is taken from the repository.
-		- The size rig stops with its own message when there is no build, before it starts a display. The speed rig does the same.
-		- Note: the wine launcher is a shared helper, and only this project's copy is fixed.
-		- Pinned by the same test.
-	- ✅ Code review 20260914 item 95 (F127, should-fix): README note 9 says every showdown figure came from a GPU rig, but the size and memory columns did not.
-		- Note 9 names both rigs now, and which rows came from a Windows machine. It also says a GPU terminal's window buffers count toward Mem when drawn in software.
-		- Pinned by the same test, which checks each named rig against its script.
-	- ✅ Code review 20260914 item 96 (F128, should-fix): The publish and installer tests still pass when the exclude list handling or the temp folder step they guard is changed.
-		- The publish test runs the publisher itself with a stand-in `rar` and checks what reaches it.
-		- The install test runs install.ps1's own temp folder step and checks that a folder already there is refused. The Windows pipeline runs it too.
-		- Both go red on the changes the review named.
-	- ✅ Code review 20260914 item 97 (F129, should-fix): README gives a wrong wallpaper count, a wrong size ratio against the Alacritty core, and an unreleased version for SilkTerm in the showdown table.
-		- 104 wallpapers, about five times the core, and 1.0.0-beta2 for the build both SilkTerm rows were measured on.
-		- The gallery check in the pipeline now also fails when README's count differs from the pack.
-	- Opened: 20260914-124200
 
 - ✅ Over ssh with X forwarding, a performance rating can be saved for the forwarded screen and replace the one the machine had.
 	- The forwarded display counts as local, so the Remote profile is not used. Code review 20260914 item 9 (F41).
@@ -556,6 +293,13 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ New text added to a screen with enough room to not have to scroll up to make new space, should never "smooth-scroll DOWN" from "beneath" the content above, last-line-first. (E.g. when pasting several lines of content at once.) It appear first-line-first. If it can all fit on the same screen without scrolling, maybe that means popping in fully-formed, all at once. That would be peferrable to oddly scrolling in from beneathe an invisible horizontal curtain, last-line-first. (Make this change gated to a global tunable in-code variable, so this behavior could be restored if desired. It does look kind of cool, it's just "wrong" from a "terminal experience" perspective.
+	- Cause: an app that makes room for new lines, like an input box growing as a paste arrives, moves the rows under them down into blank rows. That read as a scroll down, so it slid.
+	- Fixed: a scroll down that only pushes off rows that were blank to the bottom of the screen pops in instead. `SLIDE_DOWN_INTO_ROOM` in `pane.rs` brings the slide back.
+	- Pinned by: two new harness scenes, `paste` (repainted) and `pasteil` (insert-line), plus three unit tests. less and man scrolling back still ease.
+	- Opened: 20260919
+	- Closed: 20260919-125727
 
 - ✅ A performance test run while the monitor is asleep can save a rating that is too low.
 	- The display then shows one frame a second, so the first profile reads as hopeless and Standard terminal is saved, with no wallpaper from then on.
@@ -868,6 +612,268 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- A review round on top of the fix caught six more, all closed with it. A performance profile holding the first half of a shared line silenced the one revert arrow for the second half, which the profile does not govern and which had no other way back. The tab strip was riding the sideways scroll and could pan off the window edge; it has an offset of its own now and only moves to keep the current tab in view. The snap could pull the window back to a size the screen cannot hold, and it ignored the answer a platform gives when it resizes on the spot. The work area was read off the dialog's own monitor rather than the terminal's, which on a second monitor is the wrong screen. And on X11 the work area covers every monitor at once, so it is now a cap rather than an answer.
 	- Opened: 20260908-145000
 	- Closed: 20260909-093000
+
+- ✅ Code review 20260914 round 1 (review 20260914-124200).
+	- ✅ Code review 20260914 item 1 (F33, blocking): A settings file with one old-style setting at the left margin is converted wholesale, and its shell list is lost.
+		- The shell list carries whole and in order when a file converts.
+	- ✅ Code review 20260914 item 2 (F34, blocking): The retired `shell.default` is deleted without moving that shell to the top of the list when the file also has a line that cannot be read.
+		- It stays in the file until the move to the top of the list can be saved.
+	- ✅ Code review 20260914 item 3 (F35, should-fix): Several commented `## Default` lines in a new settings file name values that are not the defaults, among them transparency and blur behind.
+		- All seven name the real default now, so removing the `# ` changes nothing. Where the old text was a useful example it moved into the comment above the line.
+		- An existing config gets its commented lines refreshed, the way any other changed default is.
+		- Pinned by `every_commented_default_line_loads_as_the_default`, which uncomments each one in turn and compares the whole load. It reads the template, so a line added later is checked on its own.
+	- ✅ Code review 20260914 item 4 (F36, should-fix): A saved theme makes every launch report its settings as unread typos.
+		- Saved themes are skipped under the name they are really stored under. The check's own test had used the wrong name, which is why it passed, and now uses the right one.
+	- ✅ Code review 20260914 item 5 (F37, should-fix): A `$` or `%` in a shell's arguments is expanded as a variable, so `cmd /k prompt $P$G` loses its prompt.
+		- Decided: expand the program name only, and go on reading every spelling in a setting. A command's arguments belong to the program being started.
+		- Fixed: `command_argv` splits the command first, expands the first word, and hands every argument to the program as written.
+		- Fixed: `shell.startup_directory` defaults to the home variable in the platform's own spelling. Either spelling is read on either platform, so a config carried between machines still finds home.
+		- Pinned by: `a_config_command_expands_the_program_and_nothing_after_it`.
+		- Note: reading only the local platform's spelling was tried first and dropped the same day. It fixed the cross-platform cases, left the same-platform ones, and cost a config that could be carried.
+	- ✅ Code review 20260914 item 6 (F38, should-fix): A color override in the settings file is dropped for the session when the system switches between dark and light.
+		- A color that is not the theme's own stays when the system switches. That covers one from the command line or from Settings too, not only the file.
+	- ✅ Code review 20260914 item 7 (F39, should-fix): The wallpaper metadata fuzz test never reaches the metadata it is meant to check.
+		- It builds readable packets with bad values now, and fails if none of them read. A small tagged PNG and JPEG seed it.
+	- ✅ Code review 20260914 item 8 (F40, should-fix): On Windows, the shell scan can offer Python 3 when only the Microsoft Store shortcut is there.
+		- A Store alias whose program is App Installer's install prompt no longer counts as installed. A Store-installed Python's own alias, and winget, still do.
+		- Pinned by `a_store_install_prompt_is_not_a_shell` from any box, and `the_store_python_prompt_on_this_box_is_not_found` against the real alias on Windows. Red on b29w with the check taken out.
+	- ✅ Code review 20260914 item 11 (F43, blocking): A setting reverted to its default and then changed again before Apply is saved as the default, so the change is gone at the next launch.
+		- Apply puts back the default line only for rows still at their default. Checked for every row in Settings.
+	- ✅ Code review 20260914 item 12 (F44, should-fix): A program's own name, or the name of the folder it runs in, can put control characters into the window title and the tab.
+		- A tab label is held to the rule a window title is now. The shell name, the running program and the directory are all cleaned where they go in, so the shortened forms are measured against what is actually drawn.
+		- The title fuzz target feeds those three raw text rather than text a title parser had already cleaned, which is what let this through.
+	- ✅ Code review 20260914 item 13 (F45, should-fix): On Windows, the Size checkbox beside "Use system font" in Settings does not respond to a click.
+		- A pair row is gated one part at a time now, not on the row's key, which is only its first part. A grayed part still takes no click.
+		- The dialog reads the desktop's font report once when it opens and keeps it, rather than asking at each use. That report is the only thing that grays this row, so holding it is what lets the case be tested from a machine whose desktop does name a font.
+	- ✅ Code review 20260914 item 14 (F46, should-fix): Flyover help in the Settings and About windows appears at once, without the rest the tabs and menus wait for.
+		- Both windows wait the same as the tab strip and the menus do, and crossing to another control starts the wait over.
+		- A pointer left resting still gets its tip, with no further input: the dialog asks the loop to come back for it, the way a field edit part-way through its animation already does.
+		- Pinned by `a_dialog_tip_waits_for_the_pointer_to_rest`, which covers the decision the drawing asks for. Drawing itself needs a graphics device, so that half stays uncovered.
+	- ✅ Code review 20260914 item 15 (F47, should-fix): The Settings flyover's padding and border do not grow with the display scale.
+		- The padding, the gap, the edge, the rule and the wrap margin are all DIP now, converted once. A tip at twice the scale is the 1x tip doubled.
+		- Both windows lay their tip out through one function in `tip.rs`, so neither can drift from the other again. The box was the last thing about a tip the two did not share.
+		- Pinned by `a_tip_at_twice_the_scale_is_the_1x_tip_doubled`.
+	- ✅ Code review 20260914 item 16 (F48, should-fix): Renaming a saved theme to its own name, or changing only its capitals, is refused as a name already taken.
+		- A theme is no longer in its own way. Renaming to the same name closes the box and changes nothing, and a change of case alone goes through, which was the only way to make one.
+		- Another saved theme's name is still refused, so two themes cannot merge into one.
+	- ✅ Code review 20260914 item 18 (F50, blocking): A menu left open after its pane's shell ended can close a different tab, or the whole window, with its programs still running.
+		- Close pane acts only on the pane the menu was opened for. With that pane gone it does nothing, and the menu closes with the pane rather than standing open over it.
+		- The cascade of pane, then its tab, then the window is one function now, read by both the menu and a shell that ended.
+	- ✅ Code review 20260914 item 19 (F51, blocking): A window taller or wider than the graphics card can draw crashes at launch, and `window.rows: 1000` in the settings file is enough on some machines.
+		- The window is held to the largest texture the device will make, since the scene is drawn into one at the window's size.
+		- `--rows` and `--columns` are held to the ceiling the config file's own are, so the two agree. The Settings ranges still fit well inside it.
+	- ✅ Code review 20260914 item 20 (F52, blocking): `--font-size nan` or `--wallpaper-opacity nan` replaces that setting in the settings file, so the saved value is lost.
+		- A number on the command line that is not finite is refused with a message. Every other one is held to the range of the setting it stands for, the file's range.
+		- A save no longer reads the same nan on both sides as a change, which is what wrote it over the value in the file.
+	- ✅ Code review 20260914 item 21 (F53, should-fix): A launch with `--fullscreen` stores the screen size as the size to open at next time.
+		- A fullscreen or maximized window is not a size to come back to, so neither is written down. A resize by hand still is, and design.md names the decision.
+	- ✅ Code review 20260914 item 22 (F54, should-fix): A window asked for 24 rows gives the shell 22 while the tab strip shows for a single tab.
+		- The strip counts against the window's height everywhere a row count becomes pixels: at launch, on a Settings Apply, and where the live size is written down.
+	- ✅ Code review 20260914 item 23 (F55, should-fix): Ctrl+Shift+N opens the new window on the default settings file, and not always in the current pane's folder.
+		- A new window gets the settings file its parent was started with, and starts in the pane's folder even when that is home or a root.
+		- Pinned by `a_new_window_keeps_the_settings_file_and_the_panes_directory`.
+	- ✅ Code review 20260914 item 24 (F56, should-fix): `silkterm --wallpaper` reports success and shows nothing while the wallpaper is switched off.
+		- Naming a wallpaper turns it on for the session, the same for both flags. A performance profile that turns it off still wins for both, and design.md says so.
+		- Pinned by `naming_a_wallpaper_turns_it_on_unless_the_profile_says_off`.
+	- ✅ Code review 20260914 item 25 (F57, should-fix): Reload config drops the font and colors given on the command line at launch.
+		- A reload puts the launch options back on over the file. A wallpaper set while running still beats the one given at launch.
+		- Pinned by `a_reload_keeps_the_launch_options_over_the_file`.
+	- ✅ Code review 20260914 item 26 (F58, should-fix): `--wallpaper-file` or `--wallpaper` with no value shows the built-in picture, or nothing when there is a rotation folder, where the help says none.
+		- Decided: a bare flag means no picture, as `--help` and the Done entry already said. design.md names it as the one exception to the built-in standing in.
+		- Pinned by `a_cleared_wallpaper_shows_nothing_with_or_without_a_folder`.
+	- ✅ Code review 20260914 item 27 (F59, should-fix): A build whose binary changed outside the source folder, such as after a dependency update, keeps the previous build number.
+		- The build number is worked out again when the lock file, either manifest or an included file outside `src` changes.
+		- Pinned by `the_build_inputs_cover_every_included_file_and_the_lock`, which fails on any included file nothing watches.
+	- ✅ Code review 20260914 item 28 (F60, should-fix): A window that is killed, or whose first shell cannot start, leaves its control socket file behind.
+		- The file is removed on an exit call, SIGTERM, SIGHUP and a panic. A SIGKILL still leaves it, and the next window with that process id clears it.
+		- Pinned by `the_socket_file_goes_away_however_the_process_ends`, which ends a child process each of those ways.
+	- ✅ Code review 20260914 item 31 (F63, blocking): Adding the shell integration block replaces a linked PowerShell profile with a plain copy, makes a private profile readable by others, and can write through a stray link beside it.
+		- The profile goes through the same writer as the settings file, so a link and the file's mode are kept, and no link at a temp name is written through. A read-only profile is left alone.
+		- The backup is made fresh at the profile's own mode and never through a link.
+		- Pinned by `a_profile_write_keeps_its_link_and_mode_and_follows_no_planted_link`.
+	- ✅ Code review 20260914 item 32 (F64, blocking): The shell integration block breaks a directory-change hook already set in PowerShell, so every directory change prints an error, and a profile that loads the block twice breaks the prompt.
+		- An earlier hook is called the way PowerShell holds it, and a second load keeps the handler or prompt from before the first.
+		- Pinned by `the_block_keeps_an_earlier_hook_and_survives_loading_twice`, which runs the block through PowerShell on both the 7 and 5.1 paths.
+	- ✅ Code review 20260914 item 33 (F65, should-fix): The git-aware bash prompt replaces a prompt set in `.bashrc`, where it should give way to it.
+		- Decided: the prompt keeps replacing a `.bashrc` prompt, since Debian's own files set one. It is off by default now, and the Settings row reads "Use git-aware Bash prompt", with help naming x9ps1-git.
+		- The docs that said the rc file wins are corrected. Pinned by `the_bash_prompt_is_off_until_asked_for`.
+	- ✅ Code review 20260914 item 34 (F66, should-fix): Deleting the shell integration block does not keep it out when an earlier build added it or a later one updated it.
+		- A block found already in a profile is noted, so deleting it sticks.
+		- Pinned by `a_block_already_there_is_noted_so_deleting_it_sticks`.
+	- ✅ Code review 20260914 item 35 (F67, should-fix): A host color added inside the shell integration block, as its own comment suggests, is deleted at the next launch.
+		- The comment now says to set `$SilkTermHostColor` above the block, where a refresh leaves it, and the block reads that first.
+		- Pinned by `a_host_color_is_set_where_a_refresh_leaves_it` and the PowerShell run above.
+	- ✅ Code review 20260914 item 36 (F68, should-fix): On Windows, a PowerShell profile path with a character outside ASCII is misread, so the block goes into a new file PowerShell never loads.
+		- PowerShell now sends the profile path as hex of its UTF-8 bytes, which no code page changes. An answer that is not that hex writes nothing.
+		- Pinned by `a_profile_path_is_read_from_its_hex_and_nothing_else` and `a_powershell_names_a_profile_outside_ascii`, which asks each PowerShell installed. Passes on b29w.
+	- ✅ Code review 20260914 item 37 (F69, should-fix): After a program that reports its directory exits, new tabs and splits start in its last directory instead of where the pane's shell is.
+		- A reported directory is kept with the process group that sent it, and dropped once that group is gone. Unix only, since Windows has no foreground group to ask.
+		- Pinned by `a_report_is_dropped_once_the_program_that_sent_it_exits`.
+	- ✅ Code review 20260914 item 40 (F72, blocking): A wallpaper blur of a tiny fraction such as `1e-40`, in the settings file or in an image's own tags, makes SilkTerm quit with every shell in it.
+		- A blur too small to be a normal number is no blur, whether it comes from the file or a tag.
+		- Pinned by `a_subnormal_blur_is_no_blur`, which runs both through a real tagged PNG.
+	- ✅ Code review 20260914 item 41 (F73, blocking): A small wallpaper file with very large dimensions takes gigabytes of memory while it loads, enough to crash SilkTerm on a machine with less to spare.
+		- An image is cut to 4096 in its own pixel format, before the RGBA copy and with no float copy at full size. What is left is the decode, which the image library already holds to 512 MiB.
+		- Pinned by `a_huge_image_costs_its_decode_and_no_more`. An 8000 by 8000 grayscale file grew the process by 869 MiB before and 141 MiB after, and the test fails over 200.
+	- ✅ Code review 20260914 item 42 (F74, should-fix): With a rotation interval shorter than an image takes to prepare, the wallpaper never changes and the abandoned loads keep running, several gigabytes at once.
+		- A tick that finds a request still working waits for it, and the result serves the tick. A superseded worker stops between stages instead of blurring a photo nobody will see.
+		- Pinned by `rotation_keeps_going_when_preparing_outlasts_the_interval` and `a_superseded_request_stops_before_its_next_stage`. Four 4096 by 4096 photos on a two-second interval now change every eight seconds with one worker at a time.
+	- ✅ Code review 20260914 item 43 (F75, should-fix): In the dark Matrix and Retro Amber themes the character under the cursor is barely readable, because the cursor is the text's own color.
+		- Text on the cursor plate now clears the minimum contrast floor in every built-in theme and mode, pinned by `text_on_the_cursor_plate_clears_the_floor`. Both dark cursors are a darker shade of their own hue. The two light modes needed a darker foreground as well, since a paler one left no room for a cursor that both shows and carries the text. SilkTerm dark's cursor moved a shade for the same rule, and the outgoing default is superseded.
+	- ✅ Code review 20260914 item 44 (F76, should-fix): On Xfce, the menus and "Use system font" can follow GNOME's font settings instead of the desktop's own.
+		- The desktop's own store is asked first, xfconf on Xfce and gsettings elsewhere, for both the interface font and the monospace one. Pinned by `the_desktop_decides_which_font_store_answers_first`. KDE, MATE and Cinnamon are still untested.
+	- ✅ Code review 20260914 item 47 (F79, blocking): With the release signing key filled in, the PowerShell installer refuses every correctly signed release.
+		- On Linux and macOS the checksums file's own bytes now go to ssh-keygen down a pipe. Windows keeps the file handle it already had, since its OpenSSH never sees the end of a pipe that was closed before it started up. The release test now runs each installer's own verify function against a throwaway key, install.ps1 through `verify-sign.ps1`, which the Windows pipeline runs as well. Seen passing on the Linux box and on vm925w under PowerShell 7 and 5.1.
+	- ✅ Code review 20260914 item 48 (F80, blocking): The pre-commit hook commits every change in a partly staged Rust file, the unstaged ones included.
+		- The hook formats the staged content and writes that back to the index, so a file with half its changes staged commits half. The working copy is formatted too, but only where it has nothing unstaged to lose.
+		- The staged copy is formatted outside the tree, so the hook names `rustfmt.toml` rather than leaving rustfmt to hunt for it.
+		- Pinned by: `cicd/tests/hooks/run.bash`, which drives both hooks in a scratch repository and runs in the pipeline.
+	- ✅ Code review 20260914 item 49 (F81, blocking): A commit made while the pipeline builds lets a release publish binaries that were not built from the tagged source.
+		- The note is written from the source read before the first build, not from the tree as it stands when the note is written. A tree that moved, or was dirty at either end, is refused and says which.
+		- A long run cross-builds after the native build, so one release could hold a binary from each side of the commit.
+	- ✅ Code review 20260914 item 50 (F82, should-fix): The bash installer leaves a GitHub token behind in a temporary file.
+		- The token file is made once, before the first API call, and removed on the way out however the run ends. It was being made inside a command substitution, so nothing it set reached the cleanup.
+		- Pinned by an installer run with a token, against a stand-in release, that looks in its own temp folder afterwards.
+	- ✅ Code review 20260914 item 51 (F83, should-fix): The pre-push gate tests the working tree, not the commits being pushed.
+		- The gate runs in a throwaway worktree checked out at the commit being pushed, so an uncommitted fix can no longer carry a push to main. Cargo writes where it always does, so only this crate is rebuilt there.
+		- Pinned by: the same hooks test, with a stub in place of the pipeline - what is being checked is which source the gate is handed, not what it does with it.
+	- ✅ Code review 20260914 item 52 (F84, should-fix): A release can be cut from a partial set of artifacts, such as the one a `--quick` run leaves.
+		- The note lists the artifact files the configuration builds, whatever the run actually did, and the release refuses a set missing any of them by name.
+		- Checked against the published beta3: the ten names the configuration gives are exactly what that release carries.
+	- ✅ Code review 20260914 item 53 (F85, should-fix): With an absolute `CARGO_TARGET_DIR`, the pipeline makes no Windows installer and the Windows pipeline cannot find its builds.
+		- The packaging step takes the binary path as stage 5 recorded it, and only hangs it off the repository when it is relative. The Windows pipeline reads `CARGO_TARGET_DIR` by the same rule instead of spelling `target` itself.
+		- Pinned by a new packaging test that runs the installer step against the real template and makensis, once with each shape of target directory, and checks the Windows pipeline's own resolver.
+	- ✅ Code review 20260914 item 54 (F86, should-fix): The menu launcher both one-line installers write does not start when the install path holds a space.
+		- `Exec=` is quoted and escaped for both rule sets that read it. Both installers share one case list, so they cannot drift apart.
+		- Left alone: a path holding a `%`. The spec says to double it, GLib refuses an entry that does, and there is nothing else to write.
+		- Pinned by an install into a home holding a space, with the entry validated and launched.
+	- ✅ Code review 20260914 item 55 (F87, should-fix): The dogfood launcher changes arguments that hold quotes, and drops empty ones, on the way to the terminal.
+		- Arguments are joined the way the Windows command line is read back, which is also how .NET splits one elsewhere. The elevated relaunch uses the same join.
+		- Pinned by launching a stand-in build that records what it was handed, with the four arguments from the report.
+	- ✅ Code review 20260914 item 56 (F88, should-fix): The dogfood launcher reads the whole build again at every launch instead of trusting its date.
+		- The held stamp comes out of a file name, so the comparison is at whole seconds now. A source mtime carrying a fraction always read as newer.
+		- Pinned by two launches over a source whose mtime has a fraction.
+	- ✅ Code review 20260914 item 57 (F89, should-fix): `utility/rename.bash` leaves a tree whose Windows build fails.
+		- It rewrites every tracked text file that mentions either name, and renames the files and directories carrying the identifier, among them the resource template `build.rs` reads by name. Binaries and `Cargo.lock` are left alone.
+		- Checked once by hand: a renamed clone passes `cargo check --release --target x86_64-pc-windows-gnu`.
+		- Pinned by a test that renames a clone and looks for a path a build reads that is not there, and for the old name left anywhere.
+	- ✅ Code review 20260914 item 60 (F92, blocking): The fix for the Windows freeze on a long run of output has no test, so an engine update could lose it without anything failing.
+		- The engine fork has a test that drains its pipe the way the engine's reader does and waits for word of the next fill. SilkTerm's Windows run has one too, through a real pane under a flood, so an engine update that drops the fix fails here as well.
+		- Both are red on b29w with the fix taken out, at the second round.
+	- ✅ Code review 20260914 item 61 (F93, should-fix): Once the scrollback is full, output above a pinned status line, such as apt's progress bar, stops easing.
+		- The engine now counts every line it sends into the scrollback: a whole-screen scroll, a scroll of a region that starts at the top row, and a screen clear. It counted only the first, and once the scrollback is full that count is all there is.
+		- A clear eases the same way at a full scrollback as before it.
+		- Pinned by a test of the apt stream at a full scrollback, one of a clear, and an engine test that runs random scrolls through a terminal with a full scrollback beside one that never fills. The scroll check has a new scene that fills the scrollback first, and it fails on the build from before.
+	- ✅ Code review 20260914 item 62 (F94, should-fix): The terminal engine handles output in full-screen programs such as tmux about a third slower, because it copies every row that scrolls away.
+		- The engine takes the row that is leaving and gives the grid a spare to reset in its place, so nothing is copied. Keeping rows now costs about 5% of the parse on the alt screen, against about a third.
+		- Pinned by a timing test that holds the cost under 10%, and an engine test that the kept row is the very row that left. The rows kept are the same as before, checked over random scrolls.
+	- ✅ Code review 20260914 item 64 (F96, blocking): A one-column pane crashes on a wide character such as CJK or an emoji, and narrowing a window past one column with wide text on screen runs the memory away and hangs.
+		- A pane is held to at least two columns, the engine's own documented least, at the one place SilkTerm builds or resizes its grid.
+		- Pinned by `a_pane_too_narrow_for_a_wide_character_still_takes_one`, watched failing with the old floor. A window squeezed to 1 px wide with wide text on screen stayed up, with memory flat.
+	- ✅ Code review 20260914 item 65 (F97, blocking): A program printing a long run of combining marks grows SilkTerm's memory without limit, since they pile onto one cell that the scrollback cap never trims.
+		- The engine keeps at most nine per cell now. Upstream's fix is carried on the fork's 0.26.0 branch until a release has it.
+	- ✅ Code review 20260914 item 66 (F98, blocking): On Windows a shell whose path holds a space can be tricked into running a different program, and an inherited directory with a space reaches the shell split in two.
+		- SilkTerm hands the engine its arguments to be quoted, and the engine fork quotes a program path with a space as well.
+		- Pinned by an engine test that starts a program under a spaced path with a decoy beside it, and one on the command line itself. The decoy ran on b29w with the quoting taken out.
+	- ✅ Code review 20260914 item 67 (F99, should-fix): On Linux a program that closes its terminal but keeps running spins a core at 100% until it exits.
+		- Fixed in the engine fork: once the terminal hangs up, the reader leaves it out of the poll for a tenth of a second at a time. What was written just before the hang-up is still read first.
+		- The second part matters for a program that opens its terminal again later. Before, the spin caught that output by luck, and a plain pause lost it.
+		- Pinned by `a_hung_up_terminal_does_not_spin_the_reader`. It used about 1930 ms of CPU in 2 s before and about 1 ms after. It also checks the reopened output and that the pane still ends at once.
+	- ✅ Code review 20260914 item 68 (F100, should-fix): Double-clicking an unmatched bracket scans the whole scrollback under the terminal lock, so it hitches on a large history.
+		- SilkTerm looks for the partner itself now, at most 200 rows away, once at the click. A bracket with no partner in reach is selected alone. A bracket to its partner across lines still works, and so does a word.
+		- Pinned by `a_bracket_looks_for_its_partner_only_so_far`, watched failing with the reach removed.
+	- ✅ Code review 20260914 item 69 (F101, should-fix): Closing a pane whose program ignores the hang-up signal freezes the whole window until that program ends.
+		- A close waits a quarter second for the pane to finish, then goes on and lets it finish on its own. The program is not killed, since a `nohup` job ignores the signal on purpose.
+		- Pinned by `closing_a_pane_does_not_wait_on_a_shell_that_stays`, watched failing with the old wait.
+	- ✅ Code review 20260914 item 70 (F102, should-fix): On Windows each pane leaks a couple of process handles that are never freed while SilkTerm runs.
+		- It was four per pane: the child's process and thread, and SilkTerm's own two ends of the pseudo console's pipes. All four are closed now, in the engine fork.
+		- Pinned by `a_closed_pane_gives_back_its_handles`, which opens and closes 50 panes. The leak put the count up by 200 on b29w.
+	- ✅ Code review 20260914 item 71 (F103, should-fix): A program can force unbounded memory by setting a huge window title and pushing it onto the title stack.
+		- A title is cut to 2 KiB, in the engine fork and again where SilkTerm passes it to the window. The stack keeps 4096 entries, so the most it can hold is 8 MiB.
+		- Pinned by `a_program_title_is_held_to_a_size`, which sets a 1 MiB title, pushes it 64 times and pops it back. It fails against the engine without the cap and without SilkTerm's.
+		- Left alone: the parser keeps room for the longest escape sequence a pane has sent. It is one buffer per pane, reused rather than added to, and a fix would mean patching the parser crate as well.
+	- ✅ Code review 20260914 item 72 (F104, blocking): Opening a bash pane in a cloned repository can run a command hidden in its branch name, through the git-aware prompt.
+		- Branch and remote names are escaped before they go into the prompt. Fixed in x9ps1-git first and the copy taken again, with a test on each side.
+	- ✅ Code review 20260914 item 73 (F105, blocking): Recording the demo can replace the desktop's own window manager theme, title font and button layout.
+		- The recorder's window manager gets every XDG folder inside its own throwaway home, not only HOME. Its settings service had kept writing to the desktop's config folder.
+		- Pinned by `cicd/tests/demo/run.py`, which runs the session with the caller's XDG folders pointed at empty ones and checks they stay empty.
+	- ✅ Code review 20260914 item 74 (F106, should-fix): When the publish step cannot reach the remote, uncommitted work is left in a git stash with no word of where it went.
+		- A failed pull puts the stash back before stopping. That came in with the 09-15 utility sync. What was missing was a test.
+		- Pinned by the publish test, which runs the real script against a remote that has been moved away, one that is reachable, and a pop that conflicts.
+	- ✅ Code review 20260914 item 75 (F107, should-fix): The startup lint and profiler checks can mark a pipeline run as seen while it is still being written, so its later warnings are never shown.
+		- The pipeline writes its run log and its flamegraph under a name both checks skip, and renames each once it is whole. A failed run's log is renamed too.
+		- Pinned by `cicd/tests/gates/run.bash`, which runs the pipeline's own logging block, looks while it is part way through, and looks again after.
+	- ✅ Code review 20260914 item 76 (F108, should-fix): `cicd/utility/gui-headless.bash` can report a display it did not start, and can stop a display or process that another run started.
+		- A number another X server holds is refused, and success means our own server holds the number and answers.
+		- A saved pid carries its start time, so a pid that now belongs to something else is not taken for the server.
+		- A server belongs to the script that started it. While that script runs, another run can neither stop it nor share it. Once it has exited, as after a start by hand, anyone may.
+		- Pinned by the install test, with a foreign server on the number, a pid file naming another process, and two runs on one number.
+	- ✅ Code review 20260914 item 77 (F109, should-fix): A blank publish message at the pipeline prompt commits an automatic message instead of opening the editor the prompt promises.
+		- Decided: keep the automatic message and fix the words. The message is asked for before the build so the run can finish unattended, and an editor at the end would stop it.
+		- A blank answer now takes the same message `--yes` does, and the plan and the prompt both show it.
+		- Pinned by the publish test, which checks the plan, the prompt and the message the publisher commits.
+	- ✅ Code review 20260914 item 78 (F110, should-fix): The publish script changes quote marks in a `--message`, and does nothing at all when the message contains `-v` or `-h`.
+		- The message is committed as given, and only an argument that is exactly `-h` or `-v` asks for help or the version.
+		- Pinned by the publish test, with a message holding both quote marks and both flags, and an inline `--msg=` one.
+	- ✅ Code review 20260914 item 79 (F111, should-fix): The wallpaper gallery and the README contact sheet still show nine wallpapers that were removed from the pack.
+		- Both are rendered again from the pack, 104 images. Every remaining record keeps its credit and licence unchanged.
+		- The pipeline now fails when the gallery names other images than the pack, or the sheet has the wrong number of rows. A change inside one row of the sheet is not caught, since the sheet can only be checked by its size.
+		- The live gallery follows once `main` has the new page, at the next release.
+	- ✅ Code review 20260914 item 80 (F112, should-fix): The git-aware bash prompt shows nothing in a repository without an `origin` remote, and never shows how far ahead or behind a branch is.
+		- Fixed in x9ps1-git first, then the copy taken again unchanged. The git part shows anywhere inside a working tree. It names the remote the branch tracks, then `origin`, then the first one, or none.
+		- The marks and the counts come from git's porcelain status, which reads the same in every language. The counts show as `↑2↓1` when the branch is not level.
+		- Pinned by `the_prompt_shows_any_repository_and_how_far_it_is_from_upstream`, and by a "Git part" section in x9ps1-git's own test. Both were red on the old prompt.
+	- ✅ Code review 20260914 item 81 (F113, should-fix): Each demo recording leaves background daemons running after it ends.
+		- The session runs in its own process group, and stopping it ends the whole group, so the bus and the settings service go with it.
+		- Pinned by the same test, which looks for anything from the session still running.
+	- ✅ Code review 20260914 item 82 (F114, should-fix): The demo recorder fails at start when `USER` is not set.
+		- It falls back to the account name, the way `gui-headless.bash` does, so both find the same folder.
+	- ✅ Code review 20260914 item 83 (F115, should-fix): The demo recorder uses a binary under `target/` even when `CARGO_TARGET_DIR` puts the build elsewhere.
+		- With no `SILK_BIN` it looks under `CARGO_TARGET_DIR`, and a relative one is taken from the repository, where cargo runs.
+	- ✅ Code review 20260914 item 85 (F117, blocking): A release can go out with binaries built from a source file that was never added to git, so the tagged source differs from what was built.
+		- An untracked file that is not ignored counts as dirty now, and the release names the files. An ignored one still leaves the tree clean.
+	- ✅ Code review 20260914 item 86 (F118, should-fix): The scroll regression check counts a full-screen app slide that never starts as skipped, so the pipeline still passes.
+		- A scene that scrolled and never slid fails now.
+	- ✅ Code review 20260914 item 87 (F119, should-fix): The scroll regression check for the nano wobble never runs its own scene, so it passes whether the wobble is fixed or not.
+		- It runs its own scene, and fails when no output was easing at the swap.
+	- ✅ Code review 20260914 item 88 (F120, should-fix): When the scroll regression check cannot run at all, the pipeline prints OK for it.
+		- A run that cannot start exits 3, and the pipeline says skipped for that display system.
+	- ✅ Code review 20260914 item 89 (F121, should-fix): The Windows interface checks test whichever build was last made on the test box, not the change being checked.
+		- The checks build the Windows binary here from the tree under test and send it, and the result names the commit. A box that is off is still stepped over.
+	- ✅ Code review 20260914 item 90 (F122, should-fix): The Windows interface checks close every SilkTerm on the test box, not only the one they started.
+		- A run stops only the processes it started, by process id and start time, with whatever those started in turn.
+		- Pinned by `cicd/tests/wingui/harness-test.bash`, which the pipeline runs. It covers both items and is red on the old harness.
+	- ✅ Code review 20260914 item 91 (F123, should-fix): A quick, scaled or wrong-size benchmark run rewrites the README speed table, though the tools say such runs never reach it.
+		- Only a full, unscaled run at the table's 160x42 grid reaches the table now, from either tool. A run that cannot says why.
+		- A quick or `--any-size` run from `update-showdown.py` writes no speed or size figure.
+		- The Ver cell keeps a prerelease tag, and drops only the build stamp.
+		- Pinned by `cicd/tests/showdown/run.py`, which runs in the pipeline.
+	- ✅ Code review 20260914 item 92 (F124, should-fix): The speed benchmark runs SilkTerm and the other terminals on the measuring user's own settings, and changes that user's settings file and PowerShell profile.
+		- Every terminal the speed rig starts gets a home folder, settings and data folders and a session bus that the rig makes and removes. The session bus is included because GNOME Terminal and xfce4-terminal keep their settings behind it.
+		- Published rows are left as they are. xfce4-terminal re-measured through the new launch reads 94.0 MB/s ASCII against 94.2 published.
+		- The plain row's settings now turn the minimap off as well. It had become a default after that file was written.
+		- The grid fitter takes a size only when two reports agree, and takes the middle of two near misses. A new account's default font made it hop either side of 160x42 forever.
+		- Pinned by `cicd/tests/showdown/run.py`, with a stand-in terminal that rewrites whatever settings file it is given. It fails on the old rigs.
+	- ✅ Code review 20260914 item 93 (F125, should-fix): The size benchmark measures the "SilkTerm +candy" row with its effects turned down.
+		- Both rigs start the +candy row on the shipped settings with the automatic profile pinned off, print the profile that was in force, and refuse the run if it moved.
+		- The size rig now reads 125.6 MiB for that row, against 167.7 published. The drop is from the memory work since, not from this change, and the published row is left alone.
+	- ✅ Code review 20260914 item 94 (F126, should-fix): The benchmark rigs and the wine launcher look for SilkTerm under `target/` even when `CARGO_TARGET_DIR` puts the build elsewhere.
+		- All three look under `CARGO_TARGET_DIR` when it is set, and a relative one is taken from the repository.
+		- The size rig stops with its own message when there is no build, before it starts a display. The speed rig does the same.
+		- Note: the wine launcher is a shared helper, and only this project's copy is fixed.
+		- Pinned by the same test.
+	- ✅ Code review 20260914 item 95 (F127, should-fix): README note 9 says every showdown figure came from a GPU rig, but the size and memory columns did not.
+		- Note 9 names both rigs now, and which rows came from a Windows machine. It also says a GPU terminal's window buffers count toward Mem when drawn in software.
+		- Pinned by the same test, which checks each named rig against its script.
+	- ✅ Code review 20260914 item 96 (F128, should-fix): The publish and installer tests still pass when the exclude list handling or the temp folder step they guard is changed.
+		- The publish test runs the publisher itself with a stand-in `rar` and checks what reaches it.
+		- The install test runs install.ps1's own temp folder step and checks that a folder already there is refused. The Windows pipeline runs it too.
+		- Both go red on the changes the review named.
+	- ✅ Code review 20260914 item 97 (F129, should-fix): README gives a wrong wallpaper count, a wrong size ratio against the Alacritty core, and an unreleased version for SilkTerm in the showdown table.
+		- 104 wallpapers, about five times the core, and 1.0.0-beta2 for the build both SilkTerm rows were measured on.
+		- The gallery check in the pipeline now also fails when README's count differs from the pack.
+	- Opened: 20260914-124200
+	- Closed: 20260919-125727
 
 - ✅ Code review 20260908. Twenty-five defects, full-codebase pass. Each is fixed and each left a test behind that fails without the fix.
 	- ✅ 1. Wallpaper rotation spawned a decode thread on every pass through the event loop and never recovered. The timer moves off the current moment when a tick fires, rather than waiting for an answer that could never be current.

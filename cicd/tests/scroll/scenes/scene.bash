@@ -13,6 +13,11 @@
 ##            one new transcript line per step (muffer's shape)
 ##   aptbar - apt's progress bar: a region over all but the last row on the normal
 ##            screen, the bar redrawn on that row, with the scrollback already full
+##   paste  - an input box on a half-empty normal screen growing a line a step and
+##            then shrinking back, repainted, with a footer under it (muffer's
+##            input box taking a paste)
+##   pasteil - the same box grown with insert-line and shrunk with delete-line, so
+##            the engine records each step as a region scroll
 ## The repaint shapes use explicit cursor positioning (CUP) and never a newline, so
 ## nothing scrolls the real grid - only the drawn content shifts, exactly the way
 ## curses/nano repaint. The tmux shape is the other kind: it sets DECSTBM and lets
@@ -56,6 +61,46 @@ if [ "$shape" = aptbar ]; then
 	while :; do
 		printf '\n  unpacking %06d the quick brown fox\0337\033[%d;1H\033[7m  progress %-6d\033[0m\033[K\0338' "$n" "$rows" "$n"
 		n=$((n + 1))
+		sleep "$step"
+	done
+fi
+
+if [ "$shape" = paste ] || [ "$shape" = pasteil ]; then
+	printf '\033[2J\033[H  transcript one\n  transcript two\n  transcript three\n'
+	sleep "$settle"
+	sz=$(stty size 2>/dev/null) || sz=""
+	rows=${sz% *}
+	case "$rows" in ''|*[!0-9]*) rows=30 ;; esac
+	[ "$rows" -ge 16 ] || rows=30
+	## transcript 1-3, border 4, input 5.., border, two footer rows, and at
+	## least two blank rows left under it
+	hmax=$((rows - 9))
+	h=0
+	grow=1
+	while :; do
+		if [ "$grow" = 1 ] && [ "$h" -ge "$hmax" ]; then grow=0; fi
+		if [ "$grow" = 0 ] && [ "$h" -le 1 ]; then grow=1; fi
+		if [ "$shape" = pasteil ] && [ "$h" -gt 0 ]; then
+			if [ "$grow" = 1 ]; then
+				## push the border and the footer down a row, then write the new line
+				h=$((h + 1))
+				printf '\033[%d;1H\033[L| > pasted line %-6d |\033[K' "$((4 + h))" "$h"
+			else
+				printf '\033[%d;1H\033[M' "$((4 + h))"
+				h=$((h - 1))
+			fi
+		else
+			if [ "$grow" = 1 ]; then h=$((h + 1)); else h=$((h - 1)); fi
+			printf '\033[4;1H+----------------------+\033[K'
+			r=1
+			while [ "$r" -le "$h" ]; do
+				printf '\033[%d;1H| > pasted line %-6d |\033[K' "$((4 + r))" "$r"
+				r=$((r + 1))
+			done
+			printf '\033[%d;1H+----------------------+\033[K' "$((5 + h))"
+			printf '\033[%d;1H  ? for shortcuts\033[K' "$((6 + h))"
+			printf '\033[%d;1H  footer status line\033[K\033[J' "$((7 + h))"
+		fi
 		sleep "$step"
 	done
 fi
