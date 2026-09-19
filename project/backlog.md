@@ -83,6 +83,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Pinned by: `a_return_to_this_console_is_healed_again_once_settled`, watched failing with the second pass pushed out. On the rig, a faked switch and return released and rebuilt the device twice and the window drew normally after.
 	- To confirm: a real switch to a text console and back on the reference box. `~/silk_vramdbg.txt` is full, so move it aside first; with `~/silk_vramdbg.on` in place a return then logs both heals.
 	- Opened: 20260917
+	- UAT 20260919-143007: This appears to be fixed. Upon return, the wallpaper blanks and comes back, and the window title says "resources restored".
 
 - 🔬 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
 	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even muffer's autocopy doesn't work.)
