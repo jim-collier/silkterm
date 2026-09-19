@@ -135,11 +135,27 @@ fn line_px(track_h: f32, total: usize, scale: f32) -> f32 {
 	(track_h / total as f32).min(MAX_LINE_PX * scale)
 }
 
+// The marker's height and how far down the track it can travel, in px. The
+// image draws `live` lines, but the marker stands for the viewport inside the
+// whole buffer, so it is measured against `total`. That is what keeps it
+// inside the track when the two differ, and what lets the position and its
+// inverse below be exact: a floor on the height eats into the travel, and
+// both of them read the travel from here.
+fn marker(track_h: f32, total: usize, live: usize, rows: usize, scale: f32) -> (f32, f32) {
+	let used = line_px(track_h, live, scale) * live as f32;
+	if total == 0 {
+		return (0.0, 0.0);
+	}
+	let h = (rows as f32 * used / total as f32)
+		.max(config::dip(MIN_HANDLE, scale))
+		.min(used);
+	(h, (used - h).max(0.0))
+}
+
 // Where the viewport marker sits, as (y offset down the track, height). `pos`
 // is the scroll model's lines-back-from-the-bottom, the same number the
-// scrollbar rides. `total` is the whole buffer, which is what decides where
-// the viewport sits in it; `live` is the part of it the map draws, which is
-// what decides how tall a line is and where the track stops.
+// scrollbar rides, so `pos` at its largest puts the marker at the top and 0
+// puts its bottom on the last line the map draws.
 fn handle_span(
 	track_h: f32,
 	total: usize,
@@ -148,26 +164,25 @@ fn handle_span(
 	pos: f32,
 	scale: f32,
 ) -> (f32, f32) {
-	let lh = line_px(track_h, live, scale);
-	let used = lh * live as f32;
-	let top = (total.saturating_sub(rows) as f32 - pos).max(0.0);
-	// The viewport's own bottom, held to where the drawn buffer ends, so the
-	// marker does not hang below the last line with output in it.
-	let bot = (total as f32 - pos).min(live as f32);
-	let h = ((bot - top) * lh)
-		.max(config::dip(MIN_HANDLE, scale))
-		.min(used);
-	let y = (top * lh).clamp(0.0, (used - h).max(0.0));
-	(y, h)
+	let (h, travel) = marker(track_h, total, live, rows, scale);
+	let back = total.saturating_sub(rows) as f32;
+	let y = if back > 0.0 {
+		(1.0 - pos / back) * travel
+	} else {
+		0.0
+	};
+	(y.clamp(0.0, travel), h)
 }
 
 // Inverse of `handle_span`: a marker top back to a scroll position in lines.
+// A grab feeds the drawn top straight back through here, so the two have to
+// agree exactly or a press with no movement scrolls the view by itself.
 fn span_to_pos(track_h: f32, total: usize, live: usize, rows: usize, y: f32, scale: f32) -> f32 {
-	let lh = line_px(track_h, live, scale);
-	if lh <= 0.0 {
+	let (_, travel) = marker(track_h, total, live, rows, scale);
+	if travel <= 0.0 {
 		return 0.0;
 	}
-	total.saturating_sub(rows) as f32 - y / lh
+	(1.0 - y / travel) * total.saturating_sub(rows) as f32
 }
 
 // The column's geometry for a pane. `pos` rides the eased scroll position;
@@ -228,9 +243,13 @@ pub fn hit(g: &Geom, x: f32, y: f32) -> Option<Hit> {
 	})
 }
 
-// The scroll position a click at `y` should center the viewport on.
+// The scroll position a click at `y` should center the viewport on. Read as
+// "put the middle of the marker here", so the ends of the track reach the ends
+// of the buffer even where the marker is shorter than the viewport it stands
+// for.
 pub fn center_on(g: &Geom, total: usize, live: usize, rows: usize, y: f32, scale: f32) -> f32 {
-	let want = (y - g.preview.y - rows as f32 * line_px(g.preview.h, live, scale) * 0.5).max(0.0);
+	let (h, _) = marker(g.preview.h, total, live, rows, scale);
+	let want = (y - g.preview.y - h * 0.5).max(0.0);
 	span_to_pos(g.preview.h, total, live, rows, want, scale)
 		.clamp(0.0, total.saturating_sub(rows) as f32)
 }
@@ -1253,6 +1272,71 @@ mod tests {
 		}
 	}
 
+	// A grab stores the pointer's offset inside the marker and the first drag
+	// event feeds the marker's own top straight back, so the two directions
+	// have to agree exactly. Where they do not, a press and one pixel of
+	// movement scrolls the view on its own.
+	#[test]
+	fn a_marker_reads_back_the_position_it_was_drawn_at() {
+		let track = 900.0;
+		// a full screen, a screen holding only a prompt at two history depths,
+		// and a deep buffer where the height floor eats most of the travel
+		for &(total, live, rows) in &[
+			(1000, 1000, 48),
+			(148, 101, 48),
+			(1048, 1001, 48),
+			(10_048, 10_048, 48),
+			(58, 11, 48),
+		] {
+			let back = (total - rows) as f32;
+			for step in 0..=20 {
+				let pos = back * step as f32 / 20.0;
+				let (y, h) = handle_span(track, total, live, rows, pos, 1.0);
+				let read = span_to_pos(track, total, live, rows, y, 1.0);
+				let (_, travel) = marker(track, total, live, rows, 1.0);
+				if travel <= 0.0 {
+					continue;
+				}
+				assert!(
+					(read - pos).abs() < 0.5,
+					"{total}/{live}: drawn at {pos} reads back {read}"
+				);
+				// and it stays inside the map it rides
+				let used = line_px(track, live, 1.0) * live as f32;
+				assert!(
+					y >= 0.0 && y + h <= used + 0.01,
+					"{total}/{live}: {y}+{h} of {used}"
+				);
+			}
+			// the bottom of the buffer is reachable by clicking the track, not
+			// only by dragging past the end of it
+			let g = geom(
+				Rect {
+					x: 0.0,
+					y: 0.0,
+					w: 400.0,
+					h: track,
+				},
+				0.0,
+				1.0,
+				&cfg(true, 60.0),
+				total,
+				live,
+				rows,
+				0.0,
+				false,
+				true,
+			)
+			.unwrap();
+			let used = line_px(track, live, 1.0) * live as f32;
+			assert_eq!(
+				center_on(&g, total, live, rows, used, 1.0),
+				0.0,
+				"{total}/{live}: a click on the last drawn line misses the newest output"
+			);
+		}
+	}
+
 	#[test]
 	fn the_handle_stays_grabbable_on_a_deep_buffer() {
 		let (_, h) = handle_span(600.0, 100_000, 100_000, 40, 0.0, 1.0);
@@ -1592,8 +1676,9 @@ mod tests {
 		};
 		let run = |c: char| strip(&c.to_string().repeat(cols - 1))[3];
 		let (dots, letters, hashes) = (run('.'), run('e'), run('#'));
-		// the densest glyph is as strong as every glyph used to be
-		assert_eq!(hashes, to_u8(INK * 255.0));
+		// the densest glyph inks its whole cell, so the column is no lighter
+		// overall than it was under the flat model it replaced
+		assert_eq!(hashes, 255);
 		assert!(dots * 3 < hashes, "dots {dots}, hashes {hashes}");
 		assert!(
 			dots < letters && letters < hashes,
