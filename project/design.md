@@ -258,7 +258,9 @@ The mapping, which is the load-bearing decision:
 
 - The whole buffer - history plus screen - always maps linearly onto the column, top-anchored, oldest first. The editors slide their minimap once the document outgrows it; this one never does.
 
-- With a short buffer, lines draw at a capped height (about 2 px at 1x) and the preview just does not reach the bottom of the column yet.
+- The buffer ends at the last screen row with output in it, not at the bottom of the screen grid. The blank rows under a short prompt are not something the user printed, so neither the track nor the viewport marker reaches over them. A wholly blank screen still keeps one line, so the map does not disappear at a fresh prompt.
+
+- With a short buffer, lines draw at a capped height (1.5 px at 1x) and the preview just does not reach the bottom of the column yet. That cap is scaled but not rounded to whole pixels, on purpose: a line has to be able to sit at a fraction of one, or its ink lands inside a single pixel row and a page goes back to reading as a slab.
 
 - With a deep buffer, lines go sub-pixel and blend down, so the map compresses instead of scrolling. At the default 10,000-line scrollback a line is a fraction of a pixel; colored regions still read as bands, which is most of the point.
 
@@ -268,11 +270,13 @@ What a line looks like:
 
 - Strokes, not glyphs. Per cell: a run of the cell's fg color where there is ink, over the cell's bg where it differs from the default. Hues survive, so errors, prompts and diffs stay findable from across the room.
 
+- How much of its cell a character inks varies with the character, from a quarter for a period or a comma up to the full amount for a hash, a block or an em-wide letter. A flat share is what made a run of text read as one bar. The weights are eyeballed from a monospace face rather than measured, since the map is a hint and the face in use is not known where the raster runs. A cell that carries its own background still paints solid whatever is in it; only how far its color pulls toward the foreground moves.
+
 - Across a line, coverage adds up, so a short or indented line reads as one. Down the column, color is averaged over only the lines that have ink, so a lone red line among blanks keeps its color rather than fading into them.
 
 - How bright a pixel row gets is how much ink actually fell in it, so a mostly blank stretch reads dimmer than a solid page. That is what makes density legible from a distance. One inked line among many would otherwise almost vanish, so a pixel never falls below a set share of the strongest line in it.
 
-- A line does not fill its own height. Once a line draws more than a pixel tall, the gap above and below is what stops a page of text reading as one block; below a pixel there is no room for a gap and the line is taken whole, with the two ramped between so the map does not change brightness as a growing buffer crosses that point.
+- A line does not fill its own height. The gap above and below is what stops a page of text reading as one block. At the capped height the ink is a band narrower than a pixel, so it falls across two pixel rows at part strength rather than filling one, which is what a page of text looks like from a distance. Below about half a pixel there is no room for a gap and the line is taken whole, with the two ramped between so the map does not change brightness as a growing buffer crosses that point.
 
 - The column steps aside while a full-screen program runs, and the text gets its width back. Such a program draws on its own screen, which has no scroll buffer behind it, so the map would show a rectangle at the top of an otherwise empty column.
 
