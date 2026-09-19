@@ -244,8 +244,12 @@ pub struct Minimap {
 	width: usize,
 	cols: usize,
 	lines: usize,
-	// composed image, `width` px wide by `img_h` tall, straight RGBA
+	// composed image, `img_w` px wide by `img_h` tall, straight RGBA. Its own
+	// width, not `width`, which the next compose will use: the two differ from
+	// the moment the column is resized until that compose, and a caller that
+	// believed `width` uploaded a short buffer as a wider texture.
 	img: Vec<u8>,
+	img_w: usize,
 	img_h: usize,
 	pub rev: u64, // bumped on every compose, so the renderer can skip re-uploads
 	// rows changed since the last compose, and the compose was throttled out -
@@ -275,7 +279,7 @@ struct Acc {
 
 impl Minimap {
 	pub fn image(&self) -> (&[u8], usize, usize) {
-		(&self.img, self.width, self.img_h)
+		(&self.img, self.img_w, self.img_h)
 	}
 
 	// Free everything. Called when the column goes away.
@@ -352,7 +356,9 @@ impl Minimap {
 		let due = self
 			.last_compose
 			.is_none_or(|t| now.duration_since(t) >= gap(self.spent));
-		if due || self.img_h != img_h {
+		// a resized column composes at once: the map is stretched to the new
+		// width until it does, and at a deep scrollback the wait is seconds
+		if due || self.img_h != img_h || self.img_w != width {
 			self.last_compose = Some(now);
 			let began = Instant::now();
 			self.catch_up(grid, colors, cfg);
@@ -514,6 +520,7 @@ impl Minimap {
 	fn compose(&mut self, img_h: usize, scale: f32) {
 		let width = self.width;
 		let total = self.rows.len();
+		self.img_w = width;
 		self.img_h = img_h;
 		self.img.clear();
 		self.img.resize(width * img_h * 4, 0);
@@ -1300,6 +1307,147 @@ mod tests {
 		assert_ne!(map.rev, first, "the wait is over and the map is behind");
 	}
 
+	// The column's width can change between composes, and the image is still
+	// the one composed at the old width. A caller that took the new width made
+	// a texture the pixels could not fill, and wgpu killed the window.
+	#[test]
+	fn the_map_reports_the_size_its_pixels_have() {
+		let (cols, lines) = (20, 4);
+		let (mut term, mut parser) = live_term(cols, lines, 50);
+		parser.advance(&mut term, b"\rline of output\r\n");
+		let cfg = config::Settings::default();
+		let t0 = Instant::now();
+		let mut map = Minimap::default();
+		let build = |map: &mut Minimap, width: usize, at: u64| {
+			let now = t0 + Duration::from_millis(at);
+			map.update(
+				term.grid(),
+				term.colors(),
+				&cfg,
+				width,
+				60,
+				1.0,
+				lines,
+				cols,
+				1,
+				false,
+				now,
+			);
+			let (px, w, h) = map.image();
+			assert_eq!(px.len(), w * h * 4, "width {width} at {at} ms");
+		};
+		build(&mut map, 8, 0);
+		// inside the wait, where nothing used to recompose
+		build(&mut map, 20, 10);
+		assert_eq!(map.image().1, 20, "the wider column is what shows");
+	}
+
+	// The plain per-cell pass the raster is written to be faster than. It keeps
+	// no style memo and no span table, so a stale memo key, or a coverage table
+	// made for another width, shows up as a difference.
+	fn reference_row(
+		grid: &Grid<Cell>,
+		line: Line,
+		colors: &Colors,
+		cfg: &config::Settings,
+		width: usize,
+		cols: usize,
+	) -> Row {
+		let mut out = vec![0u8; width * 4];
+		let mut rgb = vec![0f32; width * 3];
+		let mut weight = vec![0f32; width];
+		let mut readable = palette::Readable::default();
+		let row = &grid[line];
+		let per_cell = width as f32 / cols as f32;
+		for c in 0..cols {
+			let cell = &row[Column(c)];
+			if blank(cell) {
+				continue;
+			}
+			let style = Style {
+				fg: cell.fg,
+				bg: cell.bg,
+				flags: cell.flags & (Flags::INVERSE | Flags::HIDDEN),
+				space: cell.c == ' ',
+			};
+			let (ink, alpha) = paint(&style, colors, cfg, &mut readable);
+			let x0 = c as f32 * per_cell;
+			let x1 = x0 + per_cell;
+			let first = x0.floor() as usize;
+			let last = ((x1.ceil() as usize).max(first + 1)).min(width);
+			for px in first..last {
+				let lo = x0.max(px as f32);
+				let hi = x1.min(px as f32 + 1.0);
+				let w = (hi - lo).max(0.0) * alpha;
+				if w <= 0.0 {
+					continue;
+				}
+				rgb[px * 3] += ink[0] as f32 * w;
+				rgb[px * 3 + 1] += ink[1] as f32 * w;
+				rgb[px * 3 + 2] += ink[2] as f32 * w;
+				weight[px] += w;
+			}
+		}
+		for px in 0..width {
+			let w = weight[px];
+			if w <= 0.0 {
+				continue;
+			}
+			out[px * 4] = to_u8(rgb[px * 3] / w);
+			out[px * 4 + 1] = to_u8(rgb[px * 3 + 1] / w);
+			out[px * 4 + 2] = to_u8(rgb[px * 3 + 2] / w);
+			out[px * 4 + 3] = to_u8(w.min(1.0) * 255.0);
+		}
+		out
+	}
+
+	#[test]
+	fn a_rasterized_line_matches_a_plain_per_cell_pass() {
+		let cfg = config::Settings::default();
+		for seed in 0..24 {
+			let mut rng = Rng::new(seed);
+			let (cols, lines) = (4 + rng.below(60), 2 + rng.below(6));
+			let width = 1 + rng.below(30);
+			let (mut term, mut parser) = live_term(cols, lines, 10);
+			for _ in 0..lines {
+				let text = format!("{}\r\n", styled_line(&mut rng, cols));
+				parser.advance(&mut term, text.as_bytes());
+			}
+			let mut map = Minimap {
+				width,
+				cols,
+				..Default::default()
+			};
+			map.fit_spans();
+			let mut readable = palette::Readable::default();
+			for line in 0..lines as i32 {
+				let row = map.take_row();
+				map.raster(
+					term.grid(),
+					Line(line),
+					term.colors(),
+					&cfg,
+					&mut readable,
+					row,
+				);
+				let got = map.rows.pop_back().unwrap();
+				let want = reference_row(term.grid(), Line(line), term.colors(), &cfg, width, cols);
+				assert!(
+					got == want,
+					"seed {seed}, line {line}, {cols} columns into {width} px"
+				);
+			}
+		}
+	}
+
+	#[test]
+	fn a_pixel_takes_the_nearest_byte() {
+		assert_eq!(to_u8(0.4), 0);
+		assert_eq!(to_u8(0.5), 1);
+		assert_eq!(to_u8(127.6), 128);
+		assert_eq!(to_u8(255.0), 255);
+	}
+
 	// Rasterizing late must not change what is drawn: every compose matches the
 	// one a fresh cache makes from the same grid, whatever went by in between.
 	#[test]
@@ -1353,6 +1501,8 @@ mod tests {
 					cut,
 					now,
 				);
+				let (px, w, h) = map.image();
+				assert_eq!(px.len(), w * h * 4, "seed {seed}, step {step}");
 				if map.rev == rev {
 					continue;
 				}
