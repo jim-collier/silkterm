@@ -1267,6 +1267,7 @@ impl Pane {
 				ctx.scale,
 				&settings,
 				history + lines,
+				self.map.live_lines(history, lines),
 				lines,
 				self.scroll.visual_lines(),
 				alt,
@@ -2438,17 +2439,28 @@ impl Pane {
 		} else {
 			self.scroll.visual_lines()
 		};
+		let (total, live) = self.map_span();
 		minimap::geom(
 			self.full,
 			ctx.margin,
 			ctx.scale,
 			cfg,
-			self.scroll.max_lines() as usize + rows,
+			total,
+			live,
 			rows,
 			pos,
 			self.mode.contains(TermMode::ALT_SCREEN),
 			self.map_on,
 		)
+	}
+
+	// The whole buffer and the part of it the map draws. The second stops at
+	// the last screen row with output, so the track and the marker end where
+	// the output does rather than at the bottom of a half-empty screen.
+	fn map_span(&self) -> (usize, usize) {
+		let hist = self.scroll.max_lines() as usize;
+		let rows = self.term.lines;
+		(hist + rows, self.map.live_lines(hist, rows))
 	}
 
 	// The rasterized buffer and the image composed from it, for the renderer.
@@ -2475,9 +2487,9 @@ impl Pane {
 			return;
 		};
 		let rows = self.term.lines;
-		let total = self.scroll.max_lines() as usize + rows;
+		let (total, live) = self.map_span();
 		self.scroll
-			.scroll_to(minimap::drag_to(&g, total, rows, y - grab, ctx.scale));
+			.scroll_to(minimap::drag_to(&g, total, live, rows, y - grab, ctx.scale));
 		self.poke_scrollbar();
 	}
 
@@ -2487,9 +2499,9 @@ impl Pane {
 			return;
 		};
 		let rows = self.term.lines;
-		let total = self.scroll.max_lines() as usize + rows;
+		let (total, live) = self.map_span();
 		self.scroll
-			.scroll_to(minimap::center_on(&g, total, rows, y, ctx.scale));
+			.scroll_to(minimap::center_on(&g, total, live, rows, y, ctx.scale));
 		self.poke_scrollbar();
 	}
 
