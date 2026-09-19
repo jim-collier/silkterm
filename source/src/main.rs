@@ -75,6 +75,20 @@ fn open_console() {
 	}
 }
 
+fn cli_only(cli: &cli::Cli) -> bool {
+	cli.help || cli.syntax || cli.about || cli.donate || cli.version
+}
+
+fn control(cli: &cli::Cli) -> bool {
+	cli.reload || cli.wallpaper.is_some()
+}
+
+// Every path that prints and exits needs the console, the control commands
+// included - on Windows their errors went nowhere.
+fn prints_and_exits(cli: &cli::Cli) -> bool {
+	cli_only(cli) || control(cli)
+}
+
 fn main() -> anyhow::Result<()> {
 	env_logger::init();
 	alacritty_terminal::tty::setup_env();
@@ -93,12 +107,14 @@ fn main() -> anyhow::Result<()> {
 			std::process::exit(2);
 		}
 	};
+	if prints_and_exits(&cli) {
+		open_console();
+	}
 	// CLI-only flags: print and exit, before anything reads a config or opens a
 	// window. All but --version are padded with a blank line either side so the
 	// block stands clear of the prompts above and below it; --version stays flush
 	// because its job is to be captured.
-	if cli.help || cli.syntax || cli.about || cli.donate || cli.version {
-		open_console();
+	if cli_only(&cli) {
 		if cli.help {
 			print!(
 				"{}",
@@ -121,7 +137,7 @@ fn main() -> anyhow::Result<()> {
 	// Control commands: talk to the already-running window this shell lives in
 	// (via SILKTERM_SOCKET), then exit - nothing here launches a window. Reload
 	// first so --reload-settings --wallpaper x ends with x applied.
-	if cli.reload || cli.wallpaper.is_some() {
+	if control(&cli) {
 		let mut cmds: Vec<String> = Vec::new();
 		if cli.reload {
 			cmds.push("reload".into());
@@ -219,4 +235,32 @@ fn main() -> anyhow::Result<()> {
 	}
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn parsed(args: &[&str]) -> cli::Cli {
+		cli::parse(args.iter().map(ToString::to_string)).unwrap()
+	}
+
+	// A Windows release build owns no console, so a control command that failed
+	// said nothing at all.
+	#[test]
+	fn a_control_command_joins_the_console_it_was_typed_at() {
+		for args in [
+			&["--reload-settings"][..],
+			&["--wallpaper", "x.png"],
+			&["--wallpaper"],
+			&["--version"],
+			&["--help"],
+		] {
+			assert!(prints_and_exits(&parsed(args)), "{args:?}");
+		}
+		// a window launch must not own a console, or it dies with that shell
+		for args in [&[][..], &["--rows", "30"], &["--reset-config"]] {
+			assert!(!prints_and_exits(&parsed(args)), "{args:?}");
+		}
+	}
 }

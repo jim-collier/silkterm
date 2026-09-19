@@ -95,6 +95,15 @@ fCheck "a fully staged file is formatted in the working tree too" \
 fCheck "and formatted in the commit" \
 	bash -c 'git -C "$1" show HEAD:b.rs | grep -Fxq "fn three() -> i32 {"' _ "${repo}"
 
+## A crate root names its modules by file. The staged copy is formatted away
+## from them, so a hook that let rustfmt follow those lines refused the commit.
+printf 'mod a;\nmod b;\nfn main( ) {\n      a::one();\n}\n' > "${repo}/main.rs"
+git -C "${repo}" add main.rs
+fCheck "a file with mod lines commits" \
+	git -C "${repo}" commit -q -m "root"
+fCheck "and is formatted" \
+	bash -c 'git -C "$1" show HEAD:main.rs | grep -Fxq "fn main() {"' _ "${repo}"
+
 ## The pre-push gate, with a stub in place of the pipeline: a real gate is a full
 ## build, and what is being tested is WHICH source it reads, not what it does.
 ## The stub passes when the tree it runs in says "good" and fails when it says
@@ -151,3 +160,4 @@ echo "  hooks: ok"
 ##		20260917  Created for code review 20260914 items 48 and 51 (F80, F83): the
 ##		          pre-commit formatter staged a partly staged file whole, and the
 ##		          pre-push gate read the working tree rather than the commit.
+##		20260918  A file with mod lines, which the formatter could not commit.

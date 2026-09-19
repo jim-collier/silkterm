@@ -10,6 +10,9 @@
 ##	- Syntax:
 ##		run.bash [--host <name>] [--keep] [<scenario> ...]
 ##		With no scenario it runs 'smoke'. Shots come back under cicd/artifacts/wingui.
+##		The binary is cross-built here from the tree under test and sent along, so
+##		the result is for this commit and not whatever was last built on the box.
+##		WINGUI_EXE names a binary to send instead.
 ##	- Exit: 0 pass or skipped, 1 a scenario failed.
 ##	- History: At bottom of file.
 
@@ -19,7 +22,7 @@
 set -euo pipefail
 meDir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "${meDir}/../../.." && pwd)"
-winRemote="${root}/cicd/utility/win-remote.bash"
+winRemote="${WINGUI_WIN_REMOTE:-${root}/cicd/utility/win-remote.bash}"
 shotDir="${root}/cicd/artifacts/wingui"
 ##	These boxes are shared, so a run may not use a fixed folder or task name -
 ##	two at once would read each other's answers and cancel each other's tasks.
@@ -46,8 +49,31 @@ scenarios=("$@"); ((${#scenarios[@]})) || scenarios=(smoke)
 ##	could be run once.
 bundle="$(mktemp --suffix=.tgz)"
 launcher=""; sweep=""
-tar czf "${bundle}" -C "${meDir}" --exclude=run.bash .
+##	install.ps1 goes along for the scenario that checks its PATH change.
+tar czf "${bundle}" -C "${meDir}" --exclude=run.bash --exclude=harness-test.bash . -C "${root}" install.ps1
 trap 'rm -f "${bundle}" "${launcher}" "${sweep}"' EXIT
+
+##	Nothing to build for when every box is off.
+if ! "${winRemote}" "${host[@]}" --optional hosts 2>/dev/null | grep -q ' up '; then
+	echo "wingui: no box up, skipped"; exit 0
+fi
+
+commit="$(git -C "${root}" rev-parse --short HEAD)"
+[[ -z "$(git -C "${root}" status --porcelain 2>/dev/null)" ]] || commit+="+uncommitted"
+exe="${WINGUI_EXE:-}"
+if [[ -z "${exe}" ]]; then
+	targetDir="${CARGO_TARGET_DIR:-target}"
+	[[ "${targetDir}" == /* ]] || targetDir="${root}/${targetDir}"
+	exe="${targetDir}/x86_64-pc-windows-gnu/release/silkterm.exe"
+	##	A fat-LTO rustc crash here is usually a flake, so one retry.
+	build=(cargo build --release --target x86_64-pc-windows-gnu)
+	( cd "${root}/source" && PATH="${HOME}/.cargo/bin:${PATH}" "${build[@]}" >/dev/null 2>&1 ) \
+		|| ( cd "${root}/source" && PATH="${HOME}/.cargo/bin:${PATH}" "${build[@]}" ) \
+		|| { echo "wingui: the Windows build failed"; exit 1; }
+fi
+[[ -f "${exe}" ]] || { echo "wingui: no binary at ${exe}"; exit 1; }
+echo "wingui: testing ${commit}, $(basename "${exe}") $(stat -c %s "${exe}") bytes"
+"${winRemote}" "${host[@]}" --optional push "${exe}" "${remoteDir}\\silkterm.exe" >/dev/null
 
 fRun() {
 	local scenario="$1"
@@ -71,8 +97,8 @@ $tgz = Join-Path $dir "wingui.tgz"
 tar.exe -xzf $tgz -C $work
 Remove-Item $tgz -Force
 
-$exe = Join-Path $RepoDir "target\release\silkterm.exe"
-if (-not (Test-Path $exe)) { $exe = Join-Path $RepoDir "source\target\release\silkterm.exe" }
+##	Sent along by run.bash. The clone's own build is from whenever it was last made.
+$exe = Join-Path $dir "silkterm.exe"
 
 ##	Whoever holds the console is who the scenario has to run as - not whoever ssh
 ##	logged in as, which may have been pushed off it.
@@ -105,7 +131,8 @@ try {
 	for ($i = 0; $i -lt 480; $i++) { if (Test-Path $res) { break }; Start-Sleep -Milliseconds 500 }
 } finally {
 	Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue
-	Get-Process -Name silkterm -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+	##	Only what this run started. A SilkTerm already on the box is somebody's.
+	& (Join-Path $work "_stop.ps1") -List (Join-Path $out "started.txt")
 }
 if (-not (Test-Path $res)) { "VERDICT fail the session never answered"; exit 1 }
 $said = (Get-Content $res | Where-Object { $_ -like "SCENARIO *" }) -replace '^SCENARIO ', ''
@@ -146,3 +173,4 @@ fi
 ##	Script history:
 ##		- 20260908: Created.
 ##		- 20260910: holds the boxes for the whole run.
+##		- 20260918: sends a binary built from the tree under test, and stops only what it started.

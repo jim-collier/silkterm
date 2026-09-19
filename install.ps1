@@ -619,12 +619,33 @@ function fAddToWindowsPath {
 			$env:PATH = "$env:PATH;$Dir"
 			Write-Host "Added $Dir to the $Scope PATH - already-open shells need a restart to see it."
 		} finally { $key.Close() }
+		fAnnounceEnvironment
 	} catch {
 		Write-Host "Note: could not update the $Scope PATH ($(fInnerMessage $_)) - $appName itself installed fine."
 		Write-Host "  Run it in full:  $(Join-Path $Dir "$exeName.exe")"
 	}
 }
 
+
+##	A registry write alone reaches nothing until the next sign-in. Explorer, which
+##	starts everything from the Start menu, reloads its environment only when told,
+##	and that is the message SetEnvironmentVariable and setx both send after their
+##	own write.
+function fAnnounceEnvironment {
+	try {
+		if (-not ('SilkInstall.Env' -as [type])) {
+			Add-Type -Namespace SilkInstall -Name Env -MemberDefinition @'
+[DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);
+'@
+		}
+		$ignored = [UIntPtr]::Zero
+		##	HWND_BROADCAST, WM_SETTINGCHANGE, SMTO_ABORTIFHUNG, and 5 s for a window that is stuck
+		[void][SilkInstall.Env]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$ignored)
+	} catch {
+		Write-Host "  A console opened from the Start menu may not find it until you sign out and in again."
+	}
+}
 
 ##	Script entry point. The `& { }` is what keeps StrictMode off the caller's
 ##	shell - it applies to this block and everything it calls, and lapses here.

@@ -624,6 +624,13 @@ if [[ -x "${root}/cicd/tests/gates/run.bash" ]]; then
 	"${root}/cicd/tests/gates/run.bash" >/dev/null || fDie "startup gate test failed"
 	fEcho "OK: startup gates"
 fi
+## The Windows scenario harness, which once tested whatever the box last built
+## and stopped every SilkTerm on a shared box.
+if [[ -x "${root}/cicd/tests/wingui/harness-test.bash" ]]; then
+	fEcho_Clean "windows scenario harness ..."
+	"${root}/cicd/tests/wingui/harness-test.bash" >/dev/null || fDie "windows scenario harness test failed"
+	fEcho "OK: windows scenario harness"
+fi
 ## The wallpaper gallery and contact sheet are rendered, so they go stale in
 ## silence when the pack changes. Nine removed images sat in both for a month.
 if [[ -f "${root}/cicd/utility/wallpaper-gallery.bash" ]]; then

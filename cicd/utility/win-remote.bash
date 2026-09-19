@@ -20,6 +20,7 @@
 ##		win-remote.bash [--host <name>] [--as <user>] [--optional] run <file.ps1> [args...]
 ##		win-remote.bash [--host <name>] [--as <user>] [--optional] fetch <remote-rel-path> <local-dir>
 ##		win-remote.bash [--host <name>] [--as <user>] [--optional] pull <remote-abs-path> <local-dir>
+##		win-remote.bash [--host <name>] [--as <user>] [--optional] push <local-file> <remote-abs-path>
 ##		win-remote.bash [--host <name>] [--optional] hold <command> [args...]
 ##	Notes:
 ##		Hosts are read from $WINRIG_CONF (default ~/.config/silkterm/winrig.conf),
@@ -296,6 +297,20 @@ case "$cmd" in
 		fHoldBoxes
 		fOverHosts fPull || exit 1
 		;;
+	push)
+		fNoRef
+		##	One file to an absolute path, its folder made first. For a build made
+		##	here, which the clone on the box would not have.
+		src="${1:-}"; abs="${2:-}"
+		[[ -f "$src" && -n "$abs" ]] || fFail "push needs <local-file> <remote-abs-path>" 2
+		parent="${abs%\\*}"
+		fPush() {
+			ssh "${sshOpts[@]}" "${sshUser}@${1}" "if not exist \"${parent}\" mkdir \"${parent}\"" >/dev/null 2>&1 || true
+			scp -q "${sshOpts[@]}" "$src" "${sshUser}@${1}:${abs//\\//}"
+		}
+		fHoldBoxes
+		fOverHosts fPush || exit 1
+		;;
 	hold)
 		fNoRef
 		(($#)) || fFail "hold needs a command" 2
@@ -304,7 +319,7 @@ case "$cmd" in
 		exec "$@"
 		;;
 	*)
-		echo "usage: win-remote.bash [--host <name>] [--as <user>] [--ref <ref>] [--optional] {hosts|sync|job <name> [args]|run <file.ps1> [args]|fetch <rel> <dir>|pull <abs> <dir>|hold <command> [args]}" >&2
+		echo "usage: win-remote.bash [--host <name>] [--as <user>] [--ref <ref>] [--optional] {hosts|sync|job <name> [args]|run <file.ps1> [args]|fetch <rel> <dir>|pull <abs> <dir>|push <file> <abs>|hold <command> [args]}" >&2
 		exit 2
 		;;
 esac
@@ -318,3 +333,4 @@ esac
 ##		- 20260909: --ref on anything but sync is refused rather than ignored.
 ##		- 20260910: an option written after the command is refused, not dropped.
 ##		- 20260910: waits for the host lock, and hold.
+##		- 20260918: push, for a binary built here.

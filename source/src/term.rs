@@ -364,21 +364,7 @@ impl TermInstance {
 			cell_height: cell_h,
 		};
 
-		// a CLI/menu-supplied command runs as argv[0] + args; else the default shell
-		let mut opts = tty::Options::default();
-		let with_cd = match (command.as_deref(), cwd.as_deref()) {
-			(Some(argv), Some(dir)) => wsl_cd(argv, dir),
-			_ => None,
-		};
-		let argv = with_cd.as_deref().or(command.as_deref());
-		if let Some((prog, args)) = argv.and_then(<[String]>::split_first) {
-			opts.shell = Some(tty::Shell::new(prog.clone(), args.to_vec()));
-		}
-		// start in an inherited directory (new tab/split follows the source pane)
-		opts.working_directory = usable_cwd(cwd);
-		opts.env
-			.extend(crate::integration::pane_env(command.as_deref()));
-		let pty = tty::new(&opts, win, id)?;
+		let pty = tty::new(&pane_options(command.as_deref(), cwd), win, id)?;
 		// Capture the master fd + shell pid before the event loop takes the pty;
 		// they drive the tab title (foreground program). The fd stays valid for
 		// the pane's life (the loop owns the pty until close).
@@ -1137,6 +1123,30 @@ fn usable_cwd(dir: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
 // Windows path or a posix one, so whichever spelling the source pane reported
 // can go straight through. Options have to come before the command, hence the
 // insert rather than a push. None where there is nothing to do.
+fn pane_options(command: Option<&[String]>, cwd: Option<std::path::PathBuf>) -> tty::Options {
+	// a CLI/menu-supplied command runs as argv[0] + args; else the default shell
+	let mut opts = tty::Options::default();
+	// The argv is split already, so Windows has to get it back whole: a spaced
+	// program path ran a planted program in front of it, and a spaced --cd
+	// reached WSL as two words. Unix never joins the words at all.
+	#[cfg(windows)]
+	{
+		opts.escape_args = true;
+	}
+	let with_cd = match (command, cwd.as_deref()) {
+		(Some(argv), Some(dir)) => wsl_cd(argv, dir),
+		_ => None,
+	};
+	let argv = with_cd.as_deref().or(command);
+	if let Some((prog, args)) = argv.and_then(<[String]>::split_first) {
+		opts.shell = Some(tty::Shell::new(prog.clone(), args.to_vec()));
+	}
+	// start in an inherited directory (new tab/split follows the source pane)
+	opts.working_directory = usable_cwd(cwd);
+	opts.env.extend(crate::integration::pane_env(command));
+	opts
+}
+
 fn wsl_cd(argv: &[String], dir: &std::path::Path) -> Option<Vec<String>> {
 	// split on both separators: a Windows path reaches this on any platform, and
 	// Path would hand back the whole string for one on unix
@@ -1548,6 +1558,73 @@ mod tests {
 		assert!(!gate.post());
 		gate.handled();
 		assert!(gate.post());
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn a_pane_hands_its_program_and_arguments_down_whole() {
+		let wsl = ["wsl.exe".to_string()];
+		let opts = super::pane_options(Some(&wsl), Some(std::env::temp_dir()));
+		assert!(
+			opts.escape_args,
+			"a split argv has to be joined back with quotes"
+		);
+	}
+
+	// The Windows freeze on a long run of output: a read that empties the pipe
+	// without finding it empty leaves the pipe's waker unarmed, so the engine's
+	// reader thread has to say when it fills again. The fix is in the engine
+	// fork, and this is what fails if an engine update leaves it behind.
+	#[cfg(windows)]
+	#[test]
+	fn a_pane_under_a_flood_keeps_saying_there_is_more() {
+		use alacritty_terminal::tty::{self, EventedReadWrite};
+		use polling::{Event, Events, PollMode, Poller};
+		use std::io::Read;
+
+		let flood = "for /l %i in (0,0,1) do @echo 0123456789012345678901234567890123456789";
+		let args = std::iter::once("/c")
+			.chain(flood.split(' '))
+			.map(String::from)
+			.collect();
+		let opts = tty::Options {
+			shell: Some(tty::Shell::new("cmd.exe".into(), args)),
+			..Default::default()
+		};
+		let win = alacritty_terminal::event::WindowSize {
+			num_cols: 80,
+			num_lines: 24,
+			cell_width: 8,
+			cell_height: 16,
+		};
+		let mut pty = tty::new(&opts, win, 0).expect("spawn");
+		let poller = std::sync::Arc::new(Poller::new().unwrap());
+		// SAFETY: the pty stays alive, and registered, until the end of the test
+		unsafe { pty.register(&poller, Event::readable(0), PollMode::Level) }.unwrap();
+		// the engine's own read buffer, which is also the pipe's capacity
+		let mut buf = vec![0u8; 0x10_0000];
+		let mut events = Events::new();
+		let mut total = 0;
+		// cmd's echo loop gives about half a megabyte a second, and the engine
+		// without the fix goes quiet at round 2, after its first full drain
+		for round in 0..8 {
+			events.clear();
+			poller
+				.wait(&mut events, Some(std::time::Duration::from_secs(10)))
+				.unwrap();
+			assert!(
+				!events.is_empty(),
+				"no word for 10 s after {total} bytes in {round} rounds"
+			);
+			total += pty.reader().read(&mut buf).unwrap_or(0);
+		}
+		// Ending the flood by dropping the pty can block while nobody reads
+		// (ClosePseudoConsole waits on its output), so end the shell and leave
+		// the rest to process exit.
+		let shell = pty.child_watcher().raw_handle();
+		// SAFETY: the handle is the pty's own and still open
+		unsafe { windows_sys::Win32::System::Threading::TerminateProcess(shell, 0) };
+		std::mem::forget(pty);
 	}
 
 	// Windows has no /proc, so a new tab or split can only inherit a directory

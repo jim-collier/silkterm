@@ -27,11 +27,13 @@ resolver = "3"
 # version that does not.
 #
 # The cap of nine combining marks per cell is upstream's own fix (ede2ac144d),
-# here until a release has it. The last two are ours. On Linux, a program that
+# here until a release has it. The last three are ours. On Linux, a program that
 # closes its terminal and keeps running no longer spins the reader thread at a
 # whole core; the PTY is left out of the poll for a tenth of a second at a time.
-# And a title is cut to 2 KiB, so the title stack cannot be made to hold
-# gigabytes.
+# A title is cut to 2 KiB, so the title stack cannot be made to hold gigabytes.
+# And on Windows a pane gives back its process, thread and pipe handles when it
+# closes, and a program path with a space is quoted, so a planted program
+# earlier in that path cannot run in its place.
 [patch.crates-io]
 alacritty_terminal = { git = "https://github.com/jim-collier/alacritty", branch = "scroll-ledger-0.26.0" }
 

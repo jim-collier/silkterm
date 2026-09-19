@@ -9486,8 +9486,11 @@ mod tests {
 				.any(|(name, value)| name == config::ENV_DIR_HANDED_DOWN && value.is_some())
 		};
 
-		let cmd = new_window_command(exe, Some(&home), Some(std::path::Path::new("/x/alt.shcl")));
-		assert_eq!(args(&cmd), ["--config", "/x/alt.shcl"]);
+		// built from home so it is absolute on every platform; "/x/alt.shcl" is
+		// not on Windows, where it came back as C:\x\alt.shcl
+		let alt = home.join("alt.shcl");
+		let cmd = new_window_command(exe, Some(&home), Some(&alt));
+		assert_eq!(args(&cmd), ["--config", &*alt.to_string_lossy()]);
 		assert_eq!(cmd.get_current_dir(), Some(home.as_path()));
 		assert!(
 			handed_down(&cmd),
