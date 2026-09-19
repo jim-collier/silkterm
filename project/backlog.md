@@ -303,8 +303,13 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 60 (F92, blocking): The fix for the Windows freeze on a long run of output has no test, so an engine update could lose it without anything failing.
 		- The engine fork has a test that drains its pipe the way the engine's reader does and waits for word of the next fill. SilkTerm's Windows run has one too, through a real pane under a flood, so an engine update that drops the fix fails here as well.
 		- Both are red on b29w with the fix taken out, at the second round.
-	- Code review 20260914 item 61 (F93, should-fix): Once the scrollback is full, output above a pinned status line, such as apt's progress bar, stops easing.
-	- Code review 20260914 item 62 (F94, should-fix): The terminal engine handles output in full-screen programs such as tmux about a third slower, because it copies every row that scrolls away.
+	- ✅ Code review 20260914 item 61 (F93, should-fix): Once the scrollback is full, output above a pinned status line, such as apt's progress bar, stops easing.
+		- The engine now counts every line it sends into the scrollback: a whole-screen scroll, a scroll of a region that starts at the top row, and a screen clear. It counted only the first, and once the scrollback is full that count is all there is.
+		- A clear eases the same way at a full scrollback as before it.
+		- Pinned by a test of the apt stream at a full scrollback, one of a clear, and an engine test that runs random scrolls through a terminal with a full scrollback beside one that never fills. The scroll check has a new scene that fills the scrollback first, and it fails on the build from before.
+	- ✅ Code review 20260914 item 62 (F94, should-fix): The terminal engine handles output in full-screen programs such as tmux about a third slower, because it copies every row that scrolls away.
+		- The engine takes the row that is leaving and gives the grid a spare to reset in its place, so nothing is copied. Keeping rows now costs about 5% of the parse on the alt screen, against about a third.
+		- Pinned by a timing test that holds the cost under 10%, and an engine test that the kept row is the very row that left. The rows kept are the same as before, checked over random scrolls.
 	- ✅ Code review 20260914 item 64 (F96, blocking): A one-column pane crashes on a wide character such as CJK or an emoji, and narrowing a window past one column with wide text on screen runs the memory away and hangs.
 		- A pane is held to at least two columns, the engine's own documented least, at the one place SilkTerm builds or resizes its grid.
 		- Pinned by `a_pane_too_narrow_for_a_wide_character_still_takes_one`, watched failing with the old floor. A window squeezed to 1 px wide with wide text on screen stayed up, with memory flat.
