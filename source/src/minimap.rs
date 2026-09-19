@@ -26,10 +26,10 @@ const MIN_HANDLE: f32 = 14.0;
 // Tallest one buffer line draws. A short buffer stops short of the column's
 // bottom rather than stretching to fill it.
 const MAX_LINE_PX: f32 = 1.5;
-// What the densest glyph contributes to its pixel. Below 1 so a run of text
-// reads as a bar rather than a slab; thinner characters get a share of it,
-// per `ink_share`.
-const INK: f32 = 0.85;
+// What the densest glyph contributes to its pixel. Every other character gets
+// a share of it, per `ink_share`, and that variation is what keeps a run of
+// text from reading as a slab - so this no longer has to hold back to do it.
+const INK: f32 = 1.0;
 // A text line does not fill its own height, and the gap above and below is
 // what keeps a page of text from reading as one block. This is the ink's share
 // of the line at the tallest a line ever draws.
