@@ -845,19 +845,84 @@ impl SettingsDialog {
 		max_h: f32,
 		scale: f32,
 	) -> Self {
-		let scale = if scale.is_finite() && scale > 0.0 {
-			scale
-		} else {
-			1.0
-		};
+		let scale = sane_scale(scale);
 		let (screen_w, screen_h) = (screen_w / scale, screen_h / scale);
 		let (line_h, max_w, max_h) = (line_h / scale, max_w / scale, max_h / scale);
 		let (label_w, btn_w, row_btn_w) = (label_w / scale, btn_w / scale, row_btn_w / scale);
 		let tab_ws: Vec<f32> = tab_ws.into_iter().map(|w| w / scale).collect();
-		let specs: &'static [Spec] = &ui().specs;
 		let label_w = label_w.max(lay().label_width);
 		let btn_w = btn_w.max(lay().button_width);
 		let row_btn_w = row_btn_w.max(lay().button_width);
+		// Natural size first, then what the screen leaves room for. Below the
+		// natural size the rows region scrolls in that direction; above it the
+		// stretchy controls spread out.
+		let natural = Self::natural_dip(line_h, label_w, btn_w, row_btn_w, &tab_ws);
+		let (w, natural_h) = natural;
+		let (min_w, min_h) = Self::min_size_dip(line_h, btn_w);
+		let w = w.min(max_w.max(min_w));
+		let h = natural_h.min(max_h.max(min_h));
+		let rect = Rect {
+			x: ((screen_w - w) / 2.0).max(0.0),
+			y: ((screen_h - h) / 2.0).max(0.0),
+			w,
+			h,
+		};
+		let specs: &'static [Spec] = &ui().specs;
+		// the user's own values: the live copy wears the performance profile
+		let mut settings = (*config::settings()).clone();
+		crate::profile::unapply(&mut settings);
+		Self {
+			orig: settings.clone(),
+			edited: settings,
+			defaults: Settings::default(),
+			reverted: Vec::new(),
+			rect,
+			natural,
+			specs,
+			tab: 0,
+			tab_ws,
+			scroll: 0.0,
+			hscroll: 0.0,
+			drag_thumb: None,
+			drag_hthumb: None,
+			drag: None,
+			shell_drag: None,
+			pressed: None,
+			pressed_row: None,
+			prompt: None,
+			edit: None,
+			edit_drag: None,
+			select_all_on_up: false,
+			last_click: None,
+			click_streak: 0,
+			open: None,
+			pending: 0,
+			emenu: None,
+			mouse: (0.0, 0.0),
+			os_font: crate::sysfont::monospace().clone(),
+			focus: None,
+			alt: false,
+			shift: false,
+			ctrl: false,
+			line_h,
+			label_w,
+			btn_w,
+			row_btn_w,
+			scale,
+		}
+	}
+
+	// The size the content wants, in DIP, from the chrome already converted at
+	// the boundary. `new` and `rescale` both solve it, and it is long enough that
+	// a second copy would drift.
+	fn natural_dip(
+		line_h: f32,
+		label_w: f32,
+		btn_w: f32,
+		row_btn_w: f32,
+		tab_ws: &[f32],
+	) -> (f32, f32) {
+		let specs: &'static [Spec] = &ui().specs;
 		let btn_h = lay().button_height.max(line_h + lay().row_pad);
 		let shells = config::settings().shells.len();
 		let tallest = (0..tab_titles().len())
@@ -935,61 +1000,49 @@ impl SettingsDialog {
 			.max(dd_w)
 			.max(btns_w)
 			.max(grid_w);
-		// Natural size first, then what the screen leaves room for. Below the
-		// natural size the rows region scrolls in that direction; above it the
-		// stretchy controls spread out.
-		let natural = (w, natural_h);
-		let (min_w, min_h) = Self::min_size_dip(line_h, btn_w);
-		let w = w.min(max_w.max(min_w));
-		let h = natural_h.min(max_h.max(min_h));
-		let rect = Rect {
-			x: ((screen_w - w) / 2.0).max(0.0),
-			y: ((screen_h - h) / 2.0).max(0.0),
-			w,
-			h,
-		};
-		// the user's own values: the live copy wears the performance profile
-		let mut settings = (*config::settings()).clone();
-		crate::profile::unapply(&mut settings);
-		Self {
-			orig: settings.clone(),
-			edited: settings,
-			defaults: Settings::default(),
-			reverted: Vec::new(),
-			rect,
-			natural,
-			specs,
-			tab: 0,
-			tab_ws,
-			scroll: 0.0,
-			hscroll: 0.0,
-			drag_thumb: None,
-			drag_hthumb: None,
-			drag: None,
-			shell_drag: None,
-			pressed: None,
-			pressed_row: None,
-			prompt: None,
-			edit: None,
-			edit_drag: None,
-			select_all_on_up: false,
-			last_click: None,
-			click_streak: 0,
-			open: None,
-			pending: 0,
-			emenu: None,
-			mouse: (0.0, 0.0),
-			os_font: crate::sysfont::monospace().clone(),
-			focus: None,
-			alt: false,
-			shift: false,
-			ctrl: false,
-			line_h,
-			label_w,
-			btn_w,
-			row_btn_w,
-			scale,
-		}
+		(w, natural_h)
+	}
+
+	// A scale-factor change: the window moved to a monitor at another scale, or
+	// the desktop's own scale moved under it. Everything below the boundary is
+	// DIP and stays as it is, so only the factor and the chrome measured in
+	// physical pixels at the old one are refreshed. Values, edits, focus and
+	// scroll are deliberately untouched - a rebuild would lose every unapplied
+	// edit the moment the window crossed a monitor edge.
+	pub fn rescale(
+		&mut self,
+		line_h: f32,
+		label_w: f32,
+		btn_w: f32,
+		row_btn_w: f32,
+		tab_ws: Vec<f32>,
+		max_w: f32,
+		max_h: f32,
+		scale: f32,
+	) {
+		let scale = sane_scale(scale);
+		let (line_h, max_w, max_h) = (line_h / scale, max_w / scale, max_h / scale);
+		let (label_w, btn_w, row_btn_w) = (label_w / scale, btn_w / scale, row_btn_w / scale);
+		self.tab_ws = tab_ws.into_iter().map(|w| w / scale).collect();
+		self.line_h = line_h;
+		self.label_w = label_w.max(lay().label_width);
+		self.btn_w = btn_w.max(lay().button_width);
+		self.row_btn_w = row_btn_w.max(lay().button_width);
+		self.scale = scale;
+		self.natural = Self::natural_dip(
+			self.line_h,
+			self.label_w,
+			self.btn_w,
+			self.row_btn_w,
+			&self.tab_ws,
+		);
+		// The screen holds fewer DIP at a higher scale, so the window may no
+		// longer fit what it was dragged to.
+		let (min_w, min_h) = Self::min_size_dip(self.line_h, self.btn_w);
+		self.rect.w = self.rect.w.min(max_w.max(min_w)).max(min_w);
+		self.rect.h = self.rect.h.min(max_h.max(min_h)).max(min_h);
+		self.scroll = self.scroll.clamp(0.0, self.max_scroll());
+		self.hscroll = self.hscroll.clamp(0.0, self.max_hscroll());
 	}
 
 	// DIP <-> physical pixels. Coordinates and sizes cross the boundary in the
@@ -3140,6 +3193,12 @@ impl SettingsDialog {
 			// Remote is never stored: picking it raises the session override and
 			// leaves the stored profile for the next launch to come back to. Any
 			// pick by hand also lifts a step the display watch took.
+			//
+			// The dropdown stays live while the profile is chosen automatically,
+			// and naming one is how that choice is taken back - otherwise the pick
+			// would be overwritten at the next launch with no sign of it. Remote is
+			// the exception, since it lasts only for this session and says nothing
+			// about what the machine should settle on.
 			Key::PerfProfile => {
 				self.edited.stepped_profile = None;
 				match Profile::from_index(idx) {
@@ -3147,6 +3206,7 @@ impl SettingsDialog {
 					profile => {
 						self.edited.remote_override = false;
 						self.edited.performance_profile = profile.key().to_string();
+						self.edited.performance_automatic = false;
 					}
 				}
 			}
@@ -5744,6 +5804,16 @@ fn measured_plus(measured_px: f32, clear_dip: f32, scale: f32) -> f32 {
 	measured_px + config::dip(clear_dip, scale)
 }
 
+// A scale factor the boundary can divide by. A monitor that reports nothing
+// useful must not take the layout to zero or NaN.
+pub fn sane_scale(scale: f32) -> f32 {
+	if scale.is_finite() && scale > 0.0 {
+		scale
+	} else {
+		1.0
+	}
+}
+
 pub fn chrome_widths(text: &mut crate::text::TextCtx, scale: f32) -> (f32, f32, f32, Vec<f32>) {
 	let attrs = crate::text::ui_attrs();
 	let dip = |v: f32| config::dip(v, scale);
@@ -5843,6 +5913,50 @@ mod tests {
 		d.orig.performance_profile = "custom".to_string();
 		d.edited.performance_profile = "custom".to_string();
 		d
+	}
+
+	// A scale change is a boundary change and nothing else. The layout is solved
+	// in DIP, so the same window comes out the same apparent size on a monitor at
+	// another scale - and the values and unapplied edits have to still be there,
+	// which is the whole reason the dialog is not rebuilt for one.
+	#[test]
+	fn a_scale_change_moves_the_boundary_and_leaves_the_rest() {
+		let mut d = mk_dialog_at(900.0, 1.0);
+		d.set_size(700.0, 600.0);
+		d.edited.margin = 42.0;
+		d.tab = 2;
+		let (was_w, was_line_h, was_label_w, was_natural) =
+			(d.rect.w, d.line_h, d.label_w, d.natural);
+		// what a real caller hands over: the same chrome, measured at 2x
+		d.rescale(
+			18.0 * 2.0,
+			170.0 * 2.0,
+			80.0 * 2.0,
+			90.0 * 2.0,
+			vec![90.0 * 2.0; tab_titles().len()],
+			f32::MAX,
+			900.0 * 2.0,
+			2.0,
+		);
+		// twice the pixels for the same DIP, so nothing below the boundary moved
+		assert!((d.line_h - was_line_h).abs() < 0.01, "line height moved");
+		assert!((d.label_w - was_label_w).abs() < 0.01, "label column moved");
+		assert!(
+			(d.natural.0 - was_natural.0).abs() < 0.01,
+			"natural width moved"
+		);
+		assert!(
+			(d.natural.1 - was_natural.1).abs() < 0.01,
+			"natural height moved"
+		);
+		// and the window is the same size on screen
+		assert!(
+			(d.to_px(d.rect.w) - was_w * 2.0).abs() < 0.01,
+			"the box is a different size on screen"
+		);
+		// the user's own state is untouched
+		assert!((d.edited.margin - 42.0).abs() < f32::EPSILON, "edit lost");
+		assert_eq!(d.tab, 2, "tab lost");
 	}
 
 	// A tab's title is drawn `tab_pad / 2` inside its own box, and the box is only
@@ -6581,11 +6695,38 @@ mod tests {
 		assert!(!d.get_toggle(Key::BgEnabled));
 		assert!(!d.disabled(Key::ScrollEaseIn));
 		assert!(d.disabled(Key::BgImage), "the wallpaper is off again");
-		// the dropdown itself follows the automatic switch
+		// The dropdown used to follow the automatic switch. It stays live now, so
+		// a profile can be named while the machine is still choosing one:
+		//     d.set_toggle(Key::PerfAuto, true);
+		//     assert!(d.disabled(Key::PerfProfile));
 		d.set_toggle(Key::PerfAuto, true);
-		assert!(d.disabled(Key::PerfProfile));
+		assert!(!d.disabled(Key::PerfProfile));
 		d.set_toggle(Key::PerfAuto, false);
 		assert!(!d.disabled(Key::PerfProfile));
+	}
+
+	// Naming a profile is how the automatic choice is taken back, or the pick
+	// would be overwritten at the next launch with nothing to show for it.
+	// Remote is the exception: it lasts this session only and says nothing about
+	// what the machine should settle on.
+	#[test]
+	fn naming_a_profile_switches_off_the_automatic_choice_except_remote() {
+		let mut d = mk_dialog(900.0);
+		d.set_toggle(Key::PerfAuto, true);
+		d.set_radio(Key::PerfProfile, super::Profile::High.index());
+		assert!(
+			!d.get_toggle(Key::PerfAuto),
+			"a named profile leaves the machine still choosing"
+		);
+		assert_eq!(d.edited.performance_profile, "high");
+
+		d.set_toggle(Key::PerfAuto, true);
+		d.set_radio(Key::PerfProfile, super::Profile::Remote.index());
+		assert!(
+			d.get_toggle(Key::PerfAuto),
+			"a temporary remote pick should leave the switch alone"
+		);
+		assert!(d.edited.remote_override);
 	}
 
 	// A 0..1 fraction reads as a whole percent and is stored as the decimal. The
@@ -8599,7 +8740,7 @@ mod tests {
 
 	// A step the display watch took shows in the dropdown and reads as a change,
 	// so the arrow offers the way back. A hand pick lifts it, and picking the
-	// profile the file already holds writes nothing.
+	// profile the file already holds writes only the automatic switch.
 	#[test]
 	fn a_session_step_shows_and_a_hand_pick_lifts_it() {
 		let _guard = config::test_config_lock();
@@ -8634,16 +8775,22 @@ mod tests {
 		assert_eq!(d.get_radio(Key::PerfProfile), super::Profile::Max.index());
 		assert!(d.row_is_default(row));
 		assert!(config::persist(&d.orig, &d.edited));
+		// The file already held Max, so its profile line is left alone. Until
+		// naming one switched the automatic choice off, nothing was written:
+		//     assert_eq!(read_to_string(&path).unwrap(), before, "...");
 		assert_eq!(
 			std::fs::read_to_string(&path).unwrap(),
-			before,
-			"the stored profile did not change, so no line is written"
+			before.replace("automatic: true", "automatic: false"),
+			"only the automatic switch should have moved"
 		);
 
 		d.edited.stepped_profile = Some(super::Profile::Low);
 		d.row_revert(row);
 		assert!(d.edited.stepped_profile.is_none(), "a revert lifts it");
 
+		// the pick above already switched it off, so put it back to have
+		// something for the toggle to change
+		d.edited.performance_automatic = true;
 		d.edited.stepped_profile = Some(super::Profile::Low);
 		d.set_toggle(Key::PerfAuto, false);
 		assert!(

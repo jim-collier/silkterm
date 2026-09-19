@@ -71,20 +71,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
-- 🔬 After a crash in VSCodium required switching to VT-1, the terminal on the same virtual desktop came back with background-only, no text visible. (This looks a lot like a previous bug many weeks ago.)
-	- On some other silkterm windows (but not all), text is visible, but the background is gray, not the theme's black. (Even after changing the theme.) Some silkterm windows seem fine.
-	- After a second switch to VT-1 and back, another silkterm window got a gray background, and invisible text.
-	- Additional info: All terminals actually "came back", eventually, after more than an hour of stepping away from the system.
-	- Note: the X log shows returns at 16:36, 16:42 and 17:59 on 20260917. Four windows were open across all three, on four different builds, all on the GL path, so all had the July console watcher.
-	- Note: VSCodium, python, rustc and a shcl build all crashed with SIGSEGV the same afternoon. Crashes spread across unrelated programs are how a memory fault shows on this box.
-	- Cause, not confirmed: on a return the watcher rebuilt only the glyphs and the wallpaper. Anything else on the device kept what the switch left. The watcher also fires within half a second of the console coming back, before the X server has set the mode again, so a purge after that would spoil the fresh glyphs too.
-	- Fixed: a return now lets the whole device go and builds it again, the same way the idle release does, and does it a second time three seconds later. With a dialog open it keeps the old partial rebuild, since the dialog's context cannot outlive the window's.
-	- Fixed: the debug log no longer records every probe that finds nothing wrong. Those lines filled its size cap in a day in July, so it has recorded nothing since.
-	- Pinned by: `a_return_to_this_console_is_healed_again_once_settled`, watched failing with the second pass pushed out. On the rig, a faked switch and return released and rebuilt the device twice and the window drew normally after.
-	- To confirm: a real switch to a text console and back on the reference box. `~/silk_vramdbg.txt` is full, so move it aside first; with `~/silk_vramdbg.on` in place a return then logs both heals.
-	- Opened: 20260917
-	- UAT 20260919-143007: This appears to be fixed. Upon return, the wallpaper blanks and comes back, and the window title says "resources restored".
-
 - 🔬 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
 	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even muffer's autocopy doesn't work.)
 	- CTRL+shift+C on selected text doesn't work.
@@ -102,6 +88,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Changed: a program can now set the clipboard, and on Linux the primary selection, from the pane in use. Other panes and tabs are ignored. That is the route muffer's auto-copy takes.
 	- Copy on select still only follows a drag SilkTerm sees. An app that takes the mouse copies for itself now instead.
 	- Interesting note: In muffer at least, if text is highlighted, then in another application text is copied and pasted, then you go back to muffer in silkterm to re-copy the still-selected text to clipboard: No mechanism will do it, not even the menu. You have to re-select the text, then it will work.
+	- Cause of that last one, and it is not one of the four routes: muffer tracks the mouse, so the highlight on screen is muffer's own and SilkTerm holds no selection of its own to copy. The only channel is the escape sequence muffer sends when the selection is made, and it does not send it again afterwards. Re-selecting is what makes it send one. Nothing here can be fixed from this end without muffer offering the text again.
 	- Opened: 20260909.
 
 - ✋ A save from Settings moves the lines of a commented-out section under the setting above it.
@@ -133,16 +120,30 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- If it's a real bug, it's new, not a regression.
 	- ✋ Update: It was probably due to running out of GPU memory. Keep an eye on it.
 
-- ✅ Over ssh with X forwarding, a performance rating can be saved for the forwarded screen and replace the one the machine had.
-	- The forwarded display counts as local, so the Remote profile is not used. Code review 20260914 item 9 (F41).
-	- Any display that names a host is a remote screen now, localhost included. X servers have not listened on the network by default for years, so a localhost display is a forwarded one.
-	- Opened: 20260914-124200
-
 - ✋ A config written as single dotted lines grows on every launch, with settings added under the wrong sections.
 	- From nine lines such as `window.columns: 100`, one launch put the scroll settings under `performance` and `margin` under the wallpaper's `rotate` block.
 	- The next launch added them again in the right places, so the file keeps growing.
 	- ✋ The next shcl release may fix this. Check again once it is out.
 	- Opened: 20260915
+
+- 🔘 A clipboard write can leave SilkTerm owning the selection with nothing behind it.
+	- x11-clipboard drops the stored text whenever another program takes the selection, without checking when that happened. One left over from an earlier hand-over, arriving after the next copy, wipes the text that copy just stored.
+	- SilkTerm still owns the selection at that point, so a program asking to paste gets no answer at all and waits out its own timeout. It reads as every copy route failing at once.
+	- Found by reading the crate, not reproduced. It wants a race to hit, so it would be intermittent, which fits how the copy bug above keeps coming back.
+	- Recorded in working notes since 20260905 and never filed.
+	- Opened: 20260919
+
+- 🔘 The About box and the notice box do not follow a change of display scale.
+	- Same hole the Settings dialog had. They are laid out once when they open, into fixed positions, so a monitor at another scale leaves every measurement wrong.
+	- Neither can be resized, and neither keeps what it would need to lay itself out again - About does not hold the adapter it names, and the notice does not hold its paragraphs.
+	- Opened: 20260919
+
+- 🔘 The Settings dialog can be left at the wrong size after a change of display scale.
+	- The layout moves to the new scale, but nothing asks the window for a size to match it, so the two only agree because the toolkit asks for one straight after. Where the window manager declines, such as a maximized or tiled window, the dialog draws at the new scale inside a window that kept its old size, and clicks no longer land where they look. Another change at the same scale does nothing, so the only way out is to close it.
+	- The screen caps are measured again at the same time but nothing is held to them, so a window dragged from a wide screen to a smaller one at a higher scale can come out taller than the screen, with the footer buttons under the taskbar.
+	- Found by reading, not reproduced.
+	- To confirm: two monitors at different scales, with the dialog maximized.
+	- Opened: 20260919
 
 ### New features and enhancements
 
@@ -150,15 +151,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
 	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
 	- Opened: 20260918
-- 🔘 Settings dialog: it does not follow a change of display scale.
-	- Nothing handles a scale-factor change for a dialog window, so its scale is whatever it was when the dialog opened. Dragging it to a monitor at a different scale leaves every measurement in it wrong until it is closed and reopened.
-	- It has always been like this. The dialog can be dragged and resized now, which makes it easier to reach.
-	- The size kept for the rest of the session is stored in pixels rather than in the scale-free unit, so reopening on a monitor at another scale is the wrong size for the same reason.
-	- Opened: 20260909-101500
-
-- 🔘 Settings | Silk: Allow "Profile" to be selected even when "Choose automatically" is enabled.
-	- If user changes it, deselect "Choose automatically".
-	- Exception: If user chooses "Remote (temporary)", don't change state of "Choose automatically".
 
 - 🔘 Minimap:
 	- 🔘 Make text lines even MORE text-like. Still looks to blobbish and not like text viewed from a distance. Needs fewer output pixels per input line, and possibly more anti-aliasing.
@@ -298,6 +290,21 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ After a crash in VSCodium required switching to VT-1, the terminal on the same virtual desktop came back with background-only, no text visible. (This looks a lot like a previous bug many weeks ago.)
+	- On some other silkterm windows (but not all), text is visible, but the background is gray, not the theme's black. (Even after changing the theme.) Some silkterm windows seem fine.
+	- After a second switch to VT-1 and back, another silkterm window got a gray background, and invisible text.
+	- Additional info: All terminals actually "came back", eventually, after more than an hour of stepping away from the system.
+	- Note: the X log shows returns at 16:36, 16:42 and 17:59 on 20260917. Four windows were open across all three, on four different builds, all on the GL path, so all had the July console watcher.
+	- Note: VSCodium, python, rustc and a shcl build all crashed with SIGSEGV the same afternoon. Crashes spread across unrelated programs are how a memory fault shows on this box.
+	- Cause, not confirmed: on a return the watcher rebuilt only the glyphs and the wallpaper. Anything else on the device kept what the switch left. The watcher also fires within half a second of the console coming back, before the X server has set the mode again, so a purge after that would spoil the fresh glyphs too.
+	- Fixed: a return now lets the whole device go and builds it again, the same way the idle release does, and does it a second time three seconds later. With a dialog open it keeps the old partial rebuild, since the dialog's context cannot outlive the window's.
+	- Fixed: the debug log no longer records every probe that finds nothing wrong. Those lines filled its size cap in a day in July, so it has recorded nothing since.
+	- Pinned by: `a_return_to_this_console_is_healed_again_once_settled`, watched failing with the second pass pushed out. On the rig, a faked switch and return released and rebuilt the device twice and the window drew normally after.
+	- To confirm: a real switch to a text console and back on the reference box. `~/silk_vramdbg.txt` is full, so move it aside first; with `~/silk_vramdbg.on` in place a return then logs both heals.
+	- Opened: 20260917
+	- UAT 20260919-143007: This appears to be fixed. Upon return, the wallpaper blanks and comes back, and the window title says "resources restored".
+	- Closed: 20260919-152000
 
 - ✅ With the minimap on, heavy output runs at about half the speed it does with it off. The minimap has been on by default since 2026-09-17, so the published speed rows no longer describe a default install.
 	- Measured on the speed rig, 2026-09-18, the plain row at 160x42: 36.5 MB/s ASCII and a score of 33.9 with the minimap on, against 67.8 and 57.5 with it off. The +candy row reads 38.4 with it on, against 77.4 published.
@@ -480,6 +487,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Note: this also undoes the narrowing it was split from the same day. A setting that names a path reads all three spellings on both platforms again, which is what a config file carried between machines needs. See the Done feature "Pre-interpret the most common bash environment variables".
 	- Opened: 20260916
 	- Closed: 20260916
+
+- ✅ Over ssh with X forwarding, a performance rating can be saved for the forwarded screen and replace the one the machine had.
+	- The forwarded display counts as local, so the Remote profile is not used. Code review 20260914 item 9 (F41).
+	- Any display that names a host is a remote screen now, localhost included. X servers have not listened on the network by default for years, so a localhost display is a forwarded one.
+	- Opened: 20260914-124200
+	- Closed: 20260915
 
 - ✅ A wallpaper set with `silkterm --wallpaper` does not last the session.
 	- With a rotation folder, Reload config after it turns the background black until restart. A reload without the `--wallpaper` step keeps the picture.
@@ -1890,6 +1903,26 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Settings dialog: it does not follow a change of display scale.
+	- Nothing handles a scale-factor change for a dialog window, so its scale is whatever it was when the dialog opened. Dragging it to a monitor at a different scale leaves every measurement in it wrong until it is closed and reopened.
+	- It has always been like this. The dialog can be dragged and resized now, which makes it easier to reach.
+	- The size kept for the rest of the session is stored in pixels rather than in the scale-free unit, so reopening on a monitor at another scale is the wrong size for the same reason.
+	- Opened: 20260909-101500
+	- Fixed: the dialog follows a scale change in place rather than being rebuilt. Its text is rasterized again at the new size, its chrome is measured again, and the layout under that is already in the scale-free unit, so it comes out the same size on screen with the clicks where they look.
+	- Decided: not a rebuild. Reopening was the one thing that worked, and would have been a few lines, but a reopen carries only the tab and the scroll - so every unapplied edit would have gone the moment the window crossed a monitor edge.
+	- Fixed: the size kept for the rest of the session is in the scale-free unit now, so a reopen on another monitor is the same apparent size.
+	- Left alone: About and the notice box, which are laid out once at open into fixed positions and cannot be resized. Filed below.
+	- Pinned by: `a_scale_change_moves_the_boundary_and_leaves_the_rest`, watched failing three ways - the factor left alone, the chrome not re-measured, and the values reset the way a rebuild would.
+	- To confirm: two monitors at different scales on a real desktop. Not reachable on the rig.
+	- Closed: 20260919-153000
+
+- ✅ Settings | Silk: Allow "Profile" to be selected even when "Choose automatically" is enabled.
+	- If user changes it, deselect "Choose automatically".
+	- Exception: If user chooses "Remote (temporary)", don't change state of "Choose automatically".
+	- Fixed: the dropdown is live whatever the switch says, and naming a profile switches "Choose automatically" off. Remote (temporary) leaves it alone.
+	- Pinned by: `naming_a_profile_switches_off_the_automatic_choice_except_remote`, watched failing both ways, and the graying test, watched failing with the old gate put back.
+	- Closed: 20260919-153000
 
 - ✅ Show in window title, if GPU and CPU savings are in effect, then show when restoring, then restored.
 	- In effect: "[regular title] (resource conservation mode)"

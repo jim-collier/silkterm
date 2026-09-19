@@ -61,7 +61,7 @@ pub struct App {
 	settings_view: Option<(Instant, crate::settings_ui::View)>,
 	// and the size it was dragged to, which outlives the view above and lasts
 	// the whole session. Deliberately never written to the config.
-	settings_size: Option<(u32, u32)>,
+	settings_size: Option<(f32, f32)>,
 	// after the dialog is focused, re-assert "keep the terminal under me" a few
 	// times: the WM's own activation (raising the dialog) can come just after our
 	// first restack and re-bury the terminal, so a couple of delayed retries
@@ -157,6 +157,15 @@ impl App {
 			WindowEvent::Resized(size) => {
 				if let Some(d) = &mut self.dialog {
 					d.resize(size.width, size.height);
+				}
+				self.dialog_dirty = true;
+			}
+			// Dragged to a monitor at another scale, or the desktop's scaling
+			// changed. Settings follows it in place; a Resized event brings the
+			// new physical size straight after.
+			WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+				if let Some(d) = &mut self.dialog {
+					d.set_scale(scale_factor);
 				}
 				self.dialog_dirty = true;
 			}
