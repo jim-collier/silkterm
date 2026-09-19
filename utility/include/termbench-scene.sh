@@ -10,6 +10,18 @@
 
 cd "$REPO_DIR" || exit 1
 
+# The terminal was started on a throwaway account. The measuring tool keeps its run
+# history under the real one, so it gets that back; the terminal is already running.
+if [ -n "${BENCH_REAL_HOME:-}" ]; then
+	HOME="$BENCH_REAL_HOME"
+	if [ -n "${BENCH_REAL_XDG_DATA_HOME:-}" ]; then
+		export XDG_DATA_HOME="$BENCH_REAL_XDG_DATA_HOME"
+	else
+		unset XDG_DATA_HOME
+	fi
+	export HOME
+fi
+
 while [ ! -f "$GO_FILE" ]; do
 	stty size > "$SIZE_FILE.tmp" 2>/dev/null && mv "$SIZE_FILE.tmp" "$SIZE_FILE"
 	sleep 0.2

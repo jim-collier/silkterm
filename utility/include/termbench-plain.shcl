@@ -13,3 +13,4 @@ cursor.animation: none
 scroll.smooth_apps: false
 transparency.enabled: false
 text.color_emoji: false
+scroll.minimap.enabled: false

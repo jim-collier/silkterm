@@ -177,6 +177,125 @@ got = bash('repoRoot=/repo; appId=silkterm\n' + lookup + 'printf "%s" "${exeCand
 check("and takes a relative one from the repository",
 	got.stdout == "/repo/tgt/x86_64-pc-windows-gnu/release/silkterm.exe", got.stdout + got.stderr)
 
+## Both rigs start SilkTerm on settings of their own, never the measuring account's.
+## The terminal here is a stand-in that does what SilkTerm does at launch: it rewrites
+## the settings file it loads and adds a PowerShell profile beside it. The speed rig
+## also gets a compositor that only makes its two sockets.
+account = scratch / "account"
+sentinel = account / ".config/silkterm/config.shcl"
+sentinel.parent.mkdir(parents=True)
+sentinel.write_text("performance:\n\tautomatic: true\n\tprofile: low\n")
+record = scratch / "record"
+runtime = scratch / "run"
+runtime.mkdir(mode=0o700)
+work = scratch / "work"
+work.mkdir()
+fakes = scratch / "fakes"
+fakes.mkdir()
+(fakes / "sway").write_text(f"""#!/usr/bin/env python3
+import os, socket, time
+run = {str(runtime)!r}
+for name in (f"sway-ipc.{{os.getuid()}}.{{os.getpid()}}.sock", f"wayland-{{os.getpid()}}"):
+	sock = socket.socket(socket.AF_UNIX)
+	sock.bind(os.path.join(run, name))
+	sock.listen(1)
+	globals()[name] = sock
+time.sleep(120)
+""")
+(fakes / "swaymsg").write_text("#!/bin/sh\nexit 0\n")
+(fakes / "xdpyinfo").write_text("#!/bin/sh\nexit 0\n")
+fake.write_text(f"""#!/bin/sh
+{{ env; printf 'ARGS'; printf ' [%s]' "$@"; echo; }} > {record}
+loaded="${{XDG_CONFIG_HOME:-$HOME/.config}}/silkterm/config.shcl"
+while [ $# -gt 0 ]; do [ "$1" = --config ] && loaded="$2"; shift; done
+mkdir -p "$(dirname "$loaded")" "${{XDG_CONFIG_HOME:-$HOME/.config}}/powershell"
+echo "## written at launch" >> "$loaded"
+echo "# block" >> "${{XDG_CONFIG_HOME:-$HOME/.config}}/powershell/Microsoft.PowerShell_profile.ps1"
+if [ -n "${{GO_FILE:-}}" ]; then
+	while [ ! -f "$GO_FILE" ]; do echo "42 160" > "$SIZE_FILE"; sleep 0.2; done
+	echo "sync DA1" > "$OUT_FILE"
+	echo "exit=0" > "$OUT_FILE.done"
+	exit 0
+fi
+exec sleep 30
+""")
+for stub in (fakes / "sway", fakes / "swaymsg", fakes / "xdpyinfo", fake):
+	stub.chmod(0o755)
+env = dict(os.environ, CARGO_TARGET_DIR=str(target), PATH=f"{fakes}:{os.environ['PATH']}",
+	HOME=str(account), XDG_CONFIG_HOME=str(account / ".config"), XDG_RUNTIME_DIR=str(runtime),
+	TMPDIR=str(work), DBUS_SESSION_BUS_ADDRESS="unix:path=/nonexistent/the-accounts-own-bus")
+for name in ("DISPLAY", "WAYLAND_DISPLAY", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+	env.pop(name, None)
+sentinel_was = sentinel.read_bytes()
+
+def launched():
+	got = {}
+	for line in record.read_text().splitlines():
+		if line.startswith("ARGS"):
+			got["ARGS"] = line
+		elif "=" in line:
+			key, value = line.split("=", 1)
+			got[key] = value
+	return got
+
+def config_arg(got):
+	args = got.get("ARGS", "")
+	return args.split("[--config] [", 1)[1].split("]", 1)[0] if "[--config] [" in args else ""
+
+if shutil.which("dbus-run-session") is None:
+	print("  skip the speed rig's launch: no dbus-run-session here")
+else:
+	speed = str(UTILITY / "include/termbench-run.bash")
+	for key, marker in (("silkterm", "profile: custom"), ("silkplain", "text.scrim.enabled: false")):
+		record.unlink(missing_ok=True)
+		got = bash('"$1" --term "$2" --no-save --reps 1 --keep', speed, key)
+		## --keep leaves the stand-in compositor up as well; end that one by its pid
+		kept_rig = got.stdout.split("rig: sway pid ", 1)[1].split(",", 1)[0] if "rig: sway pid " in got.stdout else ""
+		if kept_rig.isdigit():
+			os.kill(int(kept_rig), 15)
+		check(f"the speed rig runs its {key} row through", got.returncode == 0, got.stdout[-400:] + got.stderr[-400:])
+		seen = launched() if record.exists() else {}
+		home = seen.get("HOME", "")
+		check(f"{key} gets a home the rig made", home.startswith(str(work)) and home != str(account), home)
+		check(f"{key} gets settings and data folders under it",
+			all(seen.get(name, "").startswith(home + "/") for name in
+				("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME")), str(seen))
+		check(f"{key} gets a session bus of its own",
+			seen.get("DBUS_SESSION_BUS_ADDRESS", "") not in ("", env["DBUS_SESSION_BUS_ADDRESS"]),
+			seen.get("DBUS_SESSION_BUS_ADDRESS", ""))
+		loaded = config_arg(seen)
+		check(f"{key} is handed the rig's own settings file",
+			loaded.startswith(str(work)) and marker in Path(loaded).read_text(), loaded)
+		check(f"{key} prints the profile in force",
+			"profile in force: automatic=false profile=custom" in got.stdout, got.stdout[-300:])
+	check("the account's settings file is as it was", sentinel.read_bytes() == sentinel_was)
+	check("and nothing was added beside it", not (account / ".config/powershell").exists())
+	## --keep leaves the work folder for the checks above. Without it the rig removes it.
+	for left in work.iterdir():
+		shutil.rmtree(left, ignore_errors=True)
+	bash('"$1" --term silkterm --no-save --reps 1', speed)
+	check("the speed rig removes what it made", not any(work.iterdir()), str(list(work.iterdir())))
+
+## The size rig's +candy row: shipped settings with the profile pinned, and the rig
+## says which profile ran. A row whose profile moved is refused.
+record.unlink(missing_ok=True)
+got = bash('source "$1" && fMain --term silkterm --settle 1 --keep', str(size_rig))
+seen = launched() if record.exists() else {}
+candy = Path(seen.get("XDG_CONFIG_HOME", "/nonexistent")) / "silkterm/config.shcl"
+check("the size rig's +candy row starts on the rig's settings",
+	candy.is_file() and "profile: custom" in candy.read_text() and str(account) not in str(candy), str(candy))
+check("and prints the profile in force",
+	"profile in force: automatic=false profile=custom" in got.stdout, got.stdout[-300:] + got.stderr[-300:])
+check("the account's settings file is still as it was", sentinel.read_bytes() == sentinel_was)
+got = bash('source "$1"; printf "performance:\n\tautomatic: true\n\tprofile: low\n" > "$2"; fRequireCandyProfile "$2"',
+	str(UTILITY / "include/bench-common.bash"), str(scratch / "stepped.shcl"))
+check("a +candy row whose profile stepped down is refused",
+	got.returncode != 0 and "automatic=true profile=low" in got.stderr, got.stdout + got.stderr)
+fake.unlink()
+kept = candy.parents[2] if candy.is_file() else None
+if kept and kept.name.startswith("sizebench.") and kept.parent == Path("/tmp"):
+	shutil.rmtree(kept, ignore_errors=True)
+
 ## README note 9 names the rig behind each group of columns. Each has to be the
 ## rig its script really is.
 note9 = next((ln for ln in original.splitlines() if ln.startswith("<sub><sup>9</sup>")), "")
@@ -196,3 +315,4 @@ print("all passed")
 
 ##	History:
 ##		- 20260917 JC: Created.
+##		- 20260918 JC: Both rigs start SilkTerm on settings of their own.
