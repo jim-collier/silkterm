@@ -174,7 +174,7 @@ rows:
 		options: "Custom", "Max silk", "High", "Low", "Standard terminal", "Remote (temporary)"
 		indent: 1
 		setting: performance.profile
-		help: "What the look is allowed to cost. Max silk is every effect at its shipped setting. High is quicker scrolling and a cheaper text halo. Low also drops the halo and the cursor animation, keeping the wallpaper and a two-pixel outline. Standard terminal has no smooth scrolling at all. Custom uses your own values. Remote (temporary) is Standard terminal for a remote screen, and lasts only for this session. Picking one here switches off Choose automatically, except Remote (temporary), which leaves it alone."
+		help: "What the look is allowed to cost, from Max silk with every effect at its shipped setting down to Standard terminal with no smooth scrolling at all; Custom uses your own values. Picking one here switches off Choose automatically. Remote (temporary) is the exception: it is Standard terminal for a remote screen and lasts only for this session, so it leaves that switch alone."
 
 	## The label stays short because the widest one on any tab sets the panel's
 	## width, and the flyover carries what it leaves out.
