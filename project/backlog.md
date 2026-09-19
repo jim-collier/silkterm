@@ -290,6 +290,10 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- The Rust 1.89 badge, bash 3.2 for `install.bash` and PowerShell 5.1 for `install.ps1` hold today, and nothing builds or runs with those versions.
 	- Opened: 20260914-124200
 
+- 🔘 Minimap: with a very deep scrollback, redrawing the map under heavy output stops the terminal for a moment each time.
+	- At 100,000 lines one redraw holds the terminal for about 150 ms, and at the 1,000,000-line maximum it would be over a second. The time between redraws already grows with it, so the average cost stays small; the pause itself does not.
+	- Opened: 20260919
+
 ### Done
 
 #### Done - Bugs
