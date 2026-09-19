@@ -4228,28 +4228,56 @@ fn backfilled_text(text: &str) -> Result<Option<String>, String> {
 }
 
 // A line indented deeper than its block needs still reads as that block's, until
-// an active line is added above it. Then it reads as part of that line and its
-// value stops loading, with nothing said. A short hand-written file is where it
-// happens: `rows:` two tabs in under `window:`, and the template's own active
-// lines arriving above it. Such a line is moved out to the depth its block
-// gives, which a save would do anyway. Err names a setting that still reads
-// differently after that.
+// a line is added beside it at the block's own depth. An active line above then
+// takes it for a child and its value stops loading, and a line below it at the
+// shallower depth cannot be read at all, which makes every later save refuse.
+// Nothing says so either way. A short hand-written file is where it happens:
+// `rows:` two tabs in under `window:`, and the template's lines arriving around
+// it. Such lines are moved out to the depth their block gives, one at a time
+// until the file reads as it did, which a save would do anyway. Err names what
+// still reads differently after that.
 fn unbury(text: &str, lines: &mut [String], origin: &[Option<usize>]) -> Result<(), String> {
 	let before = shcl::Document::parse(text);
 	let source: Vec<&str> = text.lines().collect();
 	let walked = walk_settings(text);
-	let settings: Vec<(usize, &str)> = walked
-		.iter()
-		.filter_map(|w| match w {
-			WalkLine::Setting {
-				index,
-				path,
-				active: true,
-				header: false,
-			} => Some((*index, path.as_str())),
-			_ => None,
-		})
-		.collect();
+	// each active setting with the line it should be: its block's indent plus a tab
+	let mut settings: Vec<(usize, &str, String)> = Vec::new();
+	for w in &walked {
+		let WalkLine::Setting {
+			index,
+			path,
+			active: true,
+			header: false,
+		} = w
+		else {
+			continue;
+		};
+		let key = line_setting_key(source[*index]).unwrap_or(path);
+		let block = path
+			.strip_suffix(key)
+			.map_or("", |rest| rest.trim_end_matches('.'));
+		let indent = if block.is_empty() {
+			String::new()
+		} else {
+			let header = walked.iter().rev().find_map(|w| match w {
+				WalkLine::Setting {
+					index: at,
+					path: p,
+					active: true,
+					header: true,
+				} if at < index && p == block => Some(*at),
+				_ => None,
+			});
+			let Some(header) = header else { continue };
+			let line = source[header];
+			format!("{}\t", &line[..line.len() - line.trim_start().len()])
+		};
+		settings.push((
+			*index,
+			path.as_str(),
+			format!("{indent}{}", source[*index].trim_start()),
+		));
+	}
 	let reads = |doc: &shcl::Document, path: &str| {
 		let read = doc.read_string(path);
 		(read.value, read.status)
@@ -4266,51 +4294,30 @@ fn unbury(text: &str, lines: &mut [String], origin: &[Option<usize>]) -> Result<
 		let mut joined = lines.join("\n");
 		joined.push('\n');
 		let after = shcl::Document::parse(&joined);
-		let Some(path) = loaded
+		let changed = loaded
 			.iter()
-			.find(|path| reads(&before, path) != reads(&after, path))
-		else {
-			// A line that held no value can still go from read to unreadable, and
-			// one unreadable line makes every later save refuse.
-			return if after.lost_count() > before.lost_count() {
-				Err("a line".to_string())
-			} else {
-				Ok(())
-			};
-		};
-		let Some((index, path)) = settings.iter().find(|(_, p)| p == path).copied() else {
-			return Err(format!("`{path}`"));
-		};
-		let key = line_setting_key(source[index]).unwrap_or(path);
-		let block = path
-			.strip_suffix(key)
-			.map_or("", |rest| rest.trim_end_matches('.'));
-		let indent = if block.is_empty() {
-			String::new()
-		} else {
-			let header = walked.iter().rev().find_map(|w| match w {
-				WalkLine::Setting {
-					index: at,
-					path: p,
-					active: true,
-					header: true,
-				} if *at < index && p == block => Some(*at),
-				_ => None,
-			});
-			let Some(header) = header else {
-				return Err(format!("`{path}`"));
-			};
-			let line = source[header];
-			format!("{}\t", &line[..line.len() - line.trim_start().len()])
-		};
-		let Some(now) = origin.iter().position(|from| *from == Some(index)) else {
-			return Err(format!("`{path}`"));
-		};
-		let moved = format!("{indent}{}", lines[now].trim_start());
-		if moved == lines[now] {
-			return Err(format!("`{path}`"));
+			.find(|path| reads(&before, path) != reads(&after, path));
+		if changed.is_none() && after.lost_count() <= before.lost_count() {
+			return Ok(());
 		}
-		lines[now] = moved;
+		let now_at = |index: usize| origin.iter().position(|from| *from == Some(index));
+		// the setting that changed, or with only a line gone unreadable, the first
+		// one still deeper than it should be
+		let pick = settings.iter().find(|(index, path, proper)| match changed {
+			Some(changed) => path == changed,
+			None => now_at(*index).is_some_and(|now| lines[now] != *proper),
+		});
+		let what = || changed.map_or("a line".to_string(), |path| format!("`{path}`"));
+		let Some((index, _, proper)) = pick else {
+			return Err(what());
+		};
+		let Some(now) = now_at(*index) else {
+			return Err(what());
+		};
+		if lines[now] == *proper {
+			return Err(what());
+		}
+		lines[now].clone_from(proper);
 	}
 	Err("a setting".to_string())
 }
@@ -7343,6 +7350,12 @@ mod tests {
 				"wallpaper.rotate.interval_s",
 				"wallpaper:\n\trotate:\n\t\t\t\tinterval_s: 40\n",
 			),
+			// two of them: a line added between at the block's depth could not be
+			// read, and no save went through after that
+			(
+				"window.columns",
+				"window:\n\t# x:\n\t\trows: 31\n\t\tcolumns: 97\n",
+			),
 		];
 		for (path, text) in files {
 			let wanted = shcl::Document::parse(text).get_string(path);
@@ -7354,6 +7367,11 @@ mod tests {
 				shcl::Document::parse(&out).get_string(path),
 				wanted,
 				"{path} still loads:\n{out}"
+			);
+			assert_eq!(
+				shcl::Document::parse(&out).lost_count(),
+				0,
+				"{path}: every line still reads:\n{out}"
 			);
 			assert_eq!(
 				backfilled_text(&out),
