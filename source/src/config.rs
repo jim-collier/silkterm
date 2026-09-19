@@ -3804,10 +3804,33 @@ fn migrated_text(text: &str, keep_default_shell: bool) -> Option<String> {
 	})
 }
 
-// What a launch parses. The rating check reads through this as well, so what it
-// compares and what loads cannot drift apart.
+// What a launch parses when its rewrites were put off because the file looked
+// open elsewhere: the renames still apply, in memory.
 fn loaded_text(text: &str) -> std::borrow::Cow<'_, str> {
 	migrate_config_text(text).map_or(std::borrow::Cow::Borrowed(text), std::borrow::Cow::Owned)
+}
+
+// What the next launch parses: the text its rewrites leave, in the launch's own
+// order. The rating check compares through this. Each step reads how the one
+// before it wrote a line (the conversion copies a font list's quotes, and the
+// renames then look at them), so leaving one out lets a rating write change what
+// another setting loads a launch later. Backfill is left out on purpose: it only
+// adds lines the program owns, and it runs whether or not a rating was written.
+// A step added to `load` belongs here too.
+fn next_launch_text(text: &str) -> std::borrow::Cow<'_, str> {
+	let steps: [fn(&str) -> Option<String>; 4] = [
+		wallpaper_heading_repaired,
+		converted_config_text,
+		adopted_shell_text,
+		migrate_config_text,
+	];
+	let mut out: Option<String> = None;
+	for step in steps {
+		if let Some(next) = step(out.as_deref().unwrap_or(text)) {
+			out = Some(next);
+		}
+	}
+	out.map_or(std::borrow::Cow::Borrowed(text), std::borrow::Cow::Owned)
 }
 
 // One-time: `shell.default` used to name the default shell on its own. The list
@@ -3820,24 +3843,39 @@ fn loaded_text(text: &str) -> std::borrow::Cow<'_, str> {
 // that never had one, or has already been through this, is not touched at all.
 fn adopt_default_shell(path: &std::path::Path) {
 	let Some(doc) = read_doc(path) else { return };
-	let Some(wanted) = doc
-		.get_string("shell.default")
-		.ok()
-		.map(|v| v.trim().to_string())
-		.filter(|v| !v.is_empty())
-	else {
+	let Some(adopted) = adopted_shell_doc(&doc) else {
 		return;
 	};
 	if config_open_elsewhere(path) {
 		note_config_busy(path);
 		return;
 	}
-	let stored = read_shells(&doc);
+	let _ = write_doc(path, &adopted);
+}
+
+// None for a file with no active `shell.default`.
+fn adopted_shell_doc(doc: &shcl::Document) -> Option<shcl::Document> {
+	let wanted = doc
+		.get_string("shell.default")
+		.ok()
+		.map(|v| v.trim().to_string())
+		.filter(|v| !v.is_empty())?;
+	let stored = read_shells(doc);
 	let moved = adopt_default_into(&stored, &wanted);
-	let mut doc = doc;
+	let mut doc = doc.clone();
 	write_shells(&mut doc, &stored, &moved);
 	doc.remove("shell.default");
-	let _ = write_doc(path, &doc);
+	Some(doc)
+}
+
+// The adoption as text, for `next_launch_text`. A file with a line that cannot be
+// read is left alone, as the save is refused there.
+fn adopted_shell_text(text: &str) -> Option<String> {
+	let doc = shcl::Document::parse(text);
+	if doc.lost_count() > 0 {
+		return None;
+	}
+	adopted_shell_doc(&doc).map(|doc| doc.to_canonical())
 }
 
 // The list with `wanted` at the front. An entry already running that shell moves;
@@ -4276,10 +4314,10 @@ fn saved_rating(before: &shcl::Document, wanted: &[(&str, Option<RatingValue>)])
 	Some(doc.to_canonical())
 }
 
-// The parse a launch makes of this text, or None where the migration leaves the
-// text alone and the caller's own parse of it serves.
+// The parse a launch makes of this text, or None where the launch's rewrites
+// leave the text alone and the caller's own parse of it serves.
 fn migrated_parse(text: &str) -> Option<shcl::Document> {
-	match loaded_text(text) {
+	match next_launch_text(text) {
 		std::borrow::Cow::Owned(text) => Some(shcl::Document::parse(&text)),
 		std::borrow::Cow::Borrowed(_) => None,
 	}
@@ -4308,15 +4346,19 @@ fn reads_as_asked(
 		.collect();
 	raw_after.lost_count() <= before.lost_count()
 		&& settings_besides(after, &written) == settings_besides(loaded, &written)
-		&& wanted.iter().all(|(leaf, value)| {
-			let path = format!("performance.{leaf}");
-			match value {
-				None => true,
-				Some(RatingValue::Word(word)) => {
-					after.get_string(&path).is_ok_and(|got| got == *word)
+		// in the file as written and as the next launch leaves it: that launch
+		// writes a file from before the nested layout afresh, rating and all
+		&& [&raw_after, after].into_iter().all(|doc| {
+			wanted.iter().all(|(leaf, value)| {
+				let path = format!("performance.{leaf}");
+				match value {
+					None => true,
+					Some(RatingValue::Word(word)) => {
+						doc.get_string(&path).is_ok_and(|got| got == *word)
+					}
+					Some(RatingValue::Flag(flag)) => doc.get_bool(&path) == Ok(*flag),
 				}
-				Some(RatingValue::Flag(flag)) => after.get_bool(&path) == Ok(*flag),
-			}
+			})
 		})
 }
 
@@ -7020,11 +7062,85 @@ mod tests {
 	// again before the rating, as a launch that found it busy leaves it.
 	#[test]
 	fn a_rating_changes_nothing_the_next_launch_migrates() {
+		let stack = format!(
+			"performance.automatic: true\nfont:\n\tuse_system_family: false\n\tfamily: '{}'\n",
+			SUPERSEDED_FONT_STACKS[0]
+		);
+		rating_leaves_other_loads_alone(
+			"ratingmigrate",
+			vec![
+				(
+					"an old default font list in single quotes",
+					stack.clone(),
+					|s| format!("{:?}", s.font_family),
+				),
+				(
+					"the same beside a bare Windows folder",
+					format!("{stack}shell:\n\tstartup_directory: C:\\Users\\x\n"),
+					|s| format!("{:?}", s.font_family),
+				),
+				(
+					"a renamed colour under a commented heading",
+					"performance.automatic: true\ncolors:\n\t# x:\n\t\tfocus: \"#112233\"\n"
+						.to_string(),
+					|s| format!("{:?} {:?}", s.focus, s.highlight),
+				),
+				(
+					"a renamed tab width under a commented heading",
+					"performance.automatic: true\nwindow:\n\t# x:\n\t\ttab_min_width_pct: 12\n"
+						.to_string(),
+					|s| s.tab_regular_pct.to_string(),
+				),
+			],
+		);
+	}
+
+	// The same one launch step earlier. A file from before the nested layout is
+	// converted first, and the conversion copies a font list with its quotes, which
+	// the refresh after it reads. A save spells them the other way, so the rating
+	// check has to look through the conversion as well.
+	#[test]
+	fn a_rating_changes_nothing_the_next_launch_converts() {
+		let flat = format!("font_family: '{}'\n", SUPERSEDED_FONT_STACKS[0]);
+		let font = |s: &Settings| format!("{:?}", s.font_family);
+		rating_leaves_other_loads_alone(
+			"ratingconvert",
+			vec![
+				("an old font list in a flat file", flat.clone(), font),
+				(
+					"the same with the system font switched off",
+					format!("use_system_font: false\n{flat}"),
+					font,
+				),
+				(
+					"the same with Windows line ends",
+					format!("use_system_font: false\r\n{}", flat.replace('\n', "\r\n")),
+					font,
+				),
+				(
+					"the same beside a bare Windows folder",
+					format!(
+						"use_system_font: false\n{flat}wallpaper_folder: C:\\Users\\x\\Pictures\n"
+					),
+					font,
+				),
+			],
+		);
+	}
+
+	// Each file is loaded, put back as it was (the state a launch leaves when it
+	// finds the file open elsewhere), rated, and loaded again. Either the rating
+	// went in and `other` loads as before, or nothing was written and it goes in a
+	// launch later. The last step shows the case has teeth: a plain save of the
+	// same rating does move `other`.
+	fn rating_leaves_other_loads_alone(
+		tag: &str,
+		files: Vec<(&str, String, fn(&Settings) -> String)>,
+	) {
 		const ID: &str = "0123456789abcdef";
 		let _guard = super::test_config_lock();
 		let _ = settings();
-		let dir =
-			std::env::temp_dir().join(format!("silkterm_ratingmigrate_{}", std::process::id()));
+		let dir = std::env::temp_dir().join(format!("silkterm_{tag}_{}", std::process::id()));
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).unwrap();
 		let path = dir.join("config.shcl");
@@ -7034,34 +7150,6 @@ mod tests {
 			rated_hardware: Some(ID),
 			check_next_run: None,
 		};
-		let stack = format!(
-			"performance.automatic: true\nfont:\n\tuse_system_family: false\n\tfamily: '{}'\n",
-			SUPERSEDED_FONT_STACKS[0]
-		);
-		let files: [(&str, String, fn(&Settings) -> String); 4] = [
-			(
-				"an old default font list in single quotes",
-				stack.clone(),
-				|s| format!("{:?}", s.font_family),
-			),
-			(
-				"the same beside a bare Windows folder",
-				format!("{stack}shell:\n\tstartup_directory: C:\\Users\\x\n"),
-				|s| format!("{:?}", s.font_family),
-			),
-			(
-				"a renamed colour under a commented heading",
-				"performance.automatic: true\ncolors:\n\t# x:\n\t\tfocus: \"#112233\"\n"
-					.to_string(),
-				|s| format!("{:?} {:?}", s.focus, s.highlight),
-			),
-			(
-				"a renamed tab width under a commented heading",
-				"performance.automatic: true\nwindow:\n\t# x:\n\t\ttab_min_width_pct: 12\n"
-					.to_string(),
-				|s| s.tab_regular_pct.to_string(),
-			),
-		];
 		for (what, text, other) in files {
 			std::fs::write(&path, &text).unwrap();
 			let loaded = other(&reload_from_disk());
@@ -9143,9 +9231,9 @@ mod tests {
 	mod fuzz {
 		use super::super::{
 			CONFIG_REMOVED, CONFIG_RENAMES, RatingLines, SUPERSEDED_FONT_STACKS, config_complaints,
-			default_config, disabled_text, loaded_text, migrate_config_text, read_raw, resolve,
-			reverted_text, setting_groups, setting_lines, walk_settings, with_rating_lines,
-			with_shcl_banner,
+			default_config, disabled_text, migrate_config_text, next_launch_text, read_raw,
+			resolve, reverted_text, setting_groups, setting_lines, walk_settings,
+			with_rating_lines, with_shcl_banner,
 		};
 		use crate::fuzz;
 
@@ -9620,11 +9708,19 @@ mod tests {
 				rng.pick(CONFIG_RENAMES).0
 			};
 			let (block, leaf) = old.rsplit_once('.').unwrap_or(("", old));
-			match rng.below(4) {
+			match rng.below(7) {
 				0 => format!("font:\n\tfamily: '{}'\n", rng.pick(SUPERSEDED_FONT_STACKS)),
 				1 => format!("{block}:\n\t# x:\n\t\t{leaf}: 12\n"),
 				2 => format!("{block}:\n\t\t# x:\n\t{leaf}: 12\n"),
-				_ => format!("{block}:\n    # x:\n\t{leaf}: 12\n"),
+				3 => format!("{block}:\n    # x:\n\t{leaf}: 12\n"),
+				// the steps before the renames: a file from before the nested
+				// layout, and a default shell still to be moved into the list
+				4 => format!("font_family: '{}'\n", rng.pick(SUPERSEDED_FONT_STACKS)),
+				5 => format!(
+					"use_system_font: false\nfont_family: '{}'\nwallpaper_folder: C:\\Users\\x\n",
+					rng.pick(SUPERSEDED_FONT_STACKS)
+				),
+				_ => "shell:\n\tdefault: /bin/sh\nfont:\n\tfamily: 'Some Mono'\n".to_string(),
 			}
 		}
 
@@ -9688,8 +9784,8 @@ mod tests {
 				};
 				(read(a), read(b))
 			};
-			// the parse a launch makes, where its migration changes the text
-			let migrated = |t: &str| match loaded_text(t) {
+			// the parse the next launch makes, where its rewrites change the text
+			let migrated = |t: &str| match next_launch_text(t) {
 				std::borrow::Cow::Owned(t) => Some(shcl::Document::parse(&t)),
 				std::borrow::Cow::Borrowed(_) => None,
 			};
@@ -9718,15 +9814,21 @@ mod tests {
 				let saved_text = saved.to_canonical();
 				let saved = shcl::Document::parse(&saved_text);
 				let saved_migrated = migrated(&saved_text);
+				// The rating has to be there for the next launch to read. A file
+				// from before the nested layout is written fresh by that launch,
+				// which carries no rating over, so a write into one keeps nothing.
+				let saved_loads = saved_migrated.as_ref().unwrap_or(&saved);
+				let kept_in = |doc: &shcl::Document| {
+					lines.profile.is_none_or(|word| {
+						doc.get_string("performance.profile").as_deref() == Ok(word)
+					}) && lines.rated_hardware.is_none_or(|word| {
+						doc.get_string("performance.rated_hardware").as_deref() == Ok(word)
+					}) && lines
+						.check_next_run
+						.is_none_or(|flag| doc.get_bool("performance.check_next_run") == Ok(flag))
+				};
 				let kept_by_save =
-					set && saved.lost_count() == 0
-						&& lines.profile.is_none_or(|word| {
-							saved.get_string("performance.profile").as_deref() == Ok(word)
-						}) && lines.rated_hardware.is_none_or(|word| {
-						saved.get_string("performance.rated_hardware").as_deref() == Ok(word)
-					}) && lines.check_next_run.is_none_or(|flag| {
-						saved.get_bool("performance.check_next_run") == Ok(flag)
-					}) && {
+					set && saved.lost_count() == 0 && kept_in(&saved) && kept_in(saved_loads) && {
 						let (then, now) =
 							reads(before_loads, saved_migrated.as_ref().unwrap_or(&saved));
 						then == now
