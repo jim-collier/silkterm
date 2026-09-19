@@ -45,6 +45,18 @@ GPU-accelerated terminals swing by a factor of two; CPU-rendered ones do not mov
 
 Headless sway is used rather than the live desktop so the measurement neither disturbs nor is disturbed by whatever the machine is actually doing.
 
+### Every terminal runs on a throwaway account
+
+The speed rig starts each terminal with a home folder, settings, data and cache folders, and a session bus that it makes for the run and removes after. A published figure then cannot depend on the measuring account's own settings, fonts or wallpaper, and a terminal that writes its settings at launch writes them into the throwaway folder. SilkTerm does that: it fills in its settings file and adds a block to the PowerShell profile. The session bus is part of it because GNOME Terminal and xfce4-terminal keep their settings behind it. Setting `HOME` alone is not enough on a desktop that exports `XDG_CONFIG_HOME`, which most do.
+
+- The measuring tool inside the terminal gets the real home back, so its run history still goes to `~/.local/share/silkterm-bench`.
+
+- Terminals fall back to the system's default monospace font. A cell of a different size can make the grid fitter hop either side of 160x42, so it takes the middle of two near misses.
+
+- Re-measured through the new launch on 2026-09-18, xfce4-terminal read 94.0 MB/s ASCII against 94.2 published, so the throwaway account does not move a figure by itself. The size rig already gave each terminal its own settings folder, and still uses the account's session bus.
+
+Both SilkTerm rows pin the automatic performance profile off (`termbench-candy.shcl` and `termbench-plain.shcl`). Left on, SilkTerm rates the renderer at first launch and turns effects down on a slow one. On the size rig's software X server it chose Low, which switches off the text scrim and the cursor animation, and the "+candy" row was then measured without them. Each rig prints the profile that was in force, and refuses a "+candy" run where it moved.
+
 ### Shortening a run
 
 Use `--reps`. Fewer repetitions of the same payloads leaves the measured rate directly comparable and only widens the confidence interval - Tabby sits in the published table at 4 reps.
@@ -95,7 +107,7 @@ Most terminals need nothing but their key. The awkward ones, and why:
 - **WezTerm** 20240203 silently falls back to X11 under sway 1.10 despite `enable_wayland`. It is parser-bound and agreed within 1.7% across rigs, so its figure holds anywhere.
 - **Hyper** rewrites `~/.hyper.js` on every launch, so it has to be written fresh per run. It never answers the barrier, so it cannot be timed at all.
 - **Tabby** ignores `SHELL` and offers no profile hook that takes. Dismiss its Welcome tab once by clicking "Close and never show again", then hook the run through the login shell's `.bashrc`.
-- **Electron terminals** must not be run under a fake `HOME`: the results store lives under `~/.local/share/silkterm-bench`, and redirecting `HOME` sends the results there too. Give `AppRun` an `APPDIR` or run the inner binary directly. They exit with SIGTRAP or SIGILL after measurement under Xvfb, which is harmless - the pids have already been sampled.
+- **Electron terminals** driven by hand must not be run under a fake `HOME`: the results store lives under `~/.local/share/silkterm-bench`, and redirecting `HOME` sends the results there too. The rig's own launches hand the real home back to the measuring tool, so this is only about the ones it cannot start. Give `AppRun` an `APPDIR` or run the inner binary directly. They exit with SIGTRAP or SIGILL after measurement under Xvfb, which is harmless - the pids have already been sampled.
 
 Only processes these scripts launched are ever signaled, and only by pid. A pattern kill would match the harness's own command line, and has taken out a live session before now.
 
@@ -200,6 +212,7 @@ Windows **speed** figures are not comparable with the Linux rows, and calibratin
 | `termbench-run.bash` | speed rig: compositor bring-up, terminal launch, grid fit, teardown |
 | `termbench-scene.sh` | runs inside the terminal; reports its grid, then runs the benchmark |
 | `termbench-plain.shcl` | SilkTerm with every optional effect off, for the "plain" rows |
+| `termbench-candy.shcl` | SilkTerm as shipped with the automatic profile pinned off, for the "+candy" rows |
 | `sizebench-run.bash` | size rig: display bring-up, launch, grid sizing, process-tree collection |
 | `sizebench-classify.py` | the closure classifier and the accounting, plus a collector for each platform |
 | `showdown-readme.py` | writes the File+deps and Mem cells for one row |

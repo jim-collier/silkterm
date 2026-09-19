@@ -71,6 +71,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
+- 🔘 With the minimap on, heavy output runs at about half the speed it does with it off. The minimap has been on by default since 2026-09-17, so the published speed rows no longer describe a default install.
+	- Measured on the speed rig, 2026-09-18, the plain row at 160x42: 36.5 MB/s ASCII and a score of 33.9 with the minimap on, against 67.8 and 57.5 with it off. The +candy row reads 38.4 with it on, against 77.4 published.
+	- xfce4-terminal read 94.0 against 94.2 published in the same sitting, so the machine and the rig were not the cause.
+	- Even with the minimap off the plain row is about a fifth under its published 86.9. Three runs per scene with other work on the box, so that part needs a proper run before it means anything.
+
 - 🔬 After a crash in VSCodium required switching to VT-1, the terminal on the same virtual desktop came back with background-only, no text visible. (This looks a lot like a previous bug many weeks ago.)
 	- On some other silkterm windows (but not all), text is visible, but the background is gray, not the theme's black. (Even after changing the theme.) Some silkterm windows seem fine.
 	- After a second switch to VT-1 and back, another silkterm window got a gray background, and invisible text.
@@ -391,8 +396,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- A quick or `--any-size` run from `update-showdown.py` writes no speed or size figure.
 		- The Ver cell keeps a prerelease tag, and drops only the build stamp.
 		- Pinned by `cicd/tests/showdown/run.py`, which runs in the pipeline.
-	- Code review 20260914 item 92 (F124, should-fix): The speed benchmark runs SilkTerm and the other terminals on the measuring user's own settings, and changes that user's settings file and PowerShell profile.
-	- Code review 20260914 item 93 (F125, should-fix): The size benchmark measures the "SilkTerm +candy" row with its effects turned down.
+	- ✅ Code review 20260914 item 92 (F124, should-fix): The speed benchmark runs SilkTerm and the other terminals on the measuring user's own settings, and changes that user's settings file and PowerShell profile.
+		- Every terminal the speed rig starts gets a home folder, settings and data folders and a session bus that the rig makes and removes. The session bus is included because GNOME Terminal and xfce4-terminal keep their settings behind it.
+		- Published rows are left as they are. xfce4-terminal re-measured through the new launch reads 94.0 MB/s ASCII against 94.2 published.
+		- The plain row's settings now turn the minimap off as well. It had become a default after that file was written.
+		- The grid fitter takes a size only when two reports agree, and takes the middle of two near misses. A new account's default font made it hop either side of 160x42 forever.
+		- Pinned by `cicd/tests/showdown/run.py`, with a stand-in terminal that rewrites whatever settings file it is given. It fails on the old rigs.
+	- ✅ Code review 20260914 item 93 (F125, should-fix): The size benchmark measures the "SilkTerm +candy" row with its effects turned down.
+		- Both rigs start the +candy row on the shipped settings with the automatic profile pinned off, print the profile that was in force, and refuse the run if it moved.
+		- The size rig now reads 125.6 MiB for that row, against 167.7 published. The drop is from the memory work since, not from this change, and the published row is left alone.
 	- ✅ Code review 20260914 item 94 (F126, should-fix): The benchmark rigs and the wine launcher look for SilkTerm under `target/` even when `CARGO_TARGET_DIR` puts the build elsewhere.
 		- All three look under `CARGO_TARGET_DIR` when it is set, and a relative one is taken from the repository.
 		- The size rig stops with its own message when there is no build, before it starts a display. The speed rig does the same.

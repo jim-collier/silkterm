@@ -52,7 +52,12 @@ declare -i _keepRig=0
 
 cleanup(){
 	local -i rc=$?
-	if ((_termPid)); then fKillPids ${_termPid}; fi
+	## The launched pid is the private session bus, with the terminal under it.
+	if ((_termPid)); then
+		local -a tree=()
+		mapfile -t tree < <(fCollectTree ${_termPid})
+		fKillPids "${tree[@]}"
+	fi
 	if ((_swayPid)) && ((!_keepRig)); then kill ${_swayPid} 2>/dev/null || true; fi
 	if ((!_keepRig)); then rm -rf "${_work}" 2>/dev/null || true; fi
 	exit ${rc}
@@ -65,8 +70,9 @@ trap cleanup EXIT INT TERM
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 
 ##	Every entry launches its terminal with SCENE as the shell/command, unstyled and
-##	against a throwaway config so nothing personal reaches a published run. Keys marked
-##	awkward need a hook the terminal does not offer directly - see showdown-README.md.
+##	on a throwaway account (fPrivateAccount), so nothing personal reaches a published
+##	run and nothing under the measuring account's home changes. Keys marked awkward
+##	need a hook the terminal does not offer directly - see showdown-README.md.
 list_terms(){
 	fEcho_Clean "  silkterm    this tree's release build, as shipped"
 	fEcho_Clean "  silkplain   same binary, every optional effect off"
@@ -104,6 +110,19 @@ write_alacritty_config(){
 ##	backfills the rest, so this cannot go stale as new settings are added.
 write_plain_config(){
 	cp "${_here}/termbench-plain.shcl" "${_work}/plain.shcl"
+}
+
+##	SilkTerm as shipped, with the automatic profile pinned off so a slow renderer cannot
+##	turn the effects down under the row that claims them.
+write_candy_config(){
+	cp "${_here}/termbench-candy.shcl" "${_work}/candy.shcl"
+}
+
+##	Start a terminal on the throwaway account, with its output in term.log.
+launch(){
+	#  shellcheck disable=2154  ## _privateEnv is filled by fPrivateAccount in bench-common.bash.
+	env "${_privateEnv[@]}" dbus-run-session -- "$@" > "${_work}/term.log" 2>&1 &
+	_termPid=$!
 }
 
 
@@ -171,19 +190,44 @@ fit_grid(){
 	local -i wantC=$1 wantR=$2
 	local reportFile="$3"
 	local -i w=2438 h=1680 pass=0 gotC=0 gotR=0
+	## A proportional step can hop over the answer and come back (43 rows, 41, 43 ...)
+	## when a cell is near 20 pixels, which a new account's default font made routine.
+	## When two passes in a row land close on either side, the next try is the middle
+	## of them. Far apart, the proportional step is the better guess.
+	## Only the pass before counts: the first report can predate the window's tiling.
+	local -i prevW=0 prevH=0 prevC=0 prevR=0 nextW=0 nextH=0
 
-	for ((pass = 1; pass <= 7; pass++)); do
+	for ((pass = 1; pass <= 12; pass++)); do
 		swaymsg output HEADLESS-1 mode ${w}x${h} >/dev/null 2>&1 || true
 		rm -f "${reportFile}"
 		local -i waited=0
 		while ((waited < 60)); do [[ -f "${reportFile}" ]] && break; sleep 0.25; waited+=1; done
 		[[ -f "${reportFile}" ]] || fDie "the terminal never reported its grid - see ${_work}"
-		read -r gotR gotC < "${reportFile}" || true
+		## A report can predate the resize it is meant to answer (80x24 from a window
+		## not yet tiled), so take a size only once two reports in a row agree.
+		local seen="" again=""
+		local -i tries=0
+		for ((tries = 0; tries < 12; tries++)); do
+			seen="$(cat "${reportFile}" 2>/dev/null || true)"
+			sleep 0.5
+			again="$(cat "${reportFile}" 2>/dev/null || true)"
+			[[ -n "${seen}" && "${seen}" == "${again}" ]] && break
+		done
+		read -r gotR gotC <<< "${again}" || true
 		((gotC)) || fDie "unreadable grid report"
 		fEcho_Clean "      fit pass ${pass}: ${gotC}x${gotR} at output ${w}x${h}"
 		if ((gotC == wantC && gotR == wantR)); then fEcho "grid ${gotC}x${gotR}"; return 0; fi
-		if ((gotC != wantC)); then w=$(( w * wantC / gotC )); fi
-		if ((gotR != wantR)); then h=$(( h * wantR / gotR )); fi
+		nextW=${w}; nextH=${h}
+		if ((gotC != wantC)); then
+			if ((prevC && prevC - wantC <= 3 && wantC - prevC <= 3 && (prevC - wantC) * (gotC - wantC) < 0)); then nextW=$(( (prevW + w) / 2 ))
+			else nextW=$(( w * wantC / gotC )); fi
+		fi
+		if ((gotR != wantR)); then
+			if ((prevR && prevR - wantR <= 3 && wantR - prevR <= 3 && (prevR - wantR) * (gotR - wantR) < 0)); then nextH=$(( (prevH + h) / 2 ))
+			else nextH=$(( h * wantR / gotR )); fi
+		fi
+		prevW=${w}; prevH=${h}; prevC=${gotC}; prevR=${gotR}
+		w=${nextW}; h=${nextH}
 	done
 	fDie "could not fit ${wantC}x${wantR} (stopped at ${gotC}x${gotR})"
 }
@@ -242,35 +286,37 @@ export REPO_DIR="${_repo}" BENCH_ARGS="${benchArgs}" LABEL="${label}" \
        OUT_FILE="${outFile}" SIZE_FILE="${sizeFile}" GO_FILE="${goFile}"
 declare -r sceneCmd="/bin/dash ${_here}/termbench-scene.sh"
 
+fPrivateAccount "${_work}/home"
+
 case "${termKey}" in
 	silkterm)
-		"${silkBin}" --shell "${sceneCmd}" > "${_work}/term.log" 2>&1 & ;;
+		write_candy_config
+		launch "${silkBin}" --config "${_work}/candy.shcl" --shell "${sceneCmd}" ;;
 	silkplain)
 		write_plain_config
-		"${silkBin}" --config "${_work}/plain.shcl" --shell "${sceneCmd}" > "${_work}/term.log" 2>&1 & ;;
+		launch "${silkBin}" --config "${_work}/plain.shcl" --shell "${sceneCmd}" ;;
 	alacritty)
 		write_alacritty_config
-		"$(find_bin alacritty || fDie "alacritty not found - see showdown-README.md")" \
-			--config-file "${_work}/alacritty.toml" -e ${sceneCmd} > "${_work}/term.log" 2>&1 & ;;
+		launch "$(find_bin alacritty || fDie "alacritty not found - see showdown-README.md")" \
+			--config-file "${_work}/alacritty.toml" -e ${sceneCmd} ;;
 	kitty)
-		"$(find_bin kitty || fDie "kitty not found - see showdown-README.md")" ${sceneCmd} > "${_work}/term.log" 2>&1 & ;;
+		launch "$(find_bin kitty || fDie "kitty not found - see showdown-README.md")" ${sceneCmd} ;;
 	wezterm)
-		"$(find_bin wezterm || fDie "wezterm not found - see showdown-README.md")" \
-			--config enable_wayland=true start --always-new-process -- ${sceneCmd} > "${_work}/term.log" 2>&1 & ;;
+		launch "$(find_bin wezterm || fDie "wezterm not found - see showdown-README.md")" \
+			--config enable_wayland=true start --always-new-process -- ${sceneCmd} ;;
 	xfce4)
-		xfce4-terminal --disable-server -x ${sceneCmd} > "${_work}/term.log" 2>&1 & ;;
+		launch xfce4-terminal --disable-server -x ${sceneCmd} ;;
 	gnome)
 		## gnome-terminal never resizes with the compositor output, so it is the one
 		## terminal that has to be told its geometry directly.
-		gnome-terminal --wait --geometry=${wantC}x${wantR} -- ${sceneCmd} > "${_work}/term.log" 2>&1 & ;;
+		launch gnome-terminal --wait --geometry=${wantC}x${wantR} -- ${sceneCmd} ;;
 	terminator)
-		terminator -e "${sceneCmd}" > "${_work}/term.log" 2>&1 & ;;
+		launch terminator -e "${sceneCmd}" ;;
 	xterm)
-		xterm -e ${sceneCmd} > "${_work}/term.log" 2>&1 & ;;
+		launch xterm -e ${sceneCmd} ;;
 	*)
 		fDie "unknown terminal key: ${termKey} (--list)" ;;
 esac
-_termPid=$!
 fEcho "launched pid ${_termPid}"
 
 fit_grid ${wantC} ${wantR} "${sizeFile}"
@@ -292,6 +338,11 @@ done
 fEcho_Clean
 cat "${outFile}"
 
+case "${termKey}" in
+	silkterm)  fRequireCandyProfile "${_work}/candy.shcl" ;;
+	silkplain) fEcho "SilkTerm profile in force: $(fSilkProfile "${_work}/plain.shcl")" ;;
+esac
+
 ## A run whose scenes never answered the device-attributes query timed a timeout, not
 ## throughput, and must not reach the table.
 if /usr/bin/grep -q "sync NONE" "${outFile}" 2>/dev/null; then
@@ -304,3 +355,4 @@ exit 0
 
 ##	History:
 ##		- 20260730 JC: Created, from the scratch rig used for the first shootout table.
+##		- 20260918 JC: Every terminal runs on a throwaway account and session bus; the +candy row pins its profile.

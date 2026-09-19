@@ -94,6 +94,12 @@ fLaunch() {
 				>"${_work}/term.log" 2>&1 &
 			;;
 		silkterm)
+			## Shipped settings with the profile pinned. On a fresh folder SilkTerm rates
+			## this software display, picks Low, and the row is measured with the text
+			## scrim and the cursor animation off.
+			mkdir -p "${XDG_CONFIG_HOME}/silkterm"
+			cp "${scriptDir}/termbench-candy.shcl" \
+			   "${XDG_CONFIG_HOME}/silkterm/config.shcl"
 			"${bin}" --columns "${cols}" --rows "${rows}" --shell "${keepAlive}" \
 				>"${_work}/term.log" 2>&1 &
 			;;
@@ -173,6 +179,11 @@ fMain() {
 	sleep "${settleSecs}"
 	kill -0 "${root}" 2>/dev/null || { tail -5 "${_work}/term.log" >&2; fDie "terminal exited before it could be measured"; }
 
+	case "${key}" in
+		silkterm)  fRequireCandyProfile "${_work}/xdg/silkterm/config.shcl" ;;
+		silkplain) fEcho "SilkTerm profile in force: $(fSilkProfile "${_work}/xdg/silkterm/config.shcl")" ;;
+	esac
+
 	mapfile -t _termPids < <(fCollectTree "${root}")
 	fEcho "process tree: ${_termPids[*]}"
 
@@ -196,4 +207,5 @@ fi
 ##
 ##  History:
 ##  - 20260730: Written, after the previous pass's scripts were lost with their scratch dir.
+##  - 20260918: The +candy row pins its profile, and the rig prints the one in force.
 ##

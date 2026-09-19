@@ -62,7 +62,58 @@ fCollectTree(){
 	printf '%s\n' "${out[@]}"
 }
 
+##	A terminal under test runs as it would on a new account: a home, the XDG folders
+##	and a session bus that the rig makes and removes. The measuring account's own
+##	settings then cannot reach a published figure, and a terminal that writes its
+##	settings on launch writes them here. GNOME Terminal and xfce4-terminal keep theirs
+##	behind the session bus, which is why the bus is part of it. XDG_RUNTIME_DIR is left
+##	alone, since the compositor's socket is in it.
+##	Usage: fPrivateAccount <dir>, then: env "${_privateEnv[@]}" dbus-run-session -- <terminal...>
+declare -a _privateEnv=()
+fPrivateAccount(){
+	local -r home="$1"
+	command -v dbus-run-session >/dev/null 2>&1 || fDie "dbus-run-session is not installed (package dbus-daemon)"
+	mkdir -p "${home}/.config" "${home}/.local/share" "${home}/.local/state" "${home}/.cache"
+	_privateEnv=(
+		"HOME=${home}"
+		"XDG_CONFIG_HOME=${home}/.config"
+		"XDG_DATA_HOME=${home}/.local/share"
+		"XDG_STATE_HOME=${home}/.local/state"
+		"XDG_CACHE_HOME=${home}/.cache"
+		"BENCH_REAL_HOME=${HOME}"
+		"BENCH_REAL_XDG_DATA_HOME=${XDG_DATA_HOME:-}"
+	)
+}
+
+##	What a SilkTerm settings file says about its performance profile, in either the
+##	nested or the dotted spelling: "automatic=<value> profile=<value>".
+fSilkProfile(){
+	local -r file="$1"
+	awk '
+		function bare(v){ gsub(/["\047]/, "", v); return v }
+		/^performance:/              { inside = 1; next }
+		/^[^ \t#]/                   { inside = 0 }
+		inside && $1 == "automatic:" { automatic = bare($2) }
+		inside && $1 == "profile:"   { profile = bare($2) }
+		$1 == "performance.automatic:" { automatic = bare($2) }
+		$1 == "performance.profile:"   { profile = bare($2) }
+		END { printf "automatic=%s profile=%s", (automatic == "" ? "?" : automatic), (profile == "" ? "?" : profile) }
+	' "${file}"
+}
+
+##	The +candy row is only that if nothing turned its effects down.
+fRequireCandyProfile(){
+	local -r file="$1"
+	local state=""
+	state="$(fSilkProfile "${file}")"
+	fEcho "SilkTerm profile in force: ${state}"
+	if [[ "${state}" != "automatic=false profile=custom" ]]; then
+		fDie "the +candy row ran with '${state}', so its effects may have been turned down"
+	fi
+}
+
 ##
 ##	History:
 ##		- 20260730: Factored out of the two rigs when they moved under utility/include/.
+##		- 20260918: fPrivateAccount, fSilkProfile, fRequireCandyProfile.
 ##
