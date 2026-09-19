@@ -11,6 +11,7 @@ param(
 $ErrorActionPreference = "Stop"
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $result = Join-Path $OutDir "result.txt"
+$script:startedList = Join-Path $OutDir "started.txt"
 $verdict = "fail"
 $reason = ""
 
@@ -46,6 +47,6 @@ catch {
 	$verdict = "fail"
 }
 finally {
-	Get-Process -Name silkterm -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+	& "$PSScriptRoot\_stop.ps1" -List $script:startedList
 	@("SCENARIO $Scenario", "VERDICT $verdict $reason") + $script:checks | Set-Content -Path $result -Encoding UTF8
 }

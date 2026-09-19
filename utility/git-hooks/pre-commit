@@ -45,11 +45,14 @@ for f in $files; do
 	git cat-file blob "$blob" >"$tmp"
 	# asked before the index moves, or the reformat itself reads as unstaged work
 	if git diff --quiet -- "$f"; then whole=1; else whole=0; fi
+	# Through stdin: given a file, rustfmt follows its `mod` lines, which name
+	# files that are not beside the copy, so a crate root could not commit.
 	if [ -n "$fmtcfg" ]; then
-		rustfmt --edition 2024 --config-path "$fmtcfg" "$tmp"
+		rustfmt --edition 2024 --config-path "$fmtcfg" <"$tmp" >"$tmp.fmt"
 	else
-		rustfmt --edition 2024 "$tmp"
+		rustfmt --edition 2024 <"$tmp" >"$tmp.fmt"
 	fi || { echo "pre-commit: rustfmt failed on $f" >&2; IFS=$oldIFS; exit 1; }
+	mv -- "$tmp.fmt" "$tmp"
 	new="$(git hash-object -w -- "$tmp")"
 	[ "$new" = "$blob" ] && continue
 	git update-index --cacheinfo "$mode,$new,$f"

@@ -527,9 +527,15 @@ pub static PATH_SEARCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::At
 
 fn which(prog: &str) -> Option<PathBuf> {
 	PATH_SEARCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+	which_in(prog, &std::env::var_os("PATH")?, &runnable)
+}
+
+// The file test is a parameter so the lookup's rule can be checked from a box
+// that has no Store aliases.
+fn which_in(prog: &str, path: &std::ffi::OsStr, runs: &dyn Fn(&Path) -> bool) -> Option<PathBuf> {
 	if prog.contains('/') || (cfg!(windows) && prog.contains('\\')) {
 		let path = Path::new(prog);
-		return path.is_file().then(|| path.to_path_buf());
+		return runs(path).then(|| path.to_path_buf());
 	}
 	let exts: Vec<String> = if cfg!(windows) {
 		std::env::var("PATHEXT")
@@ -541,9 +547,8 @@ fn which(prog: &str) -> Option<PathBuf> {
 	} else {
 		Vec::new()
 	};
-	let path = std::env::var_os("PATH")?;
 	let mut visited: Vec<PathBuf> = Vec::new();
-	for dir in std::env::split_paths(&path) {
+	for dir in std::env::split_paths(path) {
 		// One directory under several names is normal - /bin and /usr/bin are the
 		// same place on most Linux distributions - and a lookup that finds nothing
 		// pays a stat for every spelling.
@@ -553,17 +558,103 @@ fn which(prog: &str) -> Option<PathBuf> {
 		}
 		visited.push(real);
 		let direct = dir.join(prog);
-		if direct.is_file() {
+		if runs(&direct) {
 			return Some(direct);
 		}
 		for ext in &exts {
 			let with_ext = dir.join(format!("{prog}{ext}"));
-			if with_ext.is_file() {
+			if runs(&with_ext) {
 				return Some(with_ext);
 			}
 		}
 	}
 	None
+}
+
+// A Store app alias answers is_file() whether or not its app is installed, and
+// the WindowsApps folder holding them is on PATH by default. App Installer puts
+// down python and python3 on every machine, and all they do is say Python is
+// missing. A Store-installed Python's own alias runs, so it still counts.
+fn runnable(path: &Path) -> bool {
+	path.is_file() && !is_install_prompt(path)
+}
+
+#[cfg(windows)]
+fn is_install_prompt(path: &Path) -> bool {
+	use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+	use std::os::windows::io::AsRawHandle;
+	use windows_sys::Win32::Storage::FileSystem::{
+		FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
+	};
+	const FSCTL_GET_REPARSE_POINT: u32 = 0x0009_00A8;
+
+	// the metadata read is cheap, and almost nothing on PATH is a reparse point
+	let reparse = std::fs::symlink_metadata(path)
+		.is_ok_and(|m| m.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0);
+	if !reparse {
+		return false;
+	}
+	let Ok(file) = std::fs::OpenOptions::new()
+		.access_mode(0)
+		.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+		.open(path)
+	else {
+		return false;
+	};
+	let mut buf = vec![0u8; 16 * 1024];
+	let mut got = 0u32;
+	// SAFETY: the handle is open for the call, and the buffer and its length
+	// match. Failure is reported by the return value.
+	let ok = unsafe {
+		windows_sys::Win32::System::IO::DeviceIoControl(
+			file.as_raw_handle().cast(),
+			FSCTL_GET_REPARSE_POINT,
+			std::ptr::null(),
+			0,
+			buf.as_mut_ptr().cast(),
+			buf.len() as u32,
+			&raw mut got,
+			std::ptr::null_mut(),
+		)
+	};
+	ok != 0 && alias_is_install_prompt(&buf[..got as usize])
+}
+
+#[cfg(not(windows))]
+fn is_install_prompt(_path: &Path) -> bool {
+	false
+}
+
+// An app alias's reparse data: the tag, two header words, a version, then
+// NUL-ended UTF-16 strings - the package, the app id and the program it starts.
+// App Installer's prompts start a "...Redirector.exe" of its own, while winget,
+// also App Installer's, starts winget.exe and is real.
+#[cfg(any(windows, test))]
+fn alias_is_install_prompt(data: &[u8]) -> bool {
+	const IO_REPARSE_TAG_APPEXECLINK: u32 = 0x8000_001B;
+	let Some(tag) = data.get(..4) else {
+		return false;
+	};
+	if u32::from_le_bytes([tag[0], tag[1], tag[2], tag[3]]) != IO_REPARSE_TAG_APPEXECLINK {
+		return false;
+	}
+	let words: Vec<u16> = data
+		.get(12..)
+		.unwrap_or_default()
+		.chunks_exact(2)
+		.map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+		.collect();
+	let mut fields = words.split(|&w| w == 0).map(String::from_utf16_lossy);
+	let (Some(package), Some(_app), Some(target)) = (fields.next(), fields.next(), fields.next())
+	else {
+		return false;
+	};
+	let program = target
+		.rsplit('\\')
+		.next()
+		.unwrap_or_default()
+		.to_ascii_lowercase();
+	package.starts_with("Microsoft.DesktopAppInstaller") && program.ends_with("redirector.exe")
 }
 
 // Wrap a path for a command line only when it has to be. Inside double quotes a
@@ -1089,6 +1180,92 @@ mod tests {
 	fn ordered(mut found: Vec<Found>) -> Vec<String> {
 		found.sort_by_key(Found::order);
 		found.into_iter().map(|hit| hit.title).collect()
+	}
+
+	fn alias(package: &str, app: &str, target: &str) -> Vec<u8> {
+		let mut data = Vec::new();
+		data.extend_from_slice(&0x8000_001Bu32.to_le_bytes());
+		data.extend_from_slice(&[0; 4]);
+		data.extend_from_slice(&3u32.to_le_bytes());
+		for text in [package, app, target, "0"] {
+			for unit in text.encode_utf16().chain([0]) {
+				data.extend_from_slice(&unit.to_le_bytes());
+			}
+		}
+		data
+	}
+
+	// On a Windows box with no Python, the scan offered Python 3 anyway, because
+	// App Installer's alias for it passes as a file. A tab started from it only
+	// says to go and install Python.
+	#[test]
+	fn a_store_install_prompt_is_not_a_shell() {
+		let installer = r"C:\Program Files\WindowsApps\Microsoft.DesktopAppInstaller_1.26.430.0_x64__8wekyb3d8bbwe";
+		let prompt = alias(
+			"Microsoft.DesktopAppInstaller_8wekyb3d8bbwe",
+			"Microsoft.DesktopAppInstaller_8wekyb3d8bbwe!PythonRedirector",
+			&format!(r"{installer}\AppInstallerPythonRedirector.exe"),
+		);
+		assert!(alias_is_install_prompt(&prompt));
+		let winget = alias(
+			"Microsoft.DesktopAppInstaller_8wekyb3d8bbwe",
+			"Microsoft.DesktopAppInstaller_8wekyb3d8bbwe!winget",
+			&format!(r"{installer}\winget.exe"),
+		);
+		assert!(!alias_is_install_prompt(&winget), "winget is real");
+		let store_python = alias(
+			"PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0",
+			"PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0!Python",
+			r"C:\Program Files\WindowsApps\PythonSoftwareFoundation.Python.3.12_3.12.2800.0_x64__qbz5n2kfra8p0\python3.12.exe",
+		);
+		assert!(
+			!alias_is_install_prompt(&store_python),
+			"a Store Python runs"
+		);
+		// another kind of reparse point, or data cut short, is not a prompt
+		let mut symlink = prompt.clone();
+		symlink[..4].copy_from_slice(&0xA000_000Cu32.to_le_bytes());
+		assert!(!alias_is_install_prompt(&symlink));
+		assert!(!alias_is_install_prompt(&prompt[..20]));
+		assert!(!alias_is_install_prompt(&[]));
+
+		// a file the check refuses is passed over for the next one on PATH
+		let root = std::env::temp_dir().join(format!("silkterm_which_{}", std::process::id()));
+		let (first, second) = (root.join("a"), root.join("b"));
+		for dir in [&first, &second] {
+			std::fs::create_dir_all(dir).unwrap();
+			std::fs::write(dir.join("prog"), b"").unwrap();
+		}
+		let path = std::env::join_paths([&first, &second]).unwrap();
+		let not_first = |p: &Path| p.is_file() && !p.starts_with(&first);
+		assert_eq!(
+			which_in("prog", &path, &not_first),
+			Some(second.join("prog"))
+		);
+		let nothing = |_: &Path| false;
+		assert_eq!(which_in("prog", &path, &nothing), None);
+		assert_eq!(
+			which_in(&first.join("prog").to_string_lossy(), &path, &not_first),
+			None
+		);
+		std::fs::remove_dir_all(&root).ok();
+	}
+
+	// The same through the real alias, where the box has one.
+	#[cfg(windows)]
+	#[test]
+	fn the_store_python_prompt_on_this_box_is_not_found() {
+		let Some(local) = std::env::var_os("LOCALAPPDATA") else {
+			return;
+		};
+		let apps = PathBuf::from(local).join(r"Microsoft\WindowsApps");
+		let alias = apps.join("python.exe");
+		if !alias.is_file() || !is_install_prompt(&alias) {
+			eprintln!("no App Installer prompt for python here, nothing to check");
+			return;
+		}
+		assert_eq!(which_in("python", apps.as_os_str(), &runnable), None);
+		assert_eq!(which_in("python3", apps.as_os_str(), &runnable), None);
 	}
 
 	// The whole offered order, in one assertion: this is what the Tabs menu looks

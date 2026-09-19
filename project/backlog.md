@@ -166,7 +166,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- If it's a real bug, it's new, not a regression.
 	- ✋ Update: It was probably due to running out of GPU memory. Keep an eye on it.
 
-- 🔘 Code review 20260914 round 1 (review 20260914-124200).
+- 🛠️ Code review 20260914 round 1 (review 20260914-124200).
 	- ✅ Code review 20260914 item 1 (F33, blocking): A settings file with one old-style setting at the left margin is converted wholesale, and its shell list is lost.
 		- The shell list carries whole and in order when a file converts.
 	- ✅ Code review 20260914 item 2 (F34, blocking): The retired `shell.default` is deleted without moving that shell to the top of the list when the file also has a line that cannot be read.
@@ -187,7 +187,9 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- A color that is not the theme's own stays when the system switches. That covers one from the command line or from Settings too, not only the file.
 	- ✅ Code review 20260914 item 7 (F39, should-fix): The wallpaper metadata fuzz test never reaches the metadata it is meant to check.
 		- It builds readable packets with bad values now, and fails if none of them read. A small tagged PNG and JPEG seed it.
-	- Code review 20260914 item 8 (F40, should-fix): On Windows, the shell scan can offer Python 3 when only the Microsoft Store shortcut is there.
+	- ✅ Code review 20260914 item 8 (F40, should-fix): On Windows, the shell scan can offer Python 3 when only the Microsoft Store shortcut is there.
+		- A Store alias whose program is App Installer's install prompt no longer counts as installed. A Store-installed Python's own alias, and winget, still do.
+		- Pinned by `a_store_install_prompt_is_not_a_shell` from any box, and `the_store_python_prompt_on_this_box_is_not_found` against the real alias on Windows. Red on b29w with the check taken out.
 	- ✅ Code review 20260914 item 11 (F43, blocking): A setting reverted to its default and then changed again before Apply is saved as the default, so the change is gone at the next launch.
 		- Apply puts back the default line only for rows still at their default. Checked for every row in Settings.
 	- ✅ Code review 20260914 item 12 (F44, should-fix): A program's own name, or the name of the folder it runs in, can put control characters into the window title and the tab.
@@ -308,7 +310,9 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- It rewrites every tracked text file that mentions either name, and renames the files and directories carrying the identifier, among them the resource template `build.rs` reads by name. Binaries and `Cargo.lock` are left alone.
 		- Checked once by hand: a renamed clone passes `cargo check --release --target x86_64-pc-windows-gnu`.
 		- Pinned by a test that renames a clone and looks for a path a build reads that is not there, and for the old name left anywhere.
-	- Code review 20260914 item 60 (F92, blocking): The fix for the Windows freeze on a long run of output has no test, so an engine update could lose it without anything failing.
+	- ✅ Code review 20260914 item 60 (F92, blocking): The fix for the Windows freeze on a long run of output has no test, so an engine update could lose it without anything failing.
+		- The engine fork has a test that drains its pipe the way the engine's reader does and waits for word of the next fill. SilkTerm's Windows run has one too, through a real pane under a flood, so an engine update that drops the fix fails here as well.
+		- Both are red on b29w with the fix taken out, at the second round.
 	- Code review 20260914 item 61 (F93, should-fix): Once the scrollback is full, output above a pinned status line, such as apt's progress bar, stops easing.
 	- Code review 20260914 item 62 (F94, should-fix): The terminal engine handles output in full-screen programs such as tmux about a third slower, because it copies every row that scrolls away.
 	- ✅ Code review 20260914 item 64 (F96, blocking): A one-column pane crashes on a wide character such as CJK or an emoji, and narrowing a window past one column with wide text on screen runs the memory away and hangs.
@@ -316,7 +320,9 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Pinned by `a_pane_too_narrow_for_a_wide_character_still_takes_one`, watched failing with the old floor. A window squeezed to 1 px wide with wide text on screen stayed up, with memory flat.
 	- ✅ Code review 20260914 item 65 (F97, blocking): A program printing a long run of combining marks grows SilkTerm's memory without limit, since they pile onto one cell that the scrollback cap never trims.
 		- The engine keeps at most nine per cell now. Upstream's fix is carried on the fork's 0.26.0 branch until a release has it.
-	- Code review 20260914 item 66 (F98, blocking): On Windows a shell whose path holds a space can be tricked into running a different program, and an inherited directory with a space reaches the shell split in two.
+	- ✅ Code review 20260914 item 66 (F98, blocking): On Windows a shell whose path holds a space can be tricked into running a different program, and an inherited directory with a space reaches the shell split in two.
+		- SilkTerm hands the engine its arguments to be quoted, and the engine fork quotes a program path with a space as well.
+		- Pinned by an engine test that starts a program under a spaced path with a decoy beside it, and one on the command line itself. The decoy ran on b29w with the quoting taken out.
 	- ✅ Code review 20260914 item 67 (F99, should-fix): On Linux a program that closes its terminal but keeps running spins a core at 100% until it exits.
 		- Fixed in the engine fork: once the terminal hangs up, the reader leaves it out of the poll for a tenth of a second at a time. What was written just before the hang-up is still read first.
 		- The second part matters for a program that opens its terminal again later. Before, the spin caught that output by luck, and a plain pause lost it.
@@ -327,7 +333,9 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ Code review 20260914 item 69 (F101, should-fix): Closing a pane whose program ignores the hang-up signal freezes the whole window until that program ends.
 		- A close waits a quarter second for the pane to finish, then goes on and lets it finish on its own. The program is not killed, since a `nohup` job ignores the signal on purpose.
 		- Pinned by `closing_a_pane_does_not_wait_on_a_shell_that_stays`, watched failing with the old wait.
-	- Code review 20260914 item 70 (F102, should-fix): On Windows each pane leaks a couple of process handles that are never freed while SilkTerm runs.
+	- ✅ Code review 20260914 item 70 (F102, should-fix): On Windows each pane leaks a couple of process handles that are never freed while SilkTerm runs.
+		- It was four per pane: the child's process and thread, and SilkTerm's own two ends of the pseudo console's pipes. All four are closed now, in the engine fork.
+		- Pinned by `a_closed_pane_gives_back_its_handles`, which opens and closes 50 panes. The leak put the count up by 200 on b29w.
 	- ✅ Code review 20260914 item 71 (F103, should-fix): A program can force unbounded memory by setting a huge window title and pushing it onto the title stack.
 		- A title is cut to 2 KiB, in the engine fork and again where SilkTerm passes it to the window. The stack keeps 4096 entries, so the most it can hold is 8 MiB.
 		- Pinned by `a_program_title_is_held_to_a_size`, which sets a 1 MiB title, pushes it 64 times and pops it back. It fails against the engine without the cap and without SilkTerm's.
@@ -378,8 +386,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- It runs its own scene, and fails when no output was easing at the swap.
 	- ✅ Code review 20260914 item 88 (F120, should-fix): When the scroll regression check cannot run at all, the pipeline prints OK for it.
 		- A run that cannot start exits 3, and the pipeline says skipped for that display system.
-	- Code review 20260914 item 89 (F121, should-fix): The Windows interface checks test whichever build was last made on the test box, not the change being checked.
-	- Code review 20260914 item 90 (F122, should-fix): The Windows interface checks close every SilkTerm on the test box, not only the one they started.
+	- ✅ Code review 20260914 item 89 (F121, should-fix): The Windows interface checks test whichever build was last made on the test box, not the change being checked.
+		- The checks build the Windows binary here from the tree under test and send it, and the result names the commit. A box that is off is still stepped over.
+	- ✅ Code review 20260914 item 90 (F122, should-fix): The Windows interface checks close every SilkTerm on the test box, not only the one they started.
+		- A run stops only the processes it started, by process id and start time, with whatever those started in turn.
+		- Pinned by `cicd/tests/wingui/harness-test.bash`, which the pipeline runs. It covers both items and is red on the old harness.
 	- ✅ Code review 20260914 item 91 (F123, should-fix): A quick, scaled or wrong-size benchmark run rewrites the README speed table, though the tools say such runs never reach it.
 		- Only a full, unscaled run at the table's 160x42 grid reaches the table now, from either tool. A run that cannot says why.
 		- A quick or `--any-size` run from `update-showdown.py` writes no speed or size figure.
@@ -408,18 +419,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- The forwarded display counts as local, so the Remote profile is not used. Code review 20260914 item 9 (F41).
 	- Any display that names a host is a remote screen now, localhost included. X servers have not listened on the network by default for years, so a localhost display is a forwarded one.
 	- Opened: 20260914-124200
-
-- 🔘 On Windows, `silkterm --wallpaper` and `silkterm --reload-settings` print nothing when they fail, not even that Windows does not support them.
-	- The message goes nowhere, since a Windows build has no console of its own. Code review 20260914 item 29 (F61).
-	- Opened: 20260914-124200
-
-- 🔘 After the PowerShell installer adds SilkTerm to PATH on Windows, a new console opened from the Start menu does not find it until you sign out.
-	- The PATH is written to the registry without telling Windows it changed. Code review 20260914 item 58 (F90).
-	- Opened: 20260914-124200
-
-- 🔘 The new-window test fails on Windows.
-	- `a_new_window_keeps_the_settings_file_and_the_panes_directory` expects `--config /x/alt.shcl`, and Windows makes that path absolute as `C:\x\alt.shcl`. The test's expectation is wrong there, not the new window.
-	- Opened: 20260916
 
 - ✋ A config written as single dotted lines grows on every launch, with settings added under the wrong sections.
 	- From nine lines such as `window.columns: 100`, one launch put the scroll settings under `performance` and `margin` under the wallpaper's `rotate` block.
@@ -572,6 +571,31 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ The pre-commit hook refuses any commit that stages a file with `mod` lines, such as `main.rs`.
+	- Reproduced: "failed to resolve mod `app`" on the commit for the Windows batch. The hook formats the staged copy in a temp folder, and rustfmt followed the `mod` lines to files that are not there. It came in with the 20260917 hook rewrite (F80).
+	- Fixed: the copy goes to rustfmt through stdin, which formats only what it is given.
+	- Pinned by: a case in `cicd/tests/hooks/run.bash`, red on the old hook.
+	- Opened: 20260918. Closed: 20260918.
+
+- ✅ On Windows, `silkterm --wallpaper` and `silkterm --reload-settings` print nothing when they fail, not even that Windows does not support them.
+	- The message goes nowhere, since a Windows build has no console of its own. Code review 20260914 item 29 (F61).
+	- Fixed: every path that prints and exits joins the console it was typed at, the control commands included. One test decides which paths those are.
+	- Pinned by: `a_control_command_joins_the_console_it_was_typed_at`, red with the control commands left out. The Windows scenario `consolemsg` runs `--reload-settings` in a real console window and reads the message back off its screen. It is red on an older build.
+	- Opened: 20260914-124200. Closed: 20260918.
+
+- ✅ After the PowerShell installer adds SilkTerm to PATH on Windows, a new console opened from the Start menu does not find it until you sign out.
+	- The PATH is written to the registry without telling Windows it changed. Code review 20260914 item 58 (F90).
+	- Reproduced: on b29w, a program started from the Run box after a registry write alone did not have it.
+	- Fixed: after the write the installer sends the same notice `setx` sends, and the shell rebuilds what it hands to new programs.
+	- Pinned by: the Windows scenario `pathannounce`, which runs the installer's own PATH step and asks the Run box. It is red with the old installer.
+	- Note: on b29w the machine PATH is so long that Windows leaves the user PATH out of every new program, installer or not. The scenario checks a marker variable for that reason.
+	- Opened: 20260914-124200. Closed: 20260918.
+
+- ✅ The new-window test fails on Windows.
+	- `a_new_window_keeps_the_settings_file_and_the_panes_directory` expects `--config /x/alt.shcl`, and Windows makes that path absolute as `C:\x\alt.shcl`. The test's expectation is wrong there, not the new window.
+	- Fixed: the test builds its path from the home folder, so it is absolute on both. Passes on b29w.
+	- Opened: 20260916. Closed: 20260918.
 
 - ✅ After a window moves to a monitor with a lower refresh rate, the performance profile can step down while the display is keeping up.
 	- The frame budget is taken from the monitor at launch and never updated. Code review 20260914 item 30 (F62).

@@ -189,7 +189,13 @@ function fStartSilk($exe, $silkArgs, $envVars) {
 	foreach ($k in $envVars.Keys) { [Environment]::SetEnvironmentVariable($k, $envVars[$k]) }
 	$p = Start-Process $exe -ArgumentList $silkArgs -PassThru
 	foreach ($k in $envVars.Keys) { [Environment]::SetEnvironmentVariable($k, $null) }
+	fTrack $p
 	$p
+}
+
+##	What _stop.ps1 may end, and nothing else.
+function fTrack($p) {
+	if ($script:startedList) { Add-Content -Path $script:startedList -Value "$($p.Id) $($p.StartTime.ToUniversalTime().Ticks)" }
 }
 
 function fWaitWindow($p, $seconds = 30) {
@@ -302,7 +308,7 @@ function fClick($x, $y, $double = $false) {
 $script:vks = @{
 	ctrl = 0x11; shift = 0x10; alt = 0x12
 	tab = 0x09; escape = 0x1B; enter = 0x0D; space = 0x20
-	f4 = 0x73; f11 = 0x7A
+	f4 = 0x73; f11 = 0x7A; win = 0x5B
 }
 
 ##	Literal text, typed through the keyboard layout the way a keyboard does.
