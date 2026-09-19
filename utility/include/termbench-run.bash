@@ -120,8 +120,8 @@ write_candy_config(){
 
 ##	Start a terminal on the throwaway account, with its output in term.log.
 launch(){
-	#  shellcheck disable=2154  ## _privateEnv is filled by fPrivateAccount in bench-common.bash.
-	env "${_privateEnv[@]}" dbus-run-session -- "$@" > "${_work}/term.log" 2>&1 &
+	#  shellcheck disable=2154  ## Both arrays are filled by fPrivateAccount in bench-common.bash.
+	env "${_privateEnv[@]}" "${_privateBus[@]}" "$@" > "${_work}/term.log" 2>&1 &
 	_termPid=$!
 }
 

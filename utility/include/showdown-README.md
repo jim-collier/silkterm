@@ -53,7 +53,9 @@ The speed rig starts each terminal with a home folder, settings, data and cache 
 
 - Terminals fall back to the system's default monospace font. A cell of a different size can make the grid fitter hop either side of 160x42, so it takes the middle of two near misses.
 
-- Re-measured through the new launch on 2026-09-18, xfce4-terminal read 94.0 MB/s ASCII against 94.2 published, so the throwaway account does not move a figure by itself. The size rig already gave each terminal its own settings folder, and still uses the account's session bus.
+- The bus offers only the services a terminal keeps its settings in (GNOME Terminal's own, dconf and xfconf). With the desktop's whole set on offer, GNOME Terminal's server asks for the desktop portal, which asks for a keyring it cannot reach from there, and the server is still waiting when its launcher gives up.
+
+- Re-measured through the new launch on 2026-09-18, xfce4-terminal read 94.0 MB/s ASCII against 94.2 published, so the throwaway account does not move a figure by itself. GNOME Terminal read 78 against 100 over two runs, which may be the account's own profile showing in the published row. Published rows stay as they are until the whole table is measured again. The size rig already gave each terminal its own settings folder, and still uses the account's session bus.
 
 Both SilkTerm rows pin the automatic performance profile off (`termbench-candy.shcl` and `termbench-plain.shcl`). Left on, SilkTerm rates the renderer at first launch and turns effects down on a slow one. On the size rig's software X server it chose Low, which switches off the text scrim and the cursor animation, and the "+candy" row was then measured without them. Each rig prints the profile that was in force, and refuses a "+candy" run where it moved.
 

@@ -68,12 +68,40 @@ fCollectTree(){
 ##	settings on launch writes them here. GNOME Terminal and xfce4-terminal keep theirs
 ##	behind the session bus, which is why the bus is part of it. XDG_RUNTIME_DIR is left
 ##	alone, since the compositor's socket is in it.
-##	Usage: fPrivateAccount <dir>, then: env "${_privateEnv[@]}" dbus-run-session -- <terminal...>
-declare -a _privateEnv=()
+##
+##	The bus starts only the services a terminal keeps its settings in. With the whole
+##	desktop's set on offer, a GTK program asks for the desktop portal, the portal asks
+##	for the keyring, the keyring cannot be reached from here, and GNOME Terminal's
+##	server sits in that until its own launcher gives up on it.
+##	Usage: fPrivateAccount <dir>, then: env "${_privateEnv[@]}" "${_privateBus[@]}" <terminal...>
+declare -a _privateEnv=() _privateBus=()
 fPrivateAccount(){
 	local -r home="$1"
 	command -v dbus-run-session >/dev/null 2>&1 || fDie "dbus-run-session is not installed (package dbus-daemon)"
-	mkdir -p "${home}/.config" "${home}/.local/share" "${home}/.local/state" "${home}/.cache"
+	mkdir -p "${home}/.config" "${home}/.local/share" "${home}/.local/state" "${home}/.cache" "${home}/.bus"
+	local service=""
+	for service in org.gnome.Terminal ca.desrt.dconf org.xfce.Xfconf; do
+		if [[ -f "/usr/share/dbus-1/services/${service}.service" ]]; then
+			cp "/usr/share/dbus-1/services/${service}.service" "${home}/.bus/"
+		fi
+	done
+	cat > "${home}/.bus.conf" <<-EOF
+		<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+		 "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+		<busconfig>
+			<type>session</type>
+			<keep_umask/>
+			<listen>unix:tmpdir=/tmp</listen>
+			<auth>EXTERNAL</auth>
+			<servicedir>${home}/.bus</servicedir>
+			<policy context="default">
+				<allow send_destination="*" eavesdrop="true"/>
+				<allow eavesdrop="true"/>
+				<allow own="*"/>
+			</policy>
+		</busconfig>
+	EOF
+	_privateBus=(dbus-run-session --config-file="${home}/.bus.conf" --)
 	_privateEnv=(
 		"HOME=${home}"
 		"XDG_CONFIG_HOME=${home}/.config"
@@ -82,6 +110,8 @@ fPrivateAccount(){
 		"XDG_CACHE_HOME=${home}/.cache"
 		"BENCH_REAL_HOME=${HOME}"
 		"BENCH_REAL_XDG_DATA_HOME=${XDG_DATA_HOME:-}"
+		## no accessibility bus here either, and GTK warns on every start without this
+		"NO_AT_BRIDGE=1"
 	)
 }
 
