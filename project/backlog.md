@@ -71,11 +71,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
-- 🔘 With the minimap on, heavy output runs at about half the speed it does with it off. The minimap has been on by default since 2026-09-17, so the published speed rows no longer describe a default install.
-	- Measured on the speed rig, 2026-09-18, the plain row at 160x42: 36.5 MB/s ASCII and a score of 33.9 with the minimap on, against 67.8 and 57.5 with it off. The +candy row reads 38.4 with it on, against 77.4 published.
-	- xfce4-terminal read 94.0 against 94.2 published in the same sitting, so the machine and the rig were not the cause.
-	- Even with the minimap off the plain row is about a fifth under its published 86.9. Three runs per scene with other work on the box, so that part needs a proper run before it means anything.
-
 - 🔬 After a crash in VSCodium required switching to VT-1, the terminal on the same virtual desktop came back with background-only, no text visible. (This looks a lot like a previous bug many weeks ago.)
 	- On some other silkterm windows (but not all), text is visible, but the background is gray, not the theme's black. (Even after changing the theme.) Some silkterm windows seem fine.
 	- After a second switch to VT-1 and back, another silkterm window got a gray background, and invisible text.
@@ -302,6 +297,18 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ With the minimap on, heavy output runs at about half the speed it does with it off. The minimap has been on by default since 2026-09-17, so the published speed rows no longer describe a default install.
+	- Measured on the speed rig, 2026-09-18, the plain row at 160x42: 36.5 MB/s ASCII and a score of 33.9 with the minimap on, against 67.8 and 57.5 with it off. The +candy row reads 38.4 with it on, against 77.4 published.
+	- xfce4-terminal read 94.0 against 94.2 published in the same sitting, so the machine and the rig were not the cause.
+	- Even with the minimap off the plain row is about a fifth under its published 86.9. Three runs per scene with other work on the box, so that part needs a proper run before it means anything.
+	- Cause: the map drew every line as it entered history, while holding the lock the terminal's reader waits on. Under a flood most of those lines were gone again before the map was next drawn.
+	- Fixed: new lines are only counted until the map is next drawn, and a redraw waits at least twenty times as long as the last one took, so a deep scrollback cannot take a bigger share. Drawing a line is cheaper too, and a resized column redraws at once rather than showing a stretched picture.
+	- Measured: 32 MiB of plain text at 160x48, 53.0 MiB/s with the map on against 56.9 off. It was 30.5 against 57.2. At a 100,000-line scrollback, 36.5 against 42.2, from 13.4.
+	- Pinned by: a flood test that counts the lines drawn, a test of the wait, a check that the picture is the same as drawing it all fresh, and a check that the map never claims more pixels than it has.
+	- Left alone: the published speed rows, and the plain row reading under them with the map off. Both want a proper run on the speed rig.
+	- Opened: 20260918
+	- Closed: 20260919
 
 - ✅ New text added to a screen with enough room to not have to scroll up to make new space, should never "smooth-scroll DOWN" from "beneath" the content above, last-line-first. (E.g. when pasting several lines of content at once.) It appear first-line-first. If it can all fit on the same screen without scrolling, maybe that means popping in fully-formed, all at once. That would be peferrable to oddly scrolling in from beneathe an invisible horizontal curtain, last-line-first. (Make this change gated to a global tunable in-code variable, so this behavior could be restored if desired. It does look kind of cool, it's just "wrong" from a "terminal experience" perspective.
 	- Cause: an app that makes room for new lines, like an input box growing as a paste arrives, moves the rows under them down into blank rows. That read as a scroll down, so it slid.

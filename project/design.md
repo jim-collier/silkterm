@@ -302,11 +302,13 @@ How it is built:
 
 - `minimap.rs` owns the line cache, the raster, the mapping and the hit tests. `pane.rs` carves the rect and routes events. Drawing is one textured quad per pane plus overlay quads for the marker and thumb.
 
-- Each line rasterizes once into a fixed-width pixel row when it enters history, since history lines never change; the live screen rows re-raster when they do. A screen swap, a resize and a width change drop the cache. Sitting scrolled back with a full scrollback is the one case where nothing reports how many lines were pushed, so a changed newest-history line is taken as the sign the cache has fallen behind, and it rebuilds whole at a bounded rate.
+- Each line rasterizes once into a fixed-width pixel row, at the first compose after it enters history, since history lines never change; the live screen rows re-raster at each compose. A build between composes only counts the new lines. It runs while holding the lock the PTY reader waits on, and under a flood most lines leave history before any compose would show them, so rasterizing them as they arrived cost about half the terminal's speed. A screen swap, a resize and a width change drop the cache. Sitting scrolled back with a full scrollback is the one case where nothing reports how many lines were pushed, so a changed newest-history line is taken as the sign the cache has fallen behind, and it rebuilds whole at a bounded rate.
 
 - The composed image uploads as a texture the size of the column, so texture size limits and the GL context's VRAM-loss re-upload both stay non-issues.
 
 - Under a flood every pixel of the map moves on every line, so a recompose is throttled rather than run per frame. A compose the throttle defers schedules a timed wake, not an animation flag - marking the window animating would bring it straight back, find the throttle still closed, and spin at the frame rate.
+
+- The throttle is at least 90 ms, and at least twenty times what the last compose took. A column that changes size composes at once instead of waiting the throttle out, so the image is never left at a size the column no longer has. A compose rasterizes up to the whole scrollback, which can be a million lines, so a fixed interval could not bound its share of the lock at every depth. At the default depth under a flood, the map on costs about 6% of throughput.
 
 - Memory is about 5 MB per pane at the default scrollback and a 120 px column, freed while the map is off.
 
