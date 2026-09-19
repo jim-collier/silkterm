@@ -6291,14 +6291,22 @@ mod tests {
 		let shift = scroll_shift_signed(&cur, &last, APP_SCROLL_MAX);
 		assert_eq!(shift, -2, "the detector reads it as a scroll down");
 		assert!(shift_makes_room(&cur, &last, shift, blank));
+		// shrinking back is a scroll up into the same blank rows, and slides
+		let shift = scroll_shift_signed(&last, &cur, APP_SCROLL_MAX);
+		assert_eq!(shift, 2);
+		assert!(
+			!shift_makes_room(&last, &cur, shift, blank),
+			"up is never room"
+		);
 
 		// A box with no room under it scrolls the grid instead, which the output
 		// ease owns. vim scrolling back over its file with a status row under it
-		// is a shift down that is not room.
+		// is a shift down that is not room. Lines from 21 on are blank, so the
+		// rows leaving the span are blank while the status row under them is not.
 		let file = |first: usize| {
 			use std::fmt::Write as _;
 			let mut text = String::new();
-			for i in 0..lines - 1 {
+			for i in (0..lines - 1).filter(|i| first + i < 21) {
 				let _ = write!(text, "\x1b[{};1Hline {}", i + 1, first + i);
 			}
 			format!("\x1b[2J\x1b[H{text}\x1b[{lines};1H-- status --")
@@ -6306,8 +6314,11 @@ mod tests {
 		let (last, cur) = (rows(&file(10)), rows(&file(8)));
 		let shift = scroll_shift_signed(&cur, &last, APP_SCROLL_MAX);
 		assert_eq!(shift, -2);
-		assert!(!shift_makes_room(&cur, &last, shift, blank));
-		assert!(!shift_makes_room(&last, &cur, 2, blank), "up is never room");
+		assert_eq!((last[13], last[14]), (blank, blank));
+		assert!(
+			!shift_makes_room(&cur, &last, shift, blank),
+			"the status row"
+		);
 	}
 
 	fn cells(text: &str, cols: usize) -> Vec<StripCell> {
