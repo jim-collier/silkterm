@@ -273,7 +273,7 @@ impl DialogWin {
 		el: &ActiveEventLoop,
 		parent: Option<RawWindowHandle>,
 		resume: Option<View>,
-		sized: Option<(u32, u32)>,
+		sized: Option<(f32, f32)>,
 		warm: Option<&crate::gfx::DialogGpu>,
 	) -> anyhow::Result<Self> {
 		// provisional window first: sizing needs a TextCtx to measure labels in
@@ -311,11 +311,12 @@ impl DialogWin {
 			min_h.ceil() as u32,
 		)));
 		// The size the user last dragged it to wins over the natural one, but it
-		// still has to fit the screen this window came up on.
+		// still has to fit the screen this window came up on. It was kept in DIP,
+		// so a reopen at another scale is the same apparent size.
 		let (w, h) = match sized {
 			Some((sw, sh)) => (
-				(sw as f32).clamp(min_w, max_w.max(min_w)),
-				(sh as f32).clamp(min_h, max_h.max(min_h)),
+				(sw * scale).clamp(min_w, max_w.max(min_w)),
+				(sh * scale).clamp(min_h, max_h.max(min_h)),
 			),
 			None => dialog.size(),
 		};
@@ -373,13 +374,17 @@ impl DialogWin {
 		}
 	}
 
-	// The size it is sitting at, physical pixels. Kept for the rest of the
-	// session so a reopen comes back the size it was dragged to.
-	pub fn settings_size(&self) -> Option<(u32, u32)> {
+	// The size it is sitting at, in DIP. Kept for the rest of the session so a
+	// reopen comes back the size it was dragged to - and on a monitor at another
+	// scale, the same apparent size rather than the same count of pixels.
+	pub fn settings_size(&self) -> Option<(f32, f32)> {
 		match &self.content {
 			Content::Settings(_) => {
 				let size = self.window.inner_size();
-				Some((size.width, size.height))
+				let scale = crate::settings_ui::sane_scale(config::display_scale(
+					self.window.scale_factor(),
+				));
+				Some((size.width as f32 / scale, size.height as f32 / scale))
 			}
 			Content::About { .. } => None,
 		}
@@ -658,6 +663,43 @@ impl DialogWin {
 			dialog.set_size(w as f32, h as f32);
 			self.snap_to_natural(w as f32, h as f32);
 		}
+		self.window.request_redraw();
+	}
+
+	// DPI/scale changed under an open dialog: dragged to a monitor at another
+	// scale, or the desktop's scaling moved. Only the boundary follows - the text
+	// context rasterizes at the new size and the chrome is measured again - while
+	// every value and unapplied edit stays put. winit keeps the logical size, so
+	// a Resized event follows with the new physical one.
+	//
+	// About and the notice are laid out once at open, into fixed positions, and
+	// cannot be resized, so they are left alone.
+	pub fn set_scale(&mut self, scale_factor: f64) {
+		let scale = config::display_scale(scale_factor);
+		if !matches!(self.content, Content::Settings(_)) || (scale - self.text.scale).abs() < 1e-4 {
+			return;
+		}
+		self.text = TextCtx::new(&self.gfx.device, &self.gfx.queue, self.gfx.format, scale);
+		let (label_w, btn_w, row_btn_w, tab_ws) =
+			crate::settings_ui::chrome_widths(&mut self.text, scale);
+		let (max_w, max_h) = Self::settings_caps(&self.window, self.parent, scale);
+		self.caps = (max_w, max_h);
+		let line_h = self.text.ui_line_h;
+		if let Content::Settings(dialog) = &mut self.content {
+			dialog.rescale(
+				line_h, label_w, btn_w, row_btn_w, tab_ws, max_w, max_h, scale,
+			);
+			// the floor is physical, so it was wrong the moment the factor moved
+			let (min_w, min_h) = dialog.min_size();
+			self.window
+				.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(
+					min_w.ceil() as u32,
+					min_h.ceil() as u32,
+				)));
+		}
+		// the natural size is a different number of pixels now, so let the snap
+		// have another go at whatever size the Resized event brings
+		self.snapped = false;
 		self.window.request_redraw();
 	}
 
