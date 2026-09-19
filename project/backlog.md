@@ -71,6 +71,8 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
+- 🔘 Selecting text all the way to the bottom of the screen - or all the way to the top - no longer auto-scrolls to reveal more to keep selecting. (It worked at some point in the past, possibly weeks ago.)
+
 - 🔬 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
 	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even muffer's autocopy doesn't work.)
 	- CTRL+shift+C on selected text doesn't work.
@@ -147,10 +149,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
-- ✋ Save settings by editing only the lines that changed, so a file with a line that cannot be read still takes the window size, menu switches and new shells.
-	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
-	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
-	- Opened: 20260918
+- 🔘 Extension to the idea of "Silk: Allow 'Profile' to be selected even when 'Choose automatically' is enabled:
+	- Also allow dependent settings to be changed. (A reversal of the design to disable dependent settings.)
+		- But if a dependent setting IS changed by the user:
+			- Deselect "Choose automatically"
+			- Change 'Profile' to "Custom".
 
 - 🔘 Minimap:
 	- 🔘 Make text lines even MORE text-like. Still looks to blobbish and not like text viewed from a distance. Needs fewer output pixels per input line, and possibly more anti-aliasing.
@@ -173,6 +176,14 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- 🔘 A hex field should select its contents when it takes focus rather than emptying itself, which is what a text box normally does.
 
 - 🔘 Allow programs to change the tab title.
+
+- 🔘 When other settings are changed automatically based on a user action to a different setting (e.g. "Choose automatically" and/or "Profile", visually alert the user to the change:
+	- Use Effect 1 from "Rolling epic 'GPU FX'", around the setting that gets programmatically changed based on a user doing something elsewhere.
+
+- ✋ Save settings by editing only the lines that changed, so a file with a line that cannot be read still takes the window size, menu switches and new shells.
+	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
+	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
+	- Opened: 20260918
 
 - NOTE: Stop here to work on releasing RC1.
 
