@@ -1283,6 +1283,7 @@ impl Pane {
 					cols,
 					advanced,
 					cut,
+					std::time::Instant::now(),
 				);
 			}
 		}
