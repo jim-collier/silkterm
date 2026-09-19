@@ -139,16 +139,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✋ Held with that item.
 	- Opened: 20260910-230211
 
-- 🔬 On Windows, nothing says that a settings file with an unreadable line can no longer be saved.
-	- Shells found at launch are then never kept, and menu switches and the window size go through the same save. The only report goes to a console that a Windows build does not show.
-	- Decided: a standard error box. Windows shows its own, and elsewhere a plain window drawn like About stands in. Said once a session per file for saves nobody asked for, and every time for OK or Apply in Settings.
-	- Decided: making the save itself work, by editing only the lines it changes, waits for shcl 3.0. It has its own item under features.
-	- Fixed: a refused save leaves the file and its unreadable lines for the window, which puts the notice up. OK in Settings now closes when the save cannot happen, since the change is in use and trying again cannot help.
-	- Pinned by: `a_refused_save_leaves_word_for_the_window`, `a_refused_save_names_the_file_and_the_lines` and `a_refused_save_is_said_once_unless_it_was_asked_for`. The first and last go red with their fix taken out.
-	- Seen on Linux, on the private display: the notice at launch from the shell scan, none on a later resize, one over Settings on Apply that holds its clicks, and one again on OK after Settings closed.
-	- To confirm: the Windows message box, with the Windows batch.
-	- Opened: 20260910-230211
-
 - ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text, nor is the auto-copy of a program running in a pane. Right-click then copy does work when CTRL+shift+C doesn't. This is a regression.
 	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
 	- Changed: copy-on-select no longer waits on the window-focus flag. The drag is proof enough that this is the window in use.
@@ -571,6 +561,17 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ On Windows, nothing says that a settings file with an unreadable line can no longer be saved.
+	- Shells found at launch are then never kept, and menu switches and the window size go through the same save. The only report goes to a console that a Windows build does not show.
+	- Decided: a standard error box. Windows shows its own, and elsewhere a plain window drawn like About stands in. Said once a session per file for saves nobody asked for, and every time for OK or Apply in Settings.
+	- Decided: making the save itself work, by editing only the lines it changes, waits for shcl 3.0. It has its own item under features.
+	- Fixed: a refused save leaves the file and its unreadable lines for the window, which puts the notice up. OK in Settings now closes when the save cannot happen, since the change is in use and trying again cannot help.
+	- Pinned by: `a_refused_save_leaves_word_for_the_window`, `a_refused_save_names_the_file_and_the_lines` and `a_refused_save_is_said_once_unless_it_was_asked_for`. The first and last go red with their fix taken out.
+	- Seen on Linux, on the private display: the notice at launch from the shell scan, none on a later resize, one over Settings on Apply that holds its clicks, and one again on OK after Settings closed.
+	- Seen on b29w: the box comes up a few seconds after launch, titled "Settings not saved", naming the file and the line where the file has it. The Windows scenario `savenotice` checks that, and fails on a build from before the fix.
+	- Note: the line number is the file's because the launch writes the filled-in file first. A Settings Apply that adds a line above the bad one in memory could name a line one or two off. Not seen.
+	- Opened: 20260910-230211. Closed: 20260918.
 
 - ✅ The pre-commit hook refuses any commit that stages a file with `mod` lines, such as `main.rs`.
 	- Reproduced: "failed to resolve mod `app`" on the commit for the Windows batch. The hook formats the staged copy in a temp folder, and rustfmt followed the `mod` lines to files that are not there. It came in with the 20260917 hook rewrite (F80).
