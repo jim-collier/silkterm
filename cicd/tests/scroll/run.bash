@@ -16,6 +16,7 @@
 ##		   pill         - a pill repainted over a recorded region's edge is held still
 ##		   altenter     - a burst still easing when an alt screen takes over comes to rest
 ##		   chrome       - output easing under a live block redrawn in place holds the block still
+##		   aptbar       - lines above a pinned status row still ease once the scrollback is full
 ##		Plain shell-output easing is covered by the library tests (cargo test); the
 ##		"jumping / re-listing / bottom-up" symptoms map to those monotonicity checks.
 ##		Scenes self-scroll on a timer - no key injection (unreliable here), so the
@@ -32,6 +33,7 @@
 ##		   --real          also launch real less/nano/vim.tiny (smoke, non-fatal)
 ##		   --keep          leave the Xvfb up and keep the trace files
 ##		   --strict        treat environment skips as failures
+##		   --only <label>  run one deterministic scene, e.g. tmux
 ##		   -v, --verbose   show per-scene frame counts
 ##		   -h, --help
 ##	- Exit: 0 all pass (a skipped scene beside passes is still 0), 1 a regression
@@ -66,7 +68,7 @@ trap 'rc=$?; [[ $rc -ne 0 && $rc -ne 1 ]] && printf "\n[ scroll harness ABORTED 
 
 ## Options.
 bin=""; display="${CICD_HEADLESS_DISPLAY:-${RPD_HEADLESS_DISPLAY:-:98}}"
-settle=13; capture=16; step=0.15; do_real=0; keep=0; strict=0; verbose=0; wayland=0
+settle=13; capture=16; step=0.15; do_real=0; keep=0; strict=0; verbose=0; wayland=0; only=""
 while (($#)); do case "$1" in
 	--bin)      bin="${2-}"; shift 2 ;;
 	--display)  display="${2-}"; shift 2 ;;
@@ -77,6 +79,7 @@ while (($#)); do case "$1" in
 	--real)     do_real=1; shift ;;
 	--keep)     keep=1; shift ;;
 	--strict)   strict=1; shift ;;
+	--only)     only="${2-}"; shift 2 ;;
 	-v|--verbose) verbose=1; shift ;;
 	-h|--help)  sed -n '/^##	- Purpose:/,/^##	History:/p' "${BASH_SOURCE[0]}" | sed '$d; s/^##	\{0,1\}//'; exit 0 ;;
 	*) echo "unknown option: $1 (try --help)" >&2; exit 2 ;;
@@ -223,6 +226,7 @@ pass=0; fail=0; miss=0; spawned_pid=0
 ## Run one deterministic scene and judge its trace. shape|mode|expect_st|[expect_sb].
 run_scene(){
 	local label="$1" shape="$2" mode="$3" est="$4" esb="${5:--1}"
+	[[ -z "$only" || "$only" == "$label" ]] || return 0
 	local trace="${work}/${label}.trace"
 	## a scene with a script of its own runs that; scene.bash has no case for it
 	local script="${meDir}/scenes/${shape}.bash"
@@ -293,6 +297,9 @@ run_scene altenter altenter still -1
 ## muffer's shape: new transcript lines ease in above a block it redraws in
 ## place, which must hold still (three block rows plus the blank cursor row).
 run_scene chrome chrome pinned -1 4
+## apt's progress bar with the scrollback full: the lines above the bar still ease,
+## and the bar's row is held.
+run_scene aptbar aptbar pinned -1 1
 
 ## Best-effort real-app smoke (never fails the suite): prove the real apps render
 ## under SilkTerm (enter alt-screen, no hang) - regresses e.g. the cosmic-text hang
@@ -337,3 +344,4 @@ exit "${rc}"
 ##	History:
 ##		- 20260706 JC: Created.
 ##		- 20260718 JC: --wayland pass (cage kiosk) alongside the X11 Xvfb pass.
+##		- 20260918 JC: aptbar scene, --only.

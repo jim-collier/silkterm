@@ -81,6 +81,11 @@ def main() -> int:
     if a.mode == "pinned":
         easing = [f for f in frames if f["alt"] == 0 and f["frac"] > a.eps]
         if len(easing) < 10:
+            # The opening burst eased, so the renderer is up and the loop's lines cut.
+            if a.skip_frames >= 10:
+                out("FAIL", f"only {len(easing)} easing frames in the loop, after "
+                           f"{a.skip_frames} before it: the output is not easing")
+                return 1
             out("SKIP", f"only {len(easing)} easing frames (GL warmup / timing?)")
             return 2
         over = [f for f in easing if f["ob"] > a.expect_sb]

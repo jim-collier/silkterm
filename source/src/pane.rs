@@ -6252,6 +6252,123 @@ mod tests {
 		assert_eq!(output_band(&cur, &last, k, lines - end, blank_row(cols)), 1);
 	}
 
+	// What a build makes of one burst of output: the lines the output ease has
+	// to cover, and the region slide if the ease does not own the motion.
+	fn advance_and_step(
+		term: &Term<VoidListener>,
+		lines: usize,
+		baseline: usize,
+	) -> (usize, Option<i32>) {
+		let ledger = term.scroll_ledger();
+		let region = ledger.region();
+		let whole = region.start.0 <= 0 && region.end.0.max(0) as usize >= lines;
+		let grew = pushed_since(term.grid().history_size(), baseline);
+		let advanced = output_advance(false, true, grew, ledger.pushed());
+		(
+			advanced,
+			ledger_step(false, true, advanced, whole, ledger.lines()),
+		)
+	}
+
+	#[test]
+	fn a_status_bar_is_held_still_at_a_full_scrollback_too() {
+		// The same apt stream with the scrollback full, which is where a long
+		// install spends its time. The depth stops growing there, so the
+		// engine's own count has to carry the line.
+		let (cols, lines) = (20usize, 8usize);
+		for scrollback in [1000usize, 20] {
+			let mut term = term_fed(cols, lines, scrollback, "");
+			term.set_scroll_ledger_rows(crate::scroll::SLIDE_ROWS);
+			for i in 0..40 {
+				feed(&mut term, &format!("\r\nfill {i}"));
+			}
+			feed(&mut term, "\x1b[8;1Hbar 1/9\x1b[1;7r\x1b[7;1H");
+			for i in 0..10 {
+				feed(&mut term, &format!("\r\nline {i}"));
+			}
+			term.scroll_ledger_mut().clear();
+			let last = band_rows(&term, lines, cols);
+			let h0 = term.grid().history_size();
+			assert_eq!(h0 == scrollback, scrollback == 20);
+			feed(&mut term, "\r\nline x\x1b7\x1b[8;1H\x1b[Kbar 2/9\x1b8");
+			let (advanced, step) = advance_and_step(&term, lines, h0);
+			assert_eq!(
+				(advanced, step),
+				(1, None),
+				"scrollback {scrollback}: the line eases as output"
+			);
+			let end = (term.scroll_ledger().region().end.0.max(0) as usize).min(lines);
+			let cur = band_rows(&term, lines, cols);
+			assert_eq!(
+				output_band(&cur, &last, advanced, lines - end, blank_row(cols)),
+				1
+			);
+		}
+	}
+
+	#[test]
+	fn a_clear_eases_the_same_at_a_full_scrollback() {
+		let (cols, lines) = (20usize, 8usize);
+		for scrollback in [1000usize, 20] {
+			let mut term = term_fed(cols, lines, scrollback, "");
+			term.set_scroll_ledger_rows(crate::scroll::SLIDE_ROWS);
+			for i in 0..40 {
+				feed(&mut term, &format!("\r\nfill {i}"));
+			}
+			feed(&mut term, "\x1b[H\x1b[J\r\none\r\ntwo\r\nthree");
+			term.scroll_ledger_mut().clear();
+			let h0 = term.grid().history_size();
+			feed(&mut term, "\x1b[2J");
+			let (advanced, step) = advance_and_step(&term, lines, h0);
+			assert_eq!((advanced, step), (4, None), "scrollback {scrollback}");
+		}
+	}
+
+	#[test]
+	fn the_scroll_record_costs_a_full_screen_program_little() {
+		// tmux, vim and less scroll a screen that keeps no history, so the engine
+		// keeps the rows that leave for the slide to draw. It copied each one, and
+		// that took a third off the parse. Same flood with the rows kept and
+		// without, turn about, best of each.
+		let (cols, lines) = (160usize, 42usize);
+		let line = format!("{}\r\n", "0123456789".repeat(8));
+		let flood = line.repeat(4000);
+		let run = |keep: usize| {
+			let mut term = term_fed(cols, lines, 1000, "\x1b[?1049h");
+			term.set_scroll_ledger_rows(keep);
+			let mut parser: Processor = Processor::new();
+			let start = std::time::Instant::now();
+			for chunk in flood.as_bytes().chunks(64 * 1024) {
+				parser.advance(&mut term, chunk);
+			}
+			assert_eq!(
+				term.scroll_ledger().rows().len(),
+				keep.min(crate::scroll::SLIDE_ROWS)
+			);
+			start.elapsed()
+		};
+		// The rest of the suite runs beside this, so a slow pass gets more turns
+		// before it counts. The copy was 28% over in every one.
+		let (mut kept, mut bare) = (std::time::Duration::MAX, std::time::Duration::MAX);
+		let within = |kept: std::time::Duration, bare: std::time::Duration| {
+			kept.as_secs_f64() <= bare.as_secs_f64() * 1.10
+		};
+		for _ in 0..4 {
+			for _ in 0..7 {
+				kept = kept.min(run(crate::scroll::SLIDE_ROWS));
+				bare = bare.min(run(0));
+			}
+			if within(kept, bare) {
+				break;
+			}
+		}
+		eprintln!("rows kept {kept:?}, none {bare:?}");
+		assert!(
+			within(kept, bare),
+			"keeping rows cost {kept:?} against {bare:?}"
+		);
+	}
+
 	#[test]
 	fn the_output_band_grows_while_easing_and_is_taken_fresh_at_rest() {
 		assert_eq!(adopt_band(0, 3, false), 3);

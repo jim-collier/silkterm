@@ -43,6 +43,7 @@ deterministic. `analyze.py` reads it and checks:
 | tmux   | region above 1 status row, real linefeeds | slide off the engine's scroll count, sb 1, monotone |
 | altenter | nano shape, entered mid-ease | still: frac 0 on every alt frame |
 | chrome | transcript with a live block redrawn under it, normal screen | pinned: the block holds still while output eases, ob 4 |
+| aptbar | region over all but the last row on the normal screen, scrollback already full | pinned: the lines still ease and the bar's row holds still, ob 1 |
 
 `altenter` is a different check: 400 lines of plain output, a short gap so the ease is mid-flight, then the alt screen. The alt grid has no scrollback, so the view has to be at rest the moment it swaps in; a leftover ease renders as the fraction wrapping through a whole cell once per line of backlog, which is the nano wobble. One frame is enough, since a still screen only builds when something changes. The scene is `scenes/altenter.bash`; a scene with a script of its own under `scenes/` runs that instead of `scene.bash`.
 
@@ -65,3 +66,5 @@ checks there guard the rest.
 `0` all pass, `1` a real regression was measured, `3` nothing ran because something is missing (the binary, `python3`, the display or `cage`). cicd reports a `3` as skipped for that arm, never as OK.
 
 A scene with too little trace or that never scrolled is a **skip** (an environment or timing miss), non-fatal unless `--strict`, but a run where no scene passed fails. A slide scene that scrolled and never slid fails. So does an `altenter` run where no output was easing when the alt screen took over, since it tested nothing.
+
+`aptbar` prints past the scrollback's depth before its loop, because a full scrollback stops growing and the output ease then runs off the engine's own count. A pinned scene whose opening burst eased and whose loop did not is a failure, not a skip.

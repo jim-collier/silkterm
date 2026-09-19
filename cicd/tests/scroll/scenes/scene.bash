@@ -11,6 +11,8 @@
 ##   pill   - a region scrolled back with CSI T, a pill repainted over its last row
 ##   chrome - a transcript on the normal screen with a live block redrawn under it,
 ##            one new transcript line per step (muffer's shape)
+##   aptbar - apt's progress bar: a region over all but the last row on the normal
+##            screen, the bar redrawn on that row, with the scrollback already full
 ## The repaint shapes use explicit cursor positioning (CUP) and never a newline, so
 ## nothing scrolls the real grid - only the drawn content shifts, exactly the way
 ## curses/nano repaint. The tmux shape is the other kind: it sets DECSTBM and lets
@@ -32,6 +34,27 @@ if [ "$shape" = chrome ]; then
 	n=0
 	while :; do
 		printf '\033[3A\r\033[J  transcript %06d the quick brown fox\n+------------------+\n| working %-8d |\n+------------------+\n' "$n" "$n"
+		n=$((n + 1))
+		sleep "$step"
+	done
+fi
+
+if [ "$shape" = aptbar ]; then
+	## Past the scrollback's depth, so it is full before the loop starts and its
+	## depth no longer moves with each line.
+	seq -f '  history %06.0f' 1 10200
+	## the window has its final size only once it has settled
+	sleep "$settle"
+	sz=$(stty size 2>/dev/null) || sz=""
+	rows=${sz% *}
+	case "$rows" in ''|*[!0-9]*) rows=30 ;; esac
+	[ "$rows" -ge 10 ] || rows=30
+	printf '\033[%d;1H\033[7m  progress 0  \033[0m\033[K' "$rows"
+	printf '\033[1;%dr\033[%d;1H' "$((rows - 1))" "$((rows - 1))"
+	trap 'printf "\033[r"' EXIT INT TERM
+	n=0
+	while :; do
+		printf '\n  unpacking %06d the quick brown fox\0337\033[%d;1H\033[7m  progress %-6d\033[0m\033[K\0338' "$n" "$rows" "$n"
 		n=$((n + 1))
 		sleep "$step"
 	done
