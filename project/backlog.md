@@ -138,6 +138,13 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Neither can be resized, and neither keeps what it would need to lay itself out again - About does not hold the adapter it names, and the notice does not hold its paragraphs.
 	- Opened: 20260919
 
+- 🔘 The Settings dialog can be left at the wrong size after a change of display scale.
+	- The layout moves to the new scale, but nothing asks the window for a size to match it, so the two only agree because the toolkit asks for one straight after. Where the window manager declines, such as a maximized or tiled window, the dialog draws at the new scale inside a window that kept its old size, and clicks no longer land where they look. Another change at the same scale does nothing, so the only way out is to close it.
+	- The screen caps are measured again at the same time but nothing is held to them, so a window dragged from a wide screen to a smaller one at a higher scale can come out taller than the screen, with the footer buttons under the taskbar.
+	- Found by reading, not reproduced.
+	- To confirm: two monitors at different scales, with the dialog maximized.
+	- Opened: 20260919
+
 ### New features and enhancements
 
 - ✋ Save settings by editing only the lines that changed, so a file with a line that cannot be read still takes the window size, menu switches and new shells.
@@ -283,12 +290,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
-
-- ✅ Over ssh with X forwarding, a performance rating can be saved for the forwarded screen and replace the one the machine had.
-	- The forwarded display counts as local, so the Remote profile is not used. Code review 20260914 item 9 (F41).
-	- Any display that names a host is a remote screen now, localhost included. X servers have not listened on the network by default for years, so a localhost display is a forwarded one.
-	- Opened: 20260914-124200
-	- Closed: 20260915
 
 - ✅ After a crash in VSCodium required switching to VT-1, the terminal on the same virtual desktop came back with background-only, no text visible. (This looks a lot like a previous bug many weeks ago.)
 	- On some other silkterm windows (but not all), text is visible, but the background is gray, not the theme's black. (Even after changing the theme.) Some silkterm windows seem fine.
@@ -486,6 +487,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Note: this also undoes the narrowing it was split from the same day. A setting that names a path reads all three spellings on both platforms again, which is what a config file carried between machines needs. See the Done feature "Pre-interpret the most common bash environment variables".
 	- Opened: 20260916
 	- Closed: 20260916
+
+- ✅ Over ssh with X forwarding, a performance rating can be saved for the forwarded screen and replace the one the machine had.
+	- The forwarded display counts as local, so the Remote profile is not used. Code review 20260914 item 9 (F41).
+	- Any display that names a host is a remote screen now, localhost included. X servers have not listened on the network by default for years, so a localhost display is a forwarded one.
+	- Opened: 20260914-124200
+	- Closed: 20260915
 
 - ✅ A wallpaper set with `silkterm --wallpaper` does not last the session.
 	- With a rotation folder, Reload config after it turns the background black until restart. A reload without the `--wallpaper` step keeps the picture.
