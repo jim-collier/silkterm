@@ -114,11 +114,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✋ 20260918: waits for shcl. The writer is shcl's, and a second writer in SilkTerm was decided against. The other save items in this group are closed.
 	- Opened: 20260911-064028
 
-- 🔘 A performance test run while the monitor is asleep can save a rating that is too low.
-	- The display then shows one frame a second, so the first profile reads as hopeless and Standard terminal is saved, with no wallpaper from then on.
-	- Not seen yet. Skipping the save when frames stall would make a truly slow machine test at every launch, so it needs its own design.
-	- Opened: 20260910-215844
-
 - ✋ A short settings file can get one section's commented defaults filed under another.
 	- Seen on a hand-written file: the Performance defaults were written under Transparency, and the next launch added them again where they belong.
 	- Same cause as the dotted-line config item below. The launch step that adds missing settings picks their place from a file with too few lines to go on. That step is SilkTerm's own, so a new shcl release is unlikely to fix either one.
@@ -559,6 +554,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ A performance test run while the monitor is asleep can save a rating that is too low.
+	- The display then shows one frame a second, so the first profile reads as hopeless and Standard terminal is saved, with no wallpaper from then on.
+	- Not seen yet. Skipping the save when frames stall would make a truly slow machine test at every launch, so it needs its own design.
+	- Decided: when a rung runs more than four times over its budget, Standard terminal is timed once. A slow machine draws that well enough and is saved as Standard, as before. If Standard stalls too, the display is what is slow, so nothing is saved, the session keeps the profile it had, and the next launch tests again.
+	- The banner then says the display was not drawing at its usual rate.
+	- A machine too slow to draw a plain terminal at a few frames a second would test at every launch. That is accepted, since nothing would help it.
+	- Pinned by: `a_display_that_is_not_drawing_gives_no_rating`, which fails with the old answer put back. A forced test on the private display still measures and saves. A real sleeping monitor has not been tried.
+	- Opened: 20260910-215844. Closed: 20260918.
 
 - ✅ A setting indented under a commented-out heading can load at one launch and be ignored at the next.
 	- In a short file, adding the missing settings puts lines above it, and it then reads as part of the setting above. A launch that finds the file open in another program skips that step and still reads it.
