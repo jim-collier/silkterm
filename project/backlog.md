@@ -108,35 +108,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Interesting note: In muffer at least, if text is highlighted, then in another application text is copied and pasted, then you go back to muffer in silkterm to re-copy the still-selected text to clipboard: No mechanism will do it, not even the menu. You have to re-select the text, then it will work.
 	- Opened: 20260909.
 
-- 🔘 A setting indented under a commented-out heading can load at one launch and be ignored at the next.
-	- In a short file, adding the missing settings puts lines above it, and it then reads as part of the setting above. A launch that finds the file open in another program skips that step and still reads it.
-	- Seen with `rows:` and with a renamed tab width under `window:`.
-	- Opened: 20260911-064028
-
-- 🔘 A save from Settings moves the lines of a commented-out section under the setting above it.
+- ✋ A save from Settings moves the lines of a commented-out section under the setting above it.
 	- `# rotate:` with `# enabled: true` indented under it, placed after another setting, comes back with `# enabled: true` above `# rotate:` and indented under that setting. Uncommented later, the values read as part of the wrong setting and do nothing.
 	- This is how shcl 2.0.0 writes a file, and shcl's current code does the same.
+	- ✋ 20260918: waits for shcl. The writer is shcl's, and a second writer in SilkTerm was decided against. The other save items in this group are closed.
 	- Opened: 20260911-064028
-
-- 🔘 A performance test can still run at every launch on a settings file with no Performance section.
-	- It happens when another value in the file is typed without quotes and holds a space or a colon, such as a font name or a Windows folder. The rating is not saved, and the banner says the Performance section could not be updated.
-	- A normal launch adds the section first, so this needs the file to have been busy while SilkTerm started.
-	- Opened: 20260911-001526
-
-- 🔘 A save from Settings adds or removes quotes on values nobody changed.
-	- `family: Cascadia Mono` comes back as `family: "Cascadia Mono"`, a quoted `"5"` comes back bare, and `'text'` can come back as `"text"`. shcl reads every value the same, but a launch can still load one differently, as the item below says.
-	- This is how shcl writes a file, and shcl's spec says so. The one SilkTerm check that should ignore it is the performance rating's, and that fix waits with the item above.
-	- Opened: 20260911-001526
-
-- 🔘 A save from Settings can change a setting nobody touched, from the next launch on.
-	- A font list that is still an old default but written in single quotes becomes the current default. A renamed setting under a commented-out heading can get renamed after all.
-	- A save tidies quotes and indents, and the renames at launch look at both.
-	- Opened: 20260911-012838
-
-- 🔘 A save from Settings can change a setting nobody touched, from the next launch on.
-	- A font list that is still an old default but written in single quotes becomes the current default. A renamed setting under a commented-out heading can get renamed after all.
-	- A save tidies quotes and indents, and the renames at launch look at both. The performance rating refuses such a write instead.
-	- Opened: 20260911-012838
 
 - 🔘 A performance test run while the monitor is asleep can save a rating that is too low.
 	- The display then shows one frame a second, so the first profile reads as hopeless and Standard terminal is saved, with no wallpaper from then on.
@@ -583,6 +559,37 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ A setting indented under a commented-out heading can load at one launch and be ignored at the next.
+	- In a short file, adding the missing settings puts lines above it, and it then reads as part of the setting above. A launch that finds the file open in another program skips that step and still reads it.
+	- Seen with `rows:` and with a renamed tab width under `window:`.
+	- Fixed: the launch step that adds missing settings checks that every value that loaded before still loads. A line typed deeper than its block needs is moved out to the block's own depth, which a save would do anyway. Where that is not enough, nothing is added and the launch says why.
+	- Fixed: a commented-out heading no longer counts as the parent of an active line, which is how the file format reads it too.
+	- Pinned by: `backfill_keeps_a_setting_that_is_indented_too_deep`, with `rows:` and a tab width among its files, and a check over random files that adding settings changes nothing that loaded. Both fail with the fix taken out.
+	- Opened: 20260911-064028. Closed: 20260918.
+
+- ✅ A performance test can still run at every launch on a settings file with no Performance section.
+	- It happens when another value in the file is typed without quotes and holds a space or a colon, such as a font name or a Windows folder. The rating is not saved, and the banner says the Performance section could not be updated.
+	- A normal launch adds the section first, so this needs the file to have been busy while SilkTerm started.
+	- Fixed: the rating check no longer counts a value gaining or losing quotes as a change, since no read sees it.
+	- Decided 20260914: the check compares what the next launch would load, through every rewrite that launch makes before it reads the file. That is the wallpaper heading repair, the old-layout conversion, the default shell move and the renames. Adding missing settings is left out.
+	- A file from before the nested layout gets its rating one launch later, since that launch writes the file afresh and would not keep it.
+	- Pinned by: `a_rating_is_kept_where_a_save_only_requotes`, `a_rating_changes_nothing_the_next_launch_migrates`, `a_rating_changes_nothing_the_next_launch_converts` and `a_rating_is_refused_where_a_launch_step_reads_the_layout`, plus the check over random files, which now draws old-layout files and a default shell too.
+	- Opened: 20260911-001526. Closed: 20260918.
+
+- ✅ A save from Settings adds or removes quotes on values nobody changed.
+	- `family: Cascadia Mono` comes back as `family: "Cascadia Mono"`, a quoted `"5"` comes back bare, and `'text'` can come back as `"text"`. shcl reads every value the same, but a launch can still load one differently, as the item below says.
+	- This is how shcl writes a file, and shcl's spec says so. The one SilkTerm check that should ignore it is the performance rating's, and that fix waits with the item above.
+	- The save still does this, as shcl's spec says it may. Nothing SilkTerm does at launch or when it keeps a rating looks at the quotes any more, so it changes no setting.
+	- Opened: 20260911-001526. Closed: 20260918.
+
+- ✅ A save from Settings can change a setting nobody touched, from the next launch on.
+	- A font list that is still an old default but written in single quotes becomes the current default. A renamed setting under a commented-out heading can get renamed after all.
+	- A save tidies quotes and indents, and the renames at launch look at both.
+	- Fixed: the renames and refreshes at launch decide only on what a save keeps. An old default font list is refreshed in either kind of quotes, a setting's place is read the way the file format reads it, and a commented line counts where a save would put it.
+	- An old default font list in single quotes now becomes the current default at the next launch, where it used to wait for the first save.
+	- Pinned by: a check over random files that a save changes no setting the next launch loads, and unit tests for each of the three cases.
+	- Opened: 20260911-012838. Closed: 20260918.
 
 - ✅ On Windows, nothing says that a settings file with an unreadable line can no longer be saved.
 	- Shells found at launch are then never kept, and menu switches and the window size go through the same save. The only report goes to a console that a Windows build does not show.
