@@ -1293,10 +1293,6 @@ mod tests {
 				let pos = back * step as f32 / 20.0;
 				let (y, h) = handle_span(track, total, live, rows, pos, 1.0);
 				let read = span_to_pos(track, total, live, rows, y, 1.0);
-				let (_, travel) = marker(track, total, live, rows, 1.0);
-				if travel <= 0.0 {
-					continue;
-				}
 				assert!(
 					(read - pos).abs() < 0.5,
 					"{total}/{live}: drawn at {pos} reads back {read}"
