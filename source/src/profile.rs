@@ -429,8 +429,9 @@ pub fn worth_measuring(info: &wgpu::AdapterInfo) -> bool {
 // A short measured run over the ladder, in place of guessing from the adapter's
 // name. Each rung gets a moment of full-rate frames with its own settings live,
 // and the first whose median frame period fits the display's budget is the
-// answer. Standard is never timed: if Low cannot hold the rate, nothing below
-// it is in question.
+// answer. Standard is not timed on the way down: if Low cannot hold the rate,
+// nothing below it is in question. It is timed once where a rung stalls, to tell
+// a slow machine from a display that is not drawing (see `Step::Stalled`).
 const BENCH_WARMUP: usize = 3; // frames discarded while a rung's settings settle
 const BENCH_FRAMES: usize = 40; // frames measured per rung...
 const BENCH_RUNG_MS: f32 = 800.0; // ...or this long, whichever comes first
@@ -442,6 +443,13 @@ const BENCH_MIN_FRAMES: usize = 5; // never judge a rung on fewer than this
 // stops timing the ladder there (the case that would take longest to measure,
 // for a foregone answer), and the watch refuses to count such a frame at all -
 // a monitor asleep under the NVIDIA driver paces a GL client at 1 fps.
+//
+// The bench used to answer Standard there and save it, which left a machine
+// rated with its monitor asleep on Standard from then on. Not saving on a stall
+// would test a truly slow machine at every launch. So a stall is settled by
+// timing Standard, which has no effects to pay for: a slow machine draws that
+// well enough and gets Standard, and a display that still stalls is what is
+// pacing the frames, so nothing is learned and nothing is saved.
 pub const STALL_FACTOR: f32 = 4.0;
 
 // What the caller does with the frame it just measured.
@@ -450,6 +458,7 @@ pub enum Step {
 	Measuring,
 	Rung(Profile), // this rung missed: put the next one live and keep going
 	Done(Profile), // the answer
+	Stalled,       // the display is pacing the frames, not the profile: no answer
 }
 
 pub struct Bench {
@@ -459,6 +468,7 @@ pub struct Bench {
 	periods: Vec<f32>,
 	last: Option<Instant>,
 	rung_start: Option<Instant>,
+	floor: bool, // a rung stalled, and Standard is being timed to see why
 }
 
 impl Bench {
@@ -472,11 +482,15 @@ impl Bench {
 			periods: Vec::with_capacity(BENCH_FRAMES),
 			last: None,
 			rung_start: None,
+			floor: false,
 		}
 	}
 
 	// The profile whose settings must be live while this rung is measured.
 	pub fn profile(&self) -> Profile {
+		if self.floor {
+			return Profile::Standard;
+		}
 		self.rungs
 			.get(self.at)
 			.copied()
@@ -504,17 +518,26 @@ impl Bench {
 			return Step::Measuring;
 		}
 		let period = median(&mut self.periods);
+		let stalled = period > budget_ms * STALL_FACTOR;
+		if self.floor {
+			return if stalled {
+				Step::Stalled
+			} else {
+				Step::Done(Profile::Standard)
+			};
+		}
 		if period <= budget_ms {
 			return Step::Done(self.profile());
 		}
-		if period > budget_ms * STALL_FACTOR {
-			return Step::Done(Profile::Standard);
-		}
-		self.at += 1;
 		self.periods.clear();
 		self.seen = 0;
 		self.last = None;
 		self.rung_start = None;
+		if stalled {
+			self.floor = true;
+			return Step::Rung(Profile::Standard);
+		}
+		self.at += 1;
 		match self.rungs.get(self.at) {
 			Some(next) => Step::Rung(*next),
 			None => Step::Done(Profile::Standard),
@@ -720,15 +743,25 @@ mod tests {
 	// Frames at `period` ms until the run answers, so a whole run can be walked
 	// without a clock.
 	fn run_bench(period: f32, budget_ms: f32) -> (Profile, Vec<Profile>) {
+		let (pick, rungs) = run_bench_by(|_| period, budget_ms);
+		(pick.expect("the run stalled"), rungs)
+	}
+
+	// The same with the period each profile draws at. None is a stalled run.
+	fn run_bench_by(
+		period: impl Fn(Profile) -> f32,
+		budget_ms: f32,
+	) -> (Option<Profile>, Vec<Profile>) {
 		let mut bench = Bench::new();
 		let mut now = Instant::now();
 		let mut rungs = vec![bench.profile()];
 		for _ in 0..4000 {
-			now += Duration::from_micros((period * 1000.0) as u64);
+			now += Duration::from_micros((period(bench.profile()) * 1000.0) as u64);
 			match bench.note(now, budget_ms) {
 				Step::Measuring => {}
 				Step::Rung(next) => rungs.push(next),
-				Step::Done(pick) => return (pick, rungs),
+				Step::Done(pick) => return (Some(pick), rungs),
+				Step::Stalled => return (None, rungs),
 			}
 		}
 		panic!("the run never answered");
@@ -751,10 +784,54 @@ mod tests {
 			"each rung has to go live before it is judged"
 		);
 		// far over: nothing on the ladder can help, so the rest is not timed -
-		// which is the case that would otherwise take longest
-		let (pick, rungs) = run_bench(budget * 6.0, budget);
-		assert_eq!(pick, Profile::Standard);
-		assert_eq!(rungs, vec![Profile::Max]);
+		// which is the case that would otherwise take longest. This used to stop
+		// at Max and answer Standard whatever Standard drew at:
+		//   let (pick, rungs) = run_bench(budget * 6.0, budget);
+		//   assert_eq!(rungs, vec![Profile::Max]);
+		// Standard is timed now, to see whether the machine or the display is slow.
+		let slow = |profile| {
+			if profile == Profile::Standard {
+				budget * 0.9
+			} else {
+				budget * 6.0
+			}
+		};
+		let (pick, rungs) = run_bench_by(slow, budget);
+		assert_eq!(pick, Some(Profile::Standard));
+		assert_eq!(rungs, vec![Profile::Max, Profile::Standard]);
+	}
+
+	// A monitor asleep paces every frame at about one a second, whatever is being
+	// drawn. The run used to read that as a hopeless machine and save Standard,
+	// which has no wallpaper, for every launch after. A stall that Standard does
+	// not cure says nothing about the machine, so the run gives no answer.
+	#[test]
+	fn a_display_that_is_not_drawing_gives_no_rating() {
+		let budget = budget_ms(60.0);
+		let (pick, rungs) = run_bench_by(|_| 1000.0, budget);
+		assert_eq!(pick, None, "nothing to save");
+		assert_eq!(rungs, vec![Profile::Max, Profile::Standard]);
+		// a machine that is slow with no effects on either, but not stalled, is
+		// still a slow machine
+		let crawl = |profile| {
+			if profile == Profile::Standard {
+				budget * 3.0
+			} else {
+				budget * 6.0
+			}
+		};
+		assert_eq!(run_bench_by(crawl, budget).0, Some(Profile::Standard));
+		// a stall that starts partway down the ladder is settled the same way
+		let late = |profile| {
+			if profile == Profile::Max {
+				budget * 1.2
+			} else {
+				1000.0
+			}
+		};
+		let (pick, rungs) = run_bench_by(late, budget);
+		assert_eq!(pick, None);
+		assert_eq!(rungs, vec![Profile::Max, Profile::High, Profile::Standard]);
 	}
 
 	fn tuned() -> Settings {
