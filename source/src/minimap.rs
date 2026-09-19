@@ -25,17 +25,23 @@ const MIN_W: f32 = 16.0;
 const MIN_HANDLE: f32 = 14.0;
 // Tallest one buffer line draws. A short buffer stops short of the column's
 // bottom rather than stretching to fill it.
-const MAX_LINE_PX: f32 = 2.0;
-// What a non-blank cell contributes to its pixel. Below 1 so a run of text
-// reads as a bar rather than a slab.
+const MAX_LINE_PX: f32 = 1.5;
+// What the densest glyph contributes to its pixel. Below 1 so a run of text
+// reads as a bar rather than a slab; thinner characters get a share of it,
+// per `ink_share`.
 const INK: f32 = 0.85;
-// A text line does not fill its own height, and once a line draws more than a
-// pixel tall the gap above and below is what keeps a page of text from reading
-// as one block. This is the ink's share of the line at the tallest a line ever
-// draws; below a pixel there is no room for a gap and the line is taken whole.
+// A text line does not fill its own height, and the gap above and below is
+// what keeps a page of text from reading as one block. This is the ink's share
+// of the line at the tallest a line ever draws.
 const BAND: f32 = 0.5;
 // How far down the line the ink starts, at that same tallest.
 const BAND_TOP: f32 = 0.1;
+// Line heights the band ramps between. Under the first there is no room for a
+// gap and the line is taken whole; over the second it gets the full BAND. The
+// pair sits below one pixel so a line near the cap lands across two pixel rows
+// at partial coverage rather than filling one.
+const BAND_FLOOR: f32 = 0.6;
+const BAND_FULL: f32 = 1.2;
 // A pixel row's ink is what actually fell in it, so mostly blank lines read
 // dimmer than a solid page. One line among many still has to be findable, so
 // it never falls below this share of its own strength.
@@ -118,31 +124,46 @@ pub fn text_rect(full: Rect, cfg: &config::Settings, scale: f32, wanted: bool) -
 }
 
 // How tall one buffer line draws. Capped, so a buffer shorter than the column
-// simply does not reach the bottom of it.
+// simply does not reach the bottom of it. The cap is scaled but deliberately
+// not rounded to whole pixels: a line has to be able to sit at a fraction of
+// one, or its ink band lands inside a single pixel row and a page of text
+// goes back to reading as a slab.
 fn line_px(track_h: f32, total: usize, scale: f32) -> f32 {
 	if total == 0 {
 		return 0.0;
 	}
-	(track_h / total as f32).min(config::dip(MAX_LINE_PX, scale))
+	(track_h / total as f32).min(MAX_LINE_PX * scale)
 }
 
 // Where the viewport marker sits, as (y offset down the track, height). `pos`
 // is the scroll model's lines-back-from-the-bottom, the same number the
-// scrollbar rides.
-fn handle_span(track_h: f32, total: usize, rows: usize, pos: f32, scale: f32) -> (f32, f32) {
-	let lh = line_px(track_h, total, scale);
-	let used = lh * total as f32;
-	let h = (rows as f32 * lh)
+// scrollbar rides. `total` is the whole buffer, which is what decides where
+// the viewport sits in it; `live` is the part of it the map draws, which is
+// what decides how tall a line is and where the track stops.
+fn handle_span(
+	track_h: f32,
+	total: usize,
+	live: usize,
+	rows: usize,
+	pos: f32,
+	scale: f32,
+) -> (f32, f32) {
+	let lh = line_px(track_h, live, scale);
+	let used = lh * live as f32;
+	let top = (total.saturating_sub(rows) as f32 - pos).max(0.0);
+	// The viewport's own bottom, held to where the drawn buffer ends, so the
+	// marker does not hang below the last line with output in it.
+	let bot = (total as f32 - pos).min(live as f32);
+	let h = ((bot - top) * lh)
 		.max(config::dip(MIN_HANDLE, scale))
 		.min(used);
-	let top = (total.saturating_sub(rows) as f32 - pos).max(0.0);
 	let y = (top * lh).clamp(0.0, (used - h).max(0.0));
 	(y, h)
 }
 
 // Inverse of `handle_span`: a marker top back to a scroll position in lines.
-fn span_to_pos(track_h: f32, total: usize, rows: usize, y: f32, scale: f32) -> f32 {
-	let lh = line_px(track_h, total, scale);
+fn span_to_pos(track_h: f32, total: usize, live: usize, rows: usize, y: f32, scale: f32) -> f32 {
+	let lh = line_px(track_h, live, scale);
 	if lh <= 0.0 {
 		return 0.0;
 	}
@@ -158,6 +179,7 @@ pub fn geom(
 	scale: f32,
 	cfg: &config::Settings,
 	total: usize,
+	live: usize,
 	rows: usize,
 	pos: f32,
 	alt: bool,
@@ -175,7 +197,7 @@ pub fn geom(
 		h,
 	};
 	let handle = (!alt && total > rows).then(|| {
-		let (y, hh) = handle_span(h, total, rows, pos, scale);
+		let (y, hh) = handle_span(h, total, live, rows, pos, scale);
 		Rect {
 			x: preview.x,
 			y: preview.y + y,
@@ -207,16 +229,18 @@ pub fn hit(g: &Geom, x: f32, y: f32) -> Option<Hit> {
 }
 
 // The scroll position a click at `y` should center the viewport on.
-pub fn center_on(g: &Geom, total: usize, rows: usize, y: f32, scale: f32) -> f32 {
-	let want = (y - g.preview.y - rows as f32 * line_px(g.preview.h, total, scale) * 0.5).max(0.0);
-	span_to_pos(g.preview.h, total, rows, want, scale).clamp(0.0, total.saturating_sub(rows) as f32)
+pub fn center_on(g: &Geom, total: usize, live: usize, rows: usize, y: f32, scale: f32) -> f32 {
+	let want = (y - g.preview.y - rows as f32 * line_px(g.preview.h, live, scale) * 0.5).max(0.0);
+	span_to_pos(g.preview.h, total, live, rows, want, scale)
+		.clamp(0.0, total.saturating_sub(rows) as f32)
 }
 
 // Drag: put the marker's top where the pointer says, and map back to lines.
-pub fn drag_to(g: &Geom, total: usize, rows: usize, top: f32, scale: f32) -> f32 {
+pub fn drag_to(g: &Geom, total: usize, live: usize, rows: usize, top: f32, scale: f32) -> f32 {
 	span_to_pos(
 		g.preview.h,
 		total,
+		live,
 		rows,
 		(top - g.preview.y).max(0.0),
 		scale,
@@ -236,6 +260,11 @@ pub struct Minimap {
 	rows: VecDeque<Row>,
 	spare: Vec<Row>,
 	hist: usize, // history lines the cache accounts for
+	// Buffer lines the map actually draws: history plus the screen rows down
+	// to the last one with output in it. The blank rows under a short prompt
+	// are not the buffer, so neither the track nor the marker reaches them.
+	// 0 until the first compose, which is what `live_lines` falls back on.
+	live: usize,
 	// The newest `fresh` of those are not rasterized yet. A build only counts
 	// them and the compose does the work, because under a flood most lines
 	// leave history before any compose shows them, and the build holds the
@@ -280,6 +309,17 @@ struct Acc {
 impl Minimap {
 	pub fn image(&self) -> (&[u8], usize, usize) {
 		(&self.img, self.img_w, self.img_h)
+	}
+
+	// How many buffer lines the column maps, for the callers that place the
+	// marker and turn a click back into a scroll position. Before the first
+	// compose there is nothing rasterized to ask, so it is the whole buffer.
+	pub fn live_lines(&self, hist: usize, lines: usize) -> usize {
+		if self.live == 0 {
+			hist + lines
+		} else {
+			self.live
+		}
 	}
 
 	// Free everything. Called when the column goes away.
@@ -394,7 +434,8 @@ impl Minimap {
 
 	// Rasterize the history lines the builds only counted, then the screen.
 	// Bounded by the history's size however much output went by since the
-	// last compose.
+	// last compose. Also settles how far down the buffer the map draws: the
+	// blank rows under the last thing printed are not part of it.
 	fn catch_up(&mut self, grid: &Grid<Cell>, colors: &Colors, cfg: &config::Settings) {
 		self.fit_spans();
 		let mut readable = palette::Readable::default();
@@ -403,10 +444,16 @@ impl Minimap {
 			self.raster(grid, Line(-(k as i32)), colors, cfg, &mut readable, row);
 		}
 		self.fresh = 0;
+		let mut inked = 0;
 		for line in 0..self.lines as i32 {
 			let row = self.take_row();
-			self.raster(grid, Line(line), colors, cfg, &mut readable, row);
+			if self.raster(grid, Line(line), colors, cfg, &mut readable, row) {
+				inked = line as usize + 1;
+			}
 		}
+		// A wholly blank screen still keeps one line, so the map does not
+		// vanish at a fresh prompt or straight after a clear.
+		self.live = self.hist + inked.max(1);
 	}
 
 	// The same for every line, so worked out once per width and column count
@@ -441,6 +488,7 @@ impl Minimap {
 
 	// One grid line to one strip of preview pixels. Blank cells are skipped
 	// before any color is resolved, which is most of a terminal buffer.
+	// Answers whether the line laid down any ink at all.
 	fn raster(
 		&mut self,
 		grid: &Grid<Cell>,
@@ -449,7 +497,7 @@ impl Minimap {
 		cfg: &config::Settings,
 		readable: &mut palette::Readable,
 		mut out: Row,
-	) {
+	) -> bool {
 		let width = self.width;
 		#[cfg(test)]
 		{
@@ -461,9 +509,10 @@ impl Minimap {
 		acc.reset(width);
 		let row = &grid[line][..];
 		let (spans, span_at) = (&self.spans, &self.span_at);
-		// A line is mostly runs of one style, so the last cell's color is kept
-		// rather than resolved again.
-		let mut last: Option<(Style, [u8; 3], f32)> = None;
+		// A line is mostly runs of one style, so the last cell's colors are kept
+		// rather than resolved again. The character's own share is cheap and
+		// varies cell to cell, so it is not part of the key.
+		let mut last: Option<(Style, Ink)> = None;
 		for (c, cell) in row.iter().take(self.cols).enumerate() {
 			if blank(cell) {
 				continue;
@@ -472,16 +521,16 @@ impl Minimap {
 				fg: cell.fg,
 				bg: cell.bg,
 				flags: cell.flags & (Flags::INVERSE | Flags::HIDDEN),
-				space: cell.c == ' ',
 			};
-			let (rgb, alpha) = match last {
-				Some((seen, rgb, alpha)) if seen == style => (rgb, alpha),
+			let ink = match last {
+				Some((seen, ink)) if seen == style => ink,
 				_ => {
-					let paint = paint(&style, colors, cfg, readable);
-					last = Some((style, paint.0, paint.1));
-					paint
+					let ink = paint(&style, colors, cfg, readable);
+					last = Some((style, ink));
+					ink
 				}
 			};
+			let (rgb, alpha) = ink.at(ink_share(cell.c));
 			if alpha <= 0.0 {
 				continue;
 			}
@@ -493,24 +542,27 @@ impl Minimap {
 				acc.weight[px] += w;
 			}
 		}
+		let mut any = false;
 		for px in 0..width {
 			let w = acc.weight[px];
 			if w <= 0.0 {
 				continue;
 			}
+			any = true;
 			out[px * 4] = to_u8(acc.rgb[px * 3] / w);
 			out[px * 4 + 1] = to_u8(acc.rgb[px * 3 + 1] / w);
 			out[px * 4 + 2] = to_u8(acc.rgb[px * 3 + 2] / w);
 			out[px * 4 + 3] = to_u8(w.min(1.0) * 255.0);
 		}
 		self.rows.push_back(out);
+		any
 	}
 
 	// Where a line's ink sits inside the `lh` pixels the line occupies, as
 	// (offset, height). Ramped between whole-line and BAND so the map does not
-	// change brightness as a growing buffer crosses a pixel per line.
+	// change brightness as a growing buffer compresses its lines.
 	fn band(lh: f32) -> (f32, f32) {
-		let t = (lh - 1.0).clamp(0.0, 1.0);
+		let t = ((lh - BAND_FLOOR) / (BAND_FULL - BAND_FLOOR)).clamp(0.0, 1.0);
 		(lh * BAND_TOP * t, lh * (1.0 - t * (1.0 - BAND)))
 	}
 
@@ -519,7 +571,7 @@ impl Minimap {
 	// blank neighbours; how bright the pixel gets is how much ink fell in it.
 	fn compose(&mut self, img_h: usize, scale: f32) {
 		let width = self.width;
-		let total = self.rows.len();
+		let total = self.live.min(self.rows.len());
 		self.img_w = width;
 		self.img_h = img_h;
 		self.img.clear();
@@ -602,16 +654,39 @@ struct Style {
 	fg: Color,
 	bg: Color,
 	flags: Flags,
-	space: bool,
 }
 
-// A cell's color in the preview and how much of it shows.
+// A style's two resolved colors, kept so a run of one style resolves once and
+// each cell in it only has to mix its own character's share in.
+#[derive(Clone, Copy)]
+struct Ink {
+	fg: [u8; 3],
+	bg: [u8; 3],
+	own_bg: bool,
+}
+
+impl Ink {
+	// The pixel color and how much of it shows, for a character covering
+	// `share` of what the densest one covers.
+	fn at(self, share: f32) -> ([u8; 3], f32) {
+		let ink = INK * share;
+		// A cell with its own background paints solid; otherwise only its ink
+		// shows, so an indented or short line reads as one.
+		if self.own_bg {
+			(mix(self.bg, self.fg, ink), 1.0)
+		} else {
+			(self.fg, ink)
+		}
+	}
+}
+
+// A cell's colors in the preview.
 fn paint(
 	style: &Style,
 	colors: &Colors,
 	cfg: &config::Settings,
 	readable: &mut palette::Readable,
-) -> ([u8; 3], f32) {
+) -> Ink {
 	let mut fg = palette::resolve(style.fg, colors, cfg);
 	let mut bg = palette::resolve(style.bg, colors, cfg);
 	if style.flags.contains(Flags::INVERSE) {
@@ -620,14 +695,53 @@ fn paint(
 	if style.flags.contains(Flags::HIDDEN) {
 		fg = bg;
 	}
-	fg = readable.get(fg, bg, cfg.text_min_contrast);
-	let ink = if style.space { 0.0 } else { INK };
-	// A cell with its own background paints solid; otherwise only its ink
-	// shows, so an indented or short line reads as one.
-	if bg == cfg.bg {
-		(fg, ink)
-	} else {
-		(mix(bg, fg, ink), 1.0)
+	Ink {
+		fg: readable.get(fg, bg, cfg.text_min_contrast),
+		bg,
+		own_bg: bg != cfg.bg,
+	}
+}
+
+// How much of its cell a character inks, against the densest ones at 1.0.
+// Flat ink is what made a run of text read as a bar; a period and a hash are
+// nothing alike from across the room. Eyeballed from a monospace face rather
+// than measured, since the map is a hint and the face is not known here.
+#[rustfmt::skip]
+const INK_SHARE: [f32; 95] = [
+	// ' '   !     "     #     $     %     &     '     (     )     *     +
+	0.00, 0.40, 0.30, 1.00, 0.90, 0.85, 0.90, 0.22, 0.45, 0.45, 0.45, 0.50,
+	// ,     -     .     /     0     1     2     3     4     5     6     7
+	0.25, 0.30, 0.22, 0.50, 0.90, 0.55, 0.80, 0.80, 0.80, 0.80, 0.85, 0.60,
+	// 8     9     :     ;     <     =     >     ?     @     A     B     C
+	0.90, 0.85, 0.30, 0.35, 0.50, 0.45, 0.50, 0.60, 1.00, 0.85, 0.90, 0.75,
+	// D     E     F     G     H     I     J     K     L     M     N     O
+	0.85, 0.80, 0.70, 0.85, 0.85, 0.40, 0.50, 0.80, 0.60, 1.00, 0.90, 0.85,
+	// P     Q     R     S     T     U     V     W     X     Y     Z     [
+	0.75, 0.90, 0.85, 0.75, 0.60, 0.80, 0.75, 1.00, 0.80, 0.65, 0.75, 0.40,
+	// \     ]     ^     _     `     a     b     c     d     e     f     g
+	0.50, 0.40, 0.30, 0.30, 0.20, 0.70, 0.75, 0.60, 0.75, 0.70, 0.55, 0.80,
+	// h     i     j     k     l     m     n     o     p     q     r     s
+	0.70, 0.35, 0.40, 0.70, 0.35, 0.90, 0.65, 0.70, 0.75, 0.75, 0.45, 0.60,
+	// t     u     v     w     x     y     z     {     |     }     ~
+	0.50, 0.65, 0.60, 0.85, 0.60, 0.65, 0.60, 0.45, 0.35, 0.45, 0.30,
+];
+
+fn ink_share(c: char) -> f32 {
+	if c.is_ascii_graphic() || c == ' ' {
+		return INK_SHARE[c as usize - 0x20];
+	}
+	if c.is_whitespace() || c < ' ' {
+		return 0.0;
+	}
+	match c as u32 {
+		// box drawing: thin strokes, but they run the width of the cell
+		0x2500..=0x257F => 0.70,
+		// block elements and shades
+		0x2580..=0x259F => 1.00,
+		// private use, where a patched font keeps its powerline glyphs
+		0xE000..=0xF8FF => 0.90,
+		// everything else reads as an ordinary letter
+		_ => 0.80,
 	}
 }
 
@@ -961,6 +1075,7 @@ impl Minimap {
 	// Seed the cache directly, so the compose can be driven without a live grid.
 	fn seed(&mut self, width: usize, rows: Vec<Row>) {
 		self.width = width;
+		self.live = rows.len();
 		self.rows = rows.into();
 	}
 	fn pixel(&self, x: usize, y: usize) -> [u8; 4] {
@@ -988,9 +1103,9 @@ mod tests {
 		fn send_event(&self, _e: Event) {}
 	}
 
-	// A live grid with the cursor already on its bottom row, so from here every
-	// newline pushes exactly one line into history.
-	fn live_term(cols: usize, lines: usize, scrollback: usize) -> (Term<VoidListener>, Processor) {
+	// A grid with the cursor still on its first row, so what is written lands
+	// at the top and the rows under it stay blank.
+	fn fresh_term(cols: usize, lines: usize, scrollback: usize) -> (Term<VoidListener>, Processor) {
 		let cfg = TermConfig {
 			scrolling_history: scrollback,
 			..Default::default()
@@ -999,8 +1114,13 @@ mod tests {
 			columns: cols,
 			screen_lines: lines,
 		};
-		let mut term = Term::new(cfg, &dims, VoidListener);
-		let mut parser: Processor = Processor::new();
+		(Term::new(cfg, &dims, VoidListener), Processor::new())
+	}
+
+	// A live grid with the cursor already on its bottom row, so from here every
+	// newline pushes exactly one line into history.
+	fn live_term(cols: usize, lines: usize, scrollback: usize) -> (Term<VoidListener>, Processor) {
+		let (mut term, mut parser) = fresh_term(cols, lines, scrollback);
 		parser.advance(&mut term, "\r\n".repeat(lines - 1).as_bytes());
 		(term, parser)
 	}
@@ -1105,18 +1225,19 @@ mod tests {
 
 	#[test]
 	fn a_short_buffer_does_not_stretch_to_fill() {
-		// 50 lines in a 600px column: capped at 2px each, so 100px is used
+		// 50 lines in a 600px column: capped, so well short of the 600
 		let lh = line_px(600.0, 50, 1.0);
-		assert_eq!(lh, 2.0);
+		assert_eq!(lh, MAX_LINE_PX);
+		assert!(lh * 50.0 < 300.0);
 		// 10,000 lines compress instead
 		assert!(line_px(600.0, 10_000, 1.0) < 0.1);
 	}
 
 	#[test]
 	fn the_handle_rides_the_scroll_position() {
-		let (top_y, _) = handle_span(600.0, 1000, 40, 960.0, 1.0);
+		let (top_y, _) = handle_span(600.0, 1000, 1000, 40, 960.0, 1.0);
 		assert_eq!(top_y, 0.0); // scrolled to the oldest line
-		let (bot_y, bot_h) = handle_span(600.0, 1000, 40, 0.0, 1.0);
+		let (bot_y, bot_h) = handle_span(600.0, 1000, 1000, 40, 0.0, 1.0);
 		let used = line_px(600.0, 1000, 1.0) * 1000.0;
 		assert!((bot_y + bot_h - used).abs() < 0.01); // at the newest
 	}
@@ -1126,35 +1247,37 @@ mod tests {
 		let track = 600.0;
 		let (total, rows) = (1000, 40);
 		for pos in [0.0, 120.0, 500.0, 960.0] {
-			let (y, _) = handle_span(track, total, rows, pos, 1.0);
-			let back = span_to_pos(track, total, rows, y, 1.0);
+			let (y, _) = handle_span(track, total, total, rows, pos, 1.0);
+			let back = span_to_pos(track, total, total, rows, y, 1.0);
 			assert!((back - pos).abs() < 1.0, "{pos} -> {back}");
 		}
 	}
 
 	#[test]
 	fn the_handle_stays_grabbable_on_a_deep_buffer() {
-		let (_, h) = handle_span(600.0, 100_000, 40, 0.0, 1.0);
+		let (_, h) = handle_span(600.0, 100_000, 100_000, 40, 0.0, 1.0);
 		assert!(h >= MIN_HANDLE);
 	}
 
 	#[test]
 	fn a_line_composes_where_the_mapping_puts_it() {
-		// 100 lines in a 200px column: 2px each, and line 40 is the only red one
+		// 100 lines in a 200px column, line 40 the only red one
 		let width = 8;
 		let mut rows: Vec<Row> = (0..100).map(|_| row(width, 4, [0, 200, 0])).collect();
 		rows[40] = row(width, 4, [200, 0, 0]);
 		let mut map = Minimap::default();
 		map.seed(width, rows);
 		map.compose(200, 1.0);
-		assert_eq!(map.pixel(0, 80), [200, 0, 0, 255]);
-		assert_eq!(map.pixel(0, 78), [0, 200, 0, 255]);
-		// a line two pixels tall keeps its ink in the first of them, so a page of
-		// them reads as lines rather than one block
-		assert!(map.pixel(0, 81)[3] < 180, "{:?}", map.pixel(0, 81));
-		assert_eq!(map.pixel(0, 81)[0..3], [200, 0, 0]);
+		let lh = line_px(200.0, 100, 1.0);
+		let red = (40.0 * lh) as usize;
+		assert_eq!(map.pixel(0, red), [200, 0, 0, 255]);
+		assert_eq!(map.pixel(0, red - 2)[0..3], [0, 200, 0]);
+		// the gap between lines: over a page of them some pixel rows are short
+		// of full, so it reads as lines rather than one block
+		let dim = (0..100).filter(|&y| map.pixel(0, y)[3] < 250).count();
+		assert!(dim > 20, "{dim} of 100 pixel rows fell short of solid");
 		// past the ink the row is clear, so the wallpaper shows through
-		assert_eq!(map.pixel(6, 80)[3], 0);
+		assert_eq!(map.pixel(6, red)[3], 0);
 	}
 
 	#[test]
@@ -1164,10 +1287,11 @@ mod tests {
 		let mut map = Minimap::default();
 		map.seed(width, rows);
 		map.compose(400, 1.0);
-		// 50 lines capped at 2px each fill 100px of 400
-		assert_eq!(map.pixel(0, 98)[3], 255);
-		assert!(map.pixel(0, 99)[3] > 0);
-		assert_eq!(map.pixel(0, 120)[3], 0);
+		// 50 lines at the capped height fill a fraction of the 400
+		let used = (line_px(400.0, 50, 1.0) * 50.0) as usize;
+		assert!(used < 200);
+		assert!(map.pixel(0, used - 1)[3] > 0);
+		assert_eq!(map.pixel(0, used + 1)[3], 0);
 	}
 
 	#[test]
@@ -1368,9 +1492,8 @@ mod tests {
 				fg: cell.fg,
 				bg: cell.bg,
 				flags: cell.flags & (Flags::INVERSE | Flags::HIDDEN),
-				space: cell.c == ' ',
 			};
-			let (ink, alpha) = paint(&style, colors, cfg, &mut readable);
+			let (ink, alpha) = paint(&style, colors, cfg, &mut readable).at(ink_share(cell.c));
 			let x0 = c as f32 * per_cell;
 			let x1 = x0 + per_cell;
 			let first = x0.floor() as usize;
@@ -1438,6 +1561,164 @@ mod tests {
 				);
 			}
 		}
+	}
+
+	// A character is not a flat block. A period inks a fraction of its cell and
+	// a hash most of it, and that difference is what stops a run of text
+	// reading as one bar.
+	#[test]
+	fn a_glyphs_weight_follows_how_much_it_inks() {
+		let cfg = config::Settings::default();
+		let (cols, width) = (40, 40); // one pixel per cell, so alpha arrives unmixed
+		let strip = |text: &str| -> Row {
+			let (mut term, mut parser) = fresh_term(cols, 4, 10);
+			parser.advance(&mut term, text.as_bytes());
+			let mut map = Minimap {
+				width,
+				cols,
+				..Default::default()
+			};
+			map.fit_spans();
+			let row = map.take_row();
+			map.raster(
+				term.grid(),
+				Line(0),
+				term.colors(),
+				&cfg,
+				&mut palette::Readable::default(),
+				row,
+			);
+			map.rows.pop_back().unwrap()
+		};
+		let run = |c: char| strip(&c.to_string().repeat(cols - 1))[3];
+		let (dots, letters, hashes) = (run('.'), run('e'), run('#'));
+		// the densest glyph is as strong as every glyph used to be
+		assert_eq!(hashes, to_u8(INK * 255.0));
+		assert!(dots * 3 < hashes, "dots {dots}, hashes {hashes}");
+		assert!(
+			dots < letters && letters < hashes,
+			"{dots} {letters} {hashes}"
+		);
+
+		// so a line of ordinary text is no longer one alpha across its pixels
+		let text = strip("the quick brown fox. i, l; W#@ M.");
+		let seen: Vec<u8> = (0..width).map(|px| text[px * 4 + 3]).collect();
+		let inked: Vec<u8> = seen.iter().copied().filter(|&a| a > 0).collect();
+		assert!(inked.len() > 20, "only {} inked pixels", inked.len());
+		let (lo, hi) = (*inked.iter().min().unwrap(), *inked.iter().max().unwrap());
+		assert!(hi - lo > 80, "alphas {lo}..{hi} are near enough flat");
+
+		// a cell with its own background still paints solid, whatever is in it
+		let bg = |text: &str| strip(&format!("\x1b[41m{text}"))[3];
+		assert_eq!(bg(&" ".repeat(cols - 1)), 255);
+		assert_eq!(bg(&"#".repeat(cols - 1)), 255);
+	}
+
+	// At the capped height a line's ink is a band narrower than a pixel, so it
+	// falls across two pixel rows at part strength rather than filling one.
+	// That is what a page of text looks like from across the room.
+	#[test]
+	fn a_line_at_the_cap_is_softer_than_a_solid_row() {
+		let width = 4;
+		let rows: Vec<Row> = (0..60).map(|_| row(width, 4, [0, 200, 0])).collect();
+		let mut map = Minimap::default();
+		map.seed(width, rows);
+		map.compose(300, 1.0);
+		let lh = line_px(300.0, 60, 1.0);
+		assert_eq!(lh, MAX_LINE_PX);
+		let used = (lh * 60.0) as usize;
+		let alphas: Vec<u8> = (0..used).map(|y| map.pixel(0, y)[3]).collect();
+		// no pixel row of a solid page is blank, and not every one is solid
+		assert!(alphas.iter().all(|&a| a > 0), "{alphas:?}");
+		assert!(
+			alphas.iter().any(|&a| a < 255),
+			"a solid page with no texture"
+		);
+		// and it stays a page rather than fading out
+		let mean = alphas.iter().map(|&a| a as u32).sum::<u32>() / used as u32;
+		assert!(mean > 170, "mean alpha {mean}");
+	}
+
+	// The map draws the buffer, and the blank rows under the last thing
+	// printed are not the buffer. On a screen with three lines on it, the
+	// track and the marker riding it both stop where the output does.
+	#[test]
+	fn the_map_ends_at_the_last_line_with_output() {
+		let settings = config::Settings::default();
+		let (cols, lines) = (40, 48);
+		let (width, img_h) = (16, 300);
+		// `before` lines of output, then a clear, then `text` at the top of a
+		// screen whose other rows stay blank. A clear pushes the screen it
+		// erases into history, so the depth is read back rather than counted.
+		let compose = |text: &str, before: usize| {
+			let (mut term, mut parser) = fresh_term(cols, lines, 1000);
+			if before > 0 {
+				parser.advance(&mut term, "x\r\n".repeat(before).as_bytes());
+				parser.advance(&mut term, b"\x1b[H\x1b[2J");
+			}
+			parser.advance(&mut term, text.as_bytes());
+			let mut map = Minimap::default();
+			let real = term.grid().history_size();
+			map.update(
+				term.grid(),
+				term.colors(),
+				&settings,
+				width,
+				img_h,
+				1.0,
+				lines,
+				cols,
+				0,
+				true,
+				Instant::now(),
+			);
+			(map, real)
+		};
+
+		// nothing in history: the map is the three lines and nothing under them
+		let (map, _) = compose("one\r\ntwo\r\nthree", 0);
+		assert_eq!(map.live_lines(0, lines), 3);
+		let used = (line_px(img_h as f32, 3, 1.0) * 3.0).ceil() as usize;
+		assert!((0..used).any(|y| map.pixel(0, y)[3] > 0), "no ink at all");
+		assert!(
+			(used..img_h).all(|y| map.pixel(0, y)[3] == 0),
+			"ink past the last line with output"
+		);
+
+		// with history behind it, the marker ends where the ink does rather
+		// than hanging below it over the blank rows
+		let (map, hist) = compose("prompt", 100);
+		let live = map.live_lines(hist, lines);
+		assert_eq!(live, hist + 1);
+		let full = Rect {
+			x: 0.0,
+			y: 0.0,
+			w: 400.0,
+			h: img_h as f32,
+		};
+		let g = geom(
+			full,
+			0.0,
+			1.0,
+			&cfg(true, 60.0),
+			hist + lines,
+			live,
+			lines,
+			0.0,
+			false,
+			true,
+		)
+		.unwrap();
+		let handle = g.handle.unwrap();
+		let track = line_px(img_h as f32, live, 1.0) * live as f32;
+		assert!(
+			(handle.y + handle.h - track).abs() < 0.01,
+			"marker ends at {}, track at {track}",
+			handle.y + handle.h
+		);
+		// and the whole scrollback is still reachable from the top of it
+		let back = drag_to(&g, hist + lines, live, lines, full.y, 1.0);
+		assert_eq!(back, hist as f32);
 	}
 
 	#[test]
@@ -1530,8 +1811,13 @@ mod tests {
 	#[test]
 	fn a_line_under_a_pixel_keeps_its_whole_height() {
 		assert_eq!(Minimap::band(0.4), (0.0, 0.4));
-		assert_eq!(Minimap::band(1.0), (0.0, 1.0));
-		let (top, h) = Minimap::band(2.0);
-		assert!(top > 0.0 && h < 2.0 * 0.75);
+		assert_eq!(Minimap::band(0.5), (0.0, 0.5));
+		// at the cap the ink is a band, so it falls across two pixel rows
+		let (top, h) = Minimap::band(MAX_LINE_PX);
+		assert!(top > 0.0 && h < MAX_LINE_PX * 0.75);
+		assert!(
+			top.fract() + h < 1.0,
+			"band {top} + {h} should not fill a row"
+		);
 	}
 }
