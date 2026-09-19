@@ -71,6 +71,8 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
+- 🔘 New text added to a screen with enough room to not have to scroll up to make new space, should never "smooth-scroll DOWN" from "beneath" the content above, last-line-first. (E.g. when pasting several lines of content at once.) It appear first-line-first. If it can all fit on the same screen without scrolling, maybe that means popping in fully-formed, all at once. That would be peferrable to oddly scrolling in from beneathe an invisible horizontal curtain, last-line-first. (Make this change gated to a global tunable in-code variable, so this behavior could be restored if desired. It does look kind of cool, it's just "wrong" from a "terminal experience" perspective.
+
 - 🔘 With the minimap on, heavy output runs at about half the speed it does with it off. The minimap has been on by default since 2026-09-17, so the published speed rows no longer describe a default install.
 	- Measured on the speed rig, 2026-09-18, the plain row at 160x42: 36.5 MB/s ASCII and a score of 33.9 with the minimap on, against 67.8 and 57.5 with it off. The +candy row reads 38.4 with it on, against 77.4 published.
 	- xfce4-terminal read 94.0 against 94.2 published in the same sitting, so the machine and the rig were not the cause.
