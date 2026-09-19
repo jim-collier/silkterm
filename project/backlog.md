@@ -147,6 +147,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- To confirm: two monitors at different scales, with the dialog maximized.
 	- Opened: 20260919
 
+- 🔘 Minimap: the marker sits above the part of the map the screen is showing, and a click in the column lands off center.
+	- Reproduced: at a prompt with 100 lines of scrollback in a 900 px column, scrolled halfway back, the marker is drawn about 24 px above the lines it stands for on a map 151 px tall. With the default 10,000-line scrollback the gap is about 13 px, ten times the marker's own height. A click halfway down the column puts the clicked line at the top of the new view rather than its middle.
+	- Cause: the marker's travel is measured against the whole buffer while the map draws only as far as the last line with output, so the marker and the image move at different rates. Both were exact before the marker was reworked to read back the position it was drawn at.
+	- Opened: 20260919-164554
+
 ### New features and enhancements
 
 - 🔘 Extension to the idea of "Silk: Allow 'Profile' to be selected even when 'Choose automatically' is enabled:
@@ -154,10 +159,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- But if a dependent setting IS changed by the user:
 			- Deselect "Choose automatically"
 			- Change 'Profile' to "Custom".
-
-- 🔘 Minimap:
-	- 🔘 Make text lines even MORE text-like. Still looks to blobbish and not like text viewed from a distance. Needs fewer output pixels per input line, and possibly more anti-aliasing.
-	- 🔘 When drawing new output, don't exceed what is currently shown on screen. The bottom line of the minimap should never show more than the bottom of real output.
 
 - 🔘 Make text scrim falloff "Exponential" more agressive. E.g., increase the exponent.
 
@@ -1914,6 +1915,25 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Minimap:
+	- ✅ Make text lines even MORE text-like. Still looks to blobbish and not like text viewed from a distance. Needs fewer output pixels per input line, and possibly more anti-aliasing.
+		- Cause: every cell with anything in it painted at one strength, so a run of letters came out a flat bar broken only at the spaces. A line was also two pixels tall with its ink filling one of them, which draws a hard stripe rather than a row of text.
+		- Fixed: how much of its cell a character inks now varies with the character, from about a quarter for a period up to the whole cell for a hash or a block. A line is 1.5 px at 1x instead of 2, and its ink is a band narrower than a pixel, so it falls across two pixel rows at part strength. A cell with its own background still paints solid.
+		- Measured: one redraw over a 20,000-line buffer at 200 columns went from 34.7 ms to 30.5 ms. The per-character weight costs a lookup, and dropping the space test from the style memo more than pays for it.
+		- Pinned by: `a_glyphs_weight_follows_how_much_it_inks`, `a_line_at_the_cap_is_softer_than_a_solid_row` and `a_line_under_a_pixel_keeps_its_whole_height`, each watched failing with its own change taken out.
+		- Note: judged by eye against the same output rendered under the old model, off the GPU, since the column's pixels are composed on the CPU.
+	- ✅ When drawing new output, don't exceed what is currently shown on screen. The bottom line of the minimap should never show more than the bottom of real output.
+		- Cause: the map took the buffer to be the history plus the whole screen grid, so the blank rows under a short prompt still took up track. On a fresh terminal that left a tall empty marker under two pixels of ink.
+		- Fixed: the map now ends at the last screen row with output in it, and the marker ends there too. A wholly blank screen keeps one line, so the column never disappears.
+		- Decided: the wording reads two ways, and this is the half with a symptom on screen all the time. The other half - that the map runs ahead of the eased text under a flood - is asked about in the run's questions document. The change is small to undo if that was the one meant.
+		- Left alone: scrolling does not move where the map ends, since the screen is the screen whatever the display offset is.
+		- Pinned by: `the_map_ends_at_the_last_line_with_output`, watched failing with the trim taken out.
+	- Fixed: reworking the marker to end on the last drawn line broke the round trip between where it is drawn and the position a drag reads back from it, so a press plus one pixel of movement scrolled the view by itself. The marker's height and travel now come off one helper and the two directions divide by the same travel. The same fault was reachable before this work at a deep scrollback, where the marker's minimum height ate into its travel; that is fixed with it.
+	- Pinned by: `a_marker_reads_back_the_position_it_was_drawn_at`, over 21 positions across five buffer shapes, watched failing on both.
+	- Note: the marker now moves at a slightly different rate from the map under it, which is filed as its own bug.
+	- Opened: 20260918-110145
+	- Closed: 20260919-165500
 
 - ✅ Settings dialog: it does not follow a change of display scale.
 	- Nothing handles a scale-factor change for a dialog window, so its scale is whatever it was when the dialog opened. Dragging it to a monitor at a different scale leaves every measurement in it wrong until it is closed and reopened.
