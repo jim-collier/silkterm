@@ -1534,6 +1534,13 @@ fn bench_banner_lines(kept: Option<&config::Kept>) -> &'static [&'static str] {
 	}
 }
 
+// What the banner says after a run the display stalled.
+const BENCH_STALLED_LINES: &[&str] = &[
+	"Could not test performance",
+	"The display was not drawing at its usual rate.",
+	"The test runs again at the next launch.",
+];
+
 // The user's own settings with a measured profile stored in them: a benchmark
 // rung while it is timed, or the answer once the run ends. A measurement replaces
 // any step the display watch took, and a step left in place would sit over the
@@ -2077,6 +2084,10 @@ struct State {
 	bench_id: Option<String>,
 	// Why the answer was not kept, while the banner says so.
 	bench_kept: Option<config::Kept>,
+	// The profile in force before the run, to go back to if it gives no answer,
+	// and whether it gave none (the banner says that instead).
+	bench_from: Option<crate::profile::Profile>,
+	bench_stalled: bool,
 	dirty: bool,
 	bell_flash: f32,    // visual-bell brightness, set to 1.0 on BEL, decays to 0
 	size_tracked: bool, // false until the first frame, so startup/programmatic resizes don't overwrite remembered_size
@@ -2847,7 +2858,11 @@ impl State {
 	// while it is up.
 	fn bench_layout(&mut self) -> Option<(Rect, Vec<(f32, f32, String)>)> {
 		self.bench_banner.as_ref()?;
-		let lines = bench_banner_lines(self.bench_kept.as_ref());
+		let lines = if self.bench_stalled {
+			BENCH_STALLED_LINES
+		} else {
+			bench_banner_lines(self.bench_kept.as_ref())
+		};
 		let attrs = crate::text::ui_attrs();
 		let pad = self.text.dip(BENCH_BANNER_PAD);
 		let line_h = self.text.ui_line_h;
@@ -4371,6 +4386,27 @@ impl State {
 			self.dirty = true;
 		}
 		self.apply_new_settings(&orig, new, false);
+	}
+
+	// The run could not tell the machine from the display (`Step::Stalled`), most
+	// likely a monitor asleep. Nothing is written, so the next launch tests again,
+	// and the session goes back to the profile it had. Saving Standard here once
+	// left a machine without its wallpaper from then on.
+	fn finish_bench_stalled(&mut self) {
+		self.bench = None;
+		self.bench_id = None;
+		self.rating.reset();
+		eprintln!(
+			"{}: performance test gave no answer (the display was not drawing at its usual rate); it runs again at the next launch",
+			config::APP_NAME
+		);
+		self.bench_stalled = true;
+		self.bench_kept = None;
+		self.bench_banner = Some(Instant::now());
+		self.dirty = true;
+		if let Some(from) = self.bench_from.take() {
+			self.set_live_profile(from);
+		}
 	}
 
 	// The display missed its budget over a whole window of eased frames: with
@@ -6667,6 +6703,8 @@ impl ApplicationHandler<UserEvent> for App {
 			bench_banner: None,
 			bench_id,
 			bench_kept: None,
+			bench_from: None,
+			bench_stalled: false,
 			dirty: true,
 			bell_flash: 0.0,
 			size_tracked: false,
@@ -8152,6 +8190,7 @@ impl ApplicationHandler<UserEvent> for App {
 			state.bench_at = None;
 			state.bench_cap = None;
 			if max_fps().is_none() {
+				state.bench_from = Some(crate::profile::current(&config::settings()));
 				state.bench = Some(crate::profile::Bench::new());
 				let rung = state
 					.bench
@@ -8177,6 +8216,7 @@ impl ApplicationHandler<UserEvent> for App {
 		if bench_banner_wake.is_some_and(|wake| Instant::now() >= wake) {
 			state.bench_banner = None;
 			state.bench_kept = None;
+			state.bench_stalled = false;
 			state.dirty = true;
 		}
 		// Fully hidden window: don't build a frame nobody can see. PTY reading
@@ -8234,6 +8274,7 @@ impl ApplicationHandler<UserEvent> for App {
 				match state.bench.as_mut().map(|b| b.note(Instant::now(), budget)) {
 					Some(crate::profile::Step::Rung(next)) => state.set_live_profile(next),
 					Some(crate::profile::Step::Done(pick)) => state.finish_bench(pick),
+					Some(crate::profile::Step::Stalled) => state.finish_bench_stalled(),
 					_ => {}
 				}
 			}
