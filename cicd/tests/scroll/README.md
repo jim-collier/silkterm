@@ -44,6 +44,7 @@ deterministic. `analyze.py` reads it and checks:
 | altenter | nano shape, entered mid-ease | still: frac 0 on every alt frame |
 | chrome | transcript with a live block redrawn under it, normal screen | pinned: the block holds still while output eases, ob 4 |
 | aptbar | region over all but the last row on the normal screen, scrollback already full | pinned: the lines still ease and the bar's row holds still, ob 1 |
+| paste / pasteil | input box on a half-empty normal screen growing a line a step, repainted / insert-line | popin: no step down ever slides (app_off never below 0) |
 
 `altenter` is a different check: 400 lines of plain output, a short gap so the ease is mid-flight, then the alt screen. The alt grid has no scrollback, so the view has to be at rest the moment it swaps in; a leftover ease renders as the fraction wrapping through a whole cell once per line of backlog, which is the nano wobble. One frame is enough, since a still screen only builds when something changes. The scene is `scenes/altenter.bash`; a scene with a script of its own under `scenes/` runs that instead of `scene.bash`.
 
