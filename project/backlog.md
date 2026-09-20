@@ -1945,12 +1945,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Note: judged by eye against the same output rendered under the old model, off the GPU, since the column's pixels are composed on the CPU.
 	- ✅ When drawing new output, don't exceed what is currently shown on screen. The bottom line of the minimap should never show more than the bottom of real output.
 		- Cause: the map took the buffer to be the history plus the whole screen grid, so the blank rows under a short prompt still took up track. On a fresh terminal that left a tall empty marker under two pixels of ink.
-		- Fixed: the map now ends at the last screen row with output in it, and the marker ends there too. A wholly blank screen keeps one line, so the column never disappears.
+		- Fixed: the map stops where the eased text has reached. Under a flood the view sits behind the newest line, and the column now holds back the output the view has not come down to. A gesture does not create that count and does not clear it, so a jump to the bottom never shortens the column and typing during a flood does not switch the trim off. A short map asks for another compose and follows the ease down. One line is always kept, so the column never disappears.
 		- Decided: the wording reads two ways, and this is the half with a symptom on screen all the time. The other half - that the map runs ahead of the eased text under a flood - turned out to be the one meant, so the trim to the last inked row comes back out and the blank rows under a prompt are part of the buffer again. That half is its own open item.
 		- Left alone: scrolling does not move where the map ends, since the screen is the screen whatever the display offset is.
-		- Pinned by: `the_map_ends_at_the_last_line_with_output`, watched failing with the trim taken out.
+		- Pinned by: `a_gesture_to_the_bottom_is_not_unshown_output`, `a_flood_stays_trimmed_through_a_keystroke`, `unshown_output_drains_as_the_view_reaches_it`, `the_map_stops_where_the_eased_text_has_reached`, `blank_rows_under_a_prompt_are_part_of_the_map` and `a_trimmed_compose_owes_another`. Each watched failing with its own rule taken out, and with the two narrower readings put back one at a time.
 	- Fixed: reworking the marker to end on the last drawn line broke the round trip between where it is drawn and the position a drag reads back from it, so a press plus one pixel of movement scrolled the view by itself. The marker's height and travel now come off one helper and the two directions divide by the same travel. The same fault was reachable before this work at a deep scrollback, where the marker's minimum height ate into its travel; that is fixed with it.
-	- Pinned by: `a_marker_reads_back_the_position_it_was_drawn_at`, over 21 positions across five buffer shapes, watched failing on both.
+	- Pinned by: `a_marker_reads_back_the_position_it_was_drawn_at`, over 21 positions across six buffer shapes, watched failing on both.
 	- Note: the marker now moves at a slightly different rate from the map under it, which is filed as its own bug.
 	- Opened: 20260918-110145
 	- Closed: 20260919-165500
