@@ -47,7 +47,7 @@ struct CompU {
 	function: f32,  // 0 dilate, 1 sdf, 2 dt (distance paths), 3 gaussian (legacy blur)
 	ramp: f32,      // falloff curve (distance path transfer)
 	radius: f32,    // distance path: halo extent in px (normalizes the distance)
-	strength: f32,  // doublings of the finished halo alpha, 0..10 (0 = as built)
+	strength: f32,  // doublings of the finished halo alpha, 0..5 (0 = as built)
 	// 0 = outline only: the blur did not run, so the halo texture is stale.
 	// (Also what rounds the struct up to the WGSL side's 8-byte alignment.)
 	halo: f32,

@@ -878,6 +878,21 @@ fn handle_is_dragged(bar: bool, map: bool) -> bool {
 	bar || map
 }
 
+// Where a handle sits this frame, in lines. A handle that is being dragged, or
+// has just been let go, sits on the target; otherwise it rides the eased text.
+// Letting go used to hand it straight back to `visual`, which is still on its
+// way, so the handle sprang back the way it came and then crawled forward again.
+fn handle_pos(dragged: bool, dropped: bool, target: f32, visual: f32) -> f32 {
+	if dragged || dropped { target } else { visual }
+}
+
+// The hold after a drop is over once the text has caught up, or at once if
+// anything else has moved the target since (a wheel, a jump, fresh output) -
+// from there on the handle belongs to the content again.
+fn drop_hold_over(animating: bool, dropped_at: f32, target: f32) -> bool {
+	!animating || (target - dropped_at).abs() > config::SETTLE_EPS
+}
+
 // Inverse of `bar_thumb_span`: a thumb-top offset down the track, back to a
 // scroll position in lines. Used while dragging.
 fn bar_pos_to_lines(track_h: f32, thumb_h: f32, max: f32, thumb_y: f32) -> f32 {
@@ -1098,6 +1113,9 @@ pub struct Pane {
 	// position the view sat at then.
 	map: Minimap,
 	pub map_drag: Option<(f32, f32)>,
+	// Where the target sat when a handle drag ended, while the text is still
+	// easing up to it. None once the two agree. See `handle_lines`.
+	handle_drop_at: Option<f32>,
 	// Hyperlink hover: the pointer in window px (None = not over this pane), the
 	// link it hit, and a request to re-scan. The scan needs the grid, so it
 	// runs in build() where the term lock is already held - on the frame the
@@ -2328,6 +2346,11 @@ impl Pane {
 	// moves (a bar resting at full or fully gone costs no frames).
 	pub fn scrollbar_tick(&mut self, dt: f32, cfg: &config::Settings) {
 		self.bar_hold = (self.bar_hold - dt).max(0.0);
+		if let Some(at) = self.handle_drop_at
+			&& drop_hold_over(self.scroll.animating(), at, self.scroll.target_lines())
+		{
+			self.handle_drop_at = None;
+		}
 		// Held up while: dragged, hovered, just scrolled, or parked in the
 		// scrollback - up there, where you are IS the thing you want to see.
 		let want = if !self.bar_applies(cfg) {
@@ -2472,11 +2495,21 @@ impl Pane {
 	// tracks it exactly and the other stays level with it. Off a drag they ride
 	// `visual`, so they move with the content they describe.
 	fn handle_lines(&self) -> f32 {
-		if handle_is_dragged(self.bar_drag.is_some(), self.map_drag.is_some()) {
-			self.scroll.target_lines()
-		} else {
-			self.scroll.visual_lines()
-		}
+		handle_pos(
+			handle_is_dragged(self.bar_drag.is_some(), self.map_drag.is_some()),
+			self.handle_drop_at.is_some(),
+			self.scroll.target_lines(),
+			self.scroll.visual_lines(),
+		)
+	}
+
+	// End a handle drag. The handle stays where it was let go and the text eases
+	// up to it, instead of snapping back onto text that is still travelling.
+	pub fn release_handle(&mut self) {
+		self.bar_drag = None;
+		self.map_drag = None;
+		self.handle_drop_at = Some(self.scroll.target_lines());
+		self.poke_scrollbar();
 	}
 
 	// The minimap's pieces for this frame, or None when the column is off.
@@ -3700,6 +3733,7 @@ fn spawn_pane(
 		bar_animating: false,
 		map: Minimap::default(),
 		map_drag: None,
+		handle_drop_at: None,
 		hover_px: None,
 		link_probe: false,
 		link_hover: None,
@@ -4632,13 +4666,14 @@ mod tests {
 		OffStrip, PROMPT_SKEL_MIN, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell, adopt_band,
 		band_row_line, bar_applies_to, bar_pos_to_lines, bar_thumb_span, bell_brighten,
 		bracket_reach, capture_grid_text, capture_start, child_areas, cursor_cycle,
-		cursor_slide_step, distinct_pair, divider_at, edge_scroll_rate, equalize_dir_run,
-		fingerprint_frame, fnv_row, fnv_row_skel, glide_to_full, handle_is_dragged, has_ink,
-		layout, ledger_makes_room, ledger_step, link_at, logical_line_bounds, move_is_input,
-		next_capture_poll, output_advance, output_band, pair_inside, paste_payload, prompt_strip,
-		pushed_since, render_char, repainted_edge, resume_delay, same_char_pair,
-		scroll_shift_signed, shift_makes_room, shown_cursor_shape, slide_bands, slide_is_visible,
-		snapshot_rows, static_bands, strip_rows, translate_span, vanished_range, weld_region_clip,
+		cursor_slide_step, distinct_pair, divider_at, drop_hold_over, edge_scroll_rate,
+		equalize_dir_run, fingerprint_frame, fnv_row, fnv_row_skel, glide_to_full,
+		handle_is_dragged, handle_pos, has_ink, layout, ledger_makes_room, ledger_step, link_at,
+		logical_line_bounds, move_is_input, next_capture_poll, output_advance, output_band,
+		pair_inside, paste_payload, prompt_strip, pushed_since, render_char, repainted_edge,
+		resume_delay, same_char_pair, scroll_shift_signed, shift_makes_room, shown_cursor_shape,
+		slide_bands, slide_is_visible, snapshot_rows, static_bands, strip_rows, translate_span,
+		vanished_range, weld_region_clip,
 	};
 	use crate::config;
 	use alacritty_terminal::event::{Event, EventListener};
@@ -4735,6 +4770,30 @@ mod tests {
 		assert!(handle_is_dragged(false, true), "marker drag pins the thumb");
 		assert!(handle_is_dragged(true, true));
 		assert!(!handle_is_dragged(false, false), "off a drag both ease");
+	}
+
+	// Letting a handle go must not hand it back to the text before the text has
+	// arrived, or it springs back the way it came and then eases in again.
+	#[test]
+	fn a_dropped_handle_waits_where_it_was_let_go() {
+		// dropped at line 600, text still back at 480
+		assert_eq!(handle_pos(false, true, 600.0, 480.0), 600.0);
+		// still dragging: the same answer, by the other arm
+		assert_eq!(handle_pos(true, false, 600.0, 480.0), 600.0);
+		// no drag and no drop: the handle belongs to the text
+		assert_eq!(handle_pos(false, false, 600.0, 480.0), 480.0);
+	}
+
+	#[test]
+	fn a_drop_hold_ends_when_the_text_arrives_or_the_target_moves() {
+		assert!(!drop_hold_over(true, 600.0, 600.0), "text still travelling");
+		assert!(drop_hold_over(false, 600.0, 600.0), "text has arrived");
+		// a wheel, a jump or output moved the target: the drop is stale
+		assert!(drop_hold_over(true, 600.0, 540.0), "target moved away");
+		assert!(
+			!drop_hold_over(true, 600.0, 600.0 + config::SETTLE_EPS / 2.0),
+			"a settled-size wobble is not a new gesture"
+		);
 	}
 
 	// A huge scrollback would grind the thumb down to an ungrabbable sliver.

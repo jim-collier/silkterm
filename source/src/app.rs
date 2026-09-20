@@ -1200,6 +1200,10 @@ impl Tabs {
 const MENU_BAR_VPAD: f32 = 6.0;
 const TAB_BAR_VPAD: f32 = 6.0; // text is metric-centered in the bar; descenders clear via that
 const BELL_TAU_S: f32 = 0.18; // visual-bell flash fade time-constant (~0.8s to settle)
+// Text scrim "Strength" is a percent; this much of it is one doubling of the
+// finished halo's alpha. design.md and the dialog's comment both quote the
+// number, and a test holds them to it.
+const SCRIM_PCT_PER_DOUBLING: f32 = 20.0;
 // Freeze knob (one line rolls it back): a minimized window builds no frames -
 // PTY reading never stops - and catches up in one hard-cut frame on restore.
 // Covers WMs that never report Occluded for an iconified window.
@@ -5703,8 +5707,8 @@ impl State {
 			_ => 0.0, // "sigmoid"
 		};
 		// "Strength" 0..100% -> doublings of the finished halo alpha (0 = as built),
-		// each 20% one doubling, so the top of the slider is x32
-		let scrim_strength = cfg.text_scrim_strength.clamp(0.0, 100.0) / 20.0;
+		// so the top of the slider is x32
+		let scrim_strength = cfg.text_scrim_strength.clamp(0.0, 100.0) / SCRIM_PCT_PER_DOUBLING;
 		// build function index: 0 dilate, 1 sdf, 2 dt, 3 gaussian (legacy blur)
 		let scrim_function = match cfg.text_scrim_function.as_str() {
 			"dilate" => 0.0,
@@ -7486,8 +7490,7 @@ impl ApplicationHandler<UserEvent> for App {
 				}
 				if let Some(id) = state.map_dragging.take() {
 					if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
-						p.map_drag = None;
-						p.poke_scrollbar();
+						p.release_handle();
 					}
 					state.dirty = true;
 					return;
@@ -7495,8 +7498,7 @@ impl ApplicationHandler<UserEvent> for App {
 				// end a thumb drag; the hold keeps the bar up for a moment afterwards
 				if let Some(id) = state.bar_dragging.take() {
 					if let Some(p) = state.tabs.cur_mut().panes.get_mut(&id) {
-						p.bar_drag = None;
-						p.poke_scrollbar();
+						p.release_handle();
 					}
 					state.dirty = true;
 				}
@@ -8576,16 +8578,43 @@ impl State {
 mod tests {
 	use super::{
 		Caret, CloseScope, Conserve, ContextMenu, CopyMetrics, Entry, Idle, IdleClock, MenuAction,
-		RESTORED_SHOWN, TAB_CLOSE_M, TabEdit, VT_SETTLE, ViewState, VtHeal, accel_at, accel_clash,
-		close_scope, copybox_fit, copybox_place, fit_px, focus_ring, is_copy_chord, key_is_typed,
-		menu_metrics, mia, msub, mta, needs_folder_read, new_window_command, notice_due,
-		pace_frame, rating_step, release_deadline, remember_resize, rotation_next,
-		settings_after_reload, tab_close_box, tab_command_line, tab_title_w, typed_title,
-		view_menu_items, window_px,
+		RESTORED_SHOWN, SCRIM_PCT_PER_DOUBLING, TAB_CLOSE_M, TabEdit, VT_SETTLE, ViewState, VtHeal,
+		accel_at, accel_clash, close_scope, copybox_fit, copybox_place, fit_px, focus_ring,
+		is_copy_chord, key_is_typed, menu_metrics, mia, msub, mta, needs_folder_read,
+		new_window_command, notice_due, pace_frame, rating_step, release_deadline, remember_resize,
+		rotation_next, settings_after_reload, tab_close_box, tab_command_line, tab_title_w,
+		typed_title, view_menu_items, window_px,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
 	use winit::event::ElementState;
+
+	// The strength scale went from 10% to 20% per doubling in August and design.md
+	// kept the old numbers for weeks, with nothing to catch it. Both places that
+	// quote the number are held against the code now.
+	#[test]
+	fn the_docs_quote_the_scrim_strength_scale_the_code_uses() {
+		let pct = SCRIM_PCT_PER_DOUBLING;
+		let spelled = [
+			"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+		];
+		let doublings = spelled[(100.0 / pct) as usize];
+		let read = |rel: &str| {
+			let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
+			std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+		};
+		let said =
+			format!("each {pct:.0}% doubles its opacity, up to {doublings} doublings at 100%");
+		assert!(
+			read("../project/design.md").contains(&said),
+			"design.md does not say: {said}"
+		);
+		let commented = format!("each {pct:.0}% is one doubling");
+		assert!(
+			read("src/settings_ui.shcl").contains(&commented),
+			"settings_ui.shcl does not say: {commented}"
+		);
+	}
 
 	// A save nobody asked for can be refused at every resize, so it is said once
 	// a session for each file. An OK in Settings that could not save is said
