@@ -1973,6 +1973,9 @@ mod tests {
 		let (mut term, mut parser) = live_term(cols, lines, 10_000);
 		parser.advance(&mut term, "x\r\n".repeat(2000).as_bytes());
 		let start = Instant::now();
+		// Well past the throttle, whose gap is the larger of 90 ms and twenty
+		// times the last compose. At a step near the floor this test read a
+		// deferred compose as an owed one and went red on a busy box (F158).
 		let drive = |map: &mut Minimap, draining: bool, step: u64| {
 			map.update(
 				term.grid(),
@@ -1987,7 +1990,7 @@ mod tests {
 				lag,
 				draining,
 				false,
-				start + Duration::from_millis(step * 100),
+				start + Duration::from_secs(step * 5),
 			);
 		};
 
