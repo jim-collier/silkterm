@@ -131,6 +131,14 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Buttons at the bottom right: "Cancel|OK", with OK the default.
 	- 🔘 A hex field should select its contents when it takes focus rather than emptying itself, which is what a text box normally does.
 
+- 🔘 The "active" grabbable window on the minimap, should be locked solidly with the scrollbar, when either one is dragged. Currently, the one not being dragged, lags the other.
+
+- 🔘 Text outline shouldn't be more than 1, for any predefined profile.
+
+- 🔘 After increasing the exponent for "Exponential" falloff, make these adjustments for default:
+	- Max silk: Strength %: 20. Scrim radius px: 8.
+	- Others: Maintain approximate visual proportion. (Unless completely off.)
+
 - 🔘 Allow programs to change the tab title.
 
 - 🔘 When other settings are changed automatically based on a user action to a different setting (e.g. "Choose automatically" and/or "Profile", visually alert the user to the change:
