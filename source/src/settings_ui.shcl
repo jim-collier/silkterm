@@ -629,6 +629,13 @@ rows:
 		kind: color
 		setting: colors.background
 
+	ColFromWallpaper:
+		label: Text colors from wallpaper
+		kind: toggle
+		indent: 1
+		setting: colors.from_wallpaper
+		help: "Pick the text and cursor colors from the picture behind them: as far from its brightest areas as they can get, in a hue complementary to its own. The two rows below gray out, and nothing derived this way is saved."
+
 	ColFg:
 		label: Foreground
 		kind: color
@@ -920,6 +927,9 @@ gates:
 	## applied to the text itself, halo or no halo.
 	CursorScrim: TextScrim
 	CursorOutline: Outline    ## an outline to join, before it can join one
+
+	ColFg: !ColFromWallpaper
+	ColCursor: !ColFromWallpaper
 
 	FontFamily: !SystemFont
 

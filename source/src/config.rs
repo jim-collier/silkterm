@@ -412,6 +412,10 @@ pub struct Settings {
 	pub bg: [u8; 3],
 	pub fg: [u8; 3],
 	pub cursor: [u8; 3],
+	// Take `fg` and `cursor` from the wallpaper instead (autotheme.rs). While it
+	// is on those two hold the derived colors and the user's own sit in
+	// `wallpaper_colors`, the same arrangement `profile_shadow` uses.
+	pub colors_from_wallpaper: bool,
 	// Two attention colors (see theme.rs): `highlight` marks several things at
 	// once, `focus` marks only what the keyboard is on.
 	pub highlight: [u8; 3],
@@ -447,6 +451,11 @@ pub struct Settings {
 	// Never written: one stall used to become every later launch's profile, with
 	// no way back while automatic was on. Cleared by a hand pick or a measured one.
 	pub stepped_profile: Option<crate::profile::Profile>,
+	// What the wallpaper on screen is worth to the derivation, and the user's own
+	// text and cursor while the derived pair is live. Neither is ever written:
+	// the summary comes from whatever picture arrived, and a rotation replaces it.
+	pub wallpaper_summary: Option<crate::autotheme::Summary>,
+	pub wallpaper_colors: Option<crate::autotheme::Shadow>,
 	// Themes saved from the Settings dialog, whole, in file order. They resolve
 	// ahead of the built-ins, so one may carry a built-in's name.
 	pub user_themes: Vec<crate::theme::UserTheme>,
@@ -574,6 +583,7 @@ impl Default for Settings {
 			bg: [0x00, 0x00, 0x00],
 			fg: [0x88, 0xee, 0xcc],
 			cursor: [0x8a, 0x3f, 0xa4],
+			colors_from_wallpaper: false,
 			highlight: [0xc8, 0xa0, 0x5a],
 			focus: [0x40, 0x86, 0xff],
 			menu_bg: crate::theme::MENU_BG_DEF,
@@ -594,6 +604,8 @@ impl Default for Settings {
 			profile_shadow: None,
 			remote_override: false,
 			stepped_profile: None,
+			wallpaper_summary: None,
+			wallpaper_colors: None,
 			user_themes: Vec::new(),
 			shells: Vec::new(),
 		}
@@ -605,6 +617,7 @@ fn store() -> &'static RwLock<Arc<Settings>> {
 	S.get_or_init(|| {
 		let mut settings = load();
 		crate::profile::apply(&mut settings);
+		crate::autotheme::apply(&mut settings);
 		RwLock::new(Arc::new(settings))
 	})
 }
@@ -983,6 +996,9 @@ pub fn selection_pairs() -> Vec<(char, char)> {
 // drawn, and `persist` takes it back off before anything reaches the file.
 pub fn update(mut new: Settings) {
 	crate::profile::apply(&mut new);
+	// After the profile: one that turns the wallpaper off leaves nothing to
+	// derive from, and the derivation reads `wallpaper_enabled`.
+	crate::autotheme::apply(&mut new);
 	*store().write().unwrap() = Arc::new(new);
 }
 
@@ -1000,6 +1016,9 @@ pub fn reload_from_disk() -> Settings {
 pub fn keep_session(live: &Settings, reloaded: &mut Settings, wallpaper_locked: bool) {
 	reloaded.remote_override = live.remote_override;
 	reloaded.stepped_profile = live.stepped_profile;
+	// The picture on screen did not change, so what it is worth to a derived
+	// text color did not either.
+	reloaded.wallpaper_summary = live.wallpaper_summary;
 	if wallpaper_locked {
 		take_wallpaper(live, reloaded);
 		reloaded.wallpaper_enabled |= reloaded.wallpaper.is_some();
@@ -1060,6 +1079,9 @@ pub fn keep_session_on_apply(live: &Settings, opened: &Settings, edited: &mut Se
 	{
 		edited.stepped_profile = live.stepped_profile;
 	}
+	// The dialog's copy dates from when it opened, and a rotation since then has
+	// changed the picture. The summary is never something the dialog edits.
+	edited.wallpaper_summary = live.wallpaper_summary;
 }
 
 // Read the config as an editable document. The parser is forgiving (a bad line
@@ -1521,6 +1543,8 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	let mut own = (orig.clone(), s.clone());
 	crate::profile::unapply(&mut own.0);
 	crate::profile::unapply(&mut own.1);
+	crate::autotheme::unapply(&mut own.0);
+	crate::autotheme::unapply(&mut own.1);
 	let (orig, s) = (&own.0, &own.1);
 	// round f32 -> a clean decimal so persisted floats aren't 0.2000000029...
 	let r = |v: f32| (v as f64 * 1000.0).round() / 1000.0;
@@ -1833,6 +1857,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 		doc.put_bool("wallpaper.fallback_builtin", s.wallpaper_fallback_builtin);
 	}
 
+	if s.colors_from_wallpaper != orig.colors_from_wallpaper {
+		doc.put_bool("colors.from_wallpaper", s.colors_from_wallpaper);
+	}
 	let mut set_color = |key: &str, color: [u8; 3], orig_color: [u8; 3]| {
 		if color != orig_color {
 			doc.put_string(&format!("colors.{key}"), &format_hex(color));
@@ -2008,6 +2035,7 @@ struct RawConfig {
 
 #[derive(Default)]
 struct RawColors {
+	from_wallpaper: Option<bool>,
 	background: Option<String>,
 	foreground: Option<String>,
 	cursor: Option<String>,
@@ -2330,6 +2358,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		hyperlink_open_command: r.s("hyperlinks.open_command"),
 		colors: RawColors {
 			background: r.s("colors.background"),
+			from_wallpaper: r.b("colors.from_wallpaper"),
 			foreground: r.s("colors.foreground"),
 			cursor: r.s("colors.cursor"),
 			highlight: r.s("colors.highlight"),
@@ -2832,6 +2861,11 @@ fn resolve(raw: RawConfig) -> Settings {
 			.hyperlink_open_command
 			.unwrap_or(d.hyperlink_open_command),
 		bg: color(raw.colors.background, pal.bg),
+		colors_from_wallpaper: raw.colors.from_wallpaper.unwrap_or(d.colors_from_wallpaper),
+		// Session only: the summary arrives with a picture and the shadow holds
+		// the user's own colors while a derived pair is live.
+		wallpaper_summary: None,
+		wallpaper_colors: None,
 		fg: color(raw.colors.foreground, pal.fg),
 		cursor: color(raw.colors.cursor, pal.cursor),
 		highlight: color(raw.colors.highlight, pal.highlight),
@@ -5410,6 +5444,11 @@ theme_mode: dark
 ## Overrides for the current theme. The two scrollbar colors are not part
 ## of any theme.
 colors:
+	## Take the text and cursor colors from the wallpaper instead: the text is
+	## placed as far as it can get from the picture's brightest areas, in a hue
+	## complementary to the picture's own. The two rows for them gray out in
+	## Settings while this is on, and nothing about the derived colors is saved.
+	# from_wallpaper: false  ## Default
 	# background: "#000000"  ## Default
 	# foreground: "#88eecc"  ## Default
 	# cursor: "#8a3fa4"  ## Default
@@ -5933,6 +5972,65 @@ mod tests {
 		assert_eq!(back.minimap, new.minimap, "the change itself is written");
 		assert_eq!(back.scroll_ease_in_ms, 300.0, "the profile's value was not");
 		assert!(back.wallpaper_enabled, "nor its wallpaper switch");
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// A text color the wallpaper picked is session state, the same as a display
+	// step. Written down, every rotation would rewrite the file, and the colors
+	// would outlive the picture they came from.
+	#[test]
+	fn a_text_colour_taken_from_the_wallpaper_never_reaches_the_file() {
+		let mine = ([0x12u8, 0x34, 0x56], [0x65u8, 0x43, 0x21]);
+		let _guard = super::test_config_lock();
+		let _ = settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_cfgwp_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		std::fs::write(&path, "colors:\n\tfrom_wallpaper: true\n").unwrap();
+		set_config_override(path.clone());
+
+		let mut stored = load();
+		assert!(stored.colors_from_wallpaper, "the file is read as written");
+		stored.performance_profile = "custom".to_string();
+		stored.performance_automatic = false;
+		stored.wallpaper_enabled = true;
+		stored.fg = mine.0;
+		stored.cursor = mine.1;
+		stored.wallpaper_summary = Some(crate::autotheme::Summary {
+			luma_hi: 0.3,
+			luma_lo: 0.02,
+			alpha: 1.0,
+			hue: 250.0,
+			chroma: 0.08,
+			opacity: 0.35,
+		});
+		let mut live = stored.clone();
+		crate::autotheme::apply(&mut live);
+		assert_ne!(live.fg, mine.0, "the derived text colour is what is drawn");
+
+		// A save that changes something else must not take the derived pair with it.
+		// The two sides have to differ for the diff to see it at all: the file's
+		// own colours on one, and the live copy wearing the derived pair on the
+		// other, which is what a save outside the dialog hands over.
+		let mut new = live.clone();
+		new.minimap = !new.minimap;
+		assert!(persist(&stored, &new));
+		let text = std::fs::read_to_string(&path).unwrap();
+		assert!(
+			!text.contains("\n\tforeground:") && !text.contains("\n\tcursor:"),
+			"the derived colours were written:\n{text}"
+		);
+
+		// the user's own colour still saves while the switch is on, since the row
+		// is only grayed - the value under it is still theirs to change by hand
+		let mut edited = live.clone();
+		crate::autotheme::unapply(&mut edited);
+		edited.fg = [0x0au8, 0x0b, 0x0c];
+		let mut base = live.clone();
+		crate::autotheme::unapply(&mut base);
+		assert!(persist(&base, &edited));
+		assert_eq!(load().fg, [0x0a, 0x0b, 0x0c]);
 		let _ = std::fs::remove_dir_all(&dir);
 	}
 

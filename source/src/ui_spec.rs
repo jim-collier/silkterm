@@ -65,7 +65,7 @@ keys![
 	SmoothScroll, ScrollEaseIn, ScrollRampUp, SingleScreenTau, ScrollRampDown,
 	ScrollEaseOut, WheelLines,
 	Scrollbar, ScrollbarThickness, ScrollbarAutoHide, Minimap, MinimapWidth,
-	ColScrollbarThumb, ColScrollbarTrough, ColBg, ColFg, ColCursor,
+	ColScrollbarThumb, ColScrollbarTrough, ColBg, ColFromWallpaper, ColFg, ColCursor,
 	ColHighlight, ColFocus, ColGutter,
 	ColMenuBg, ColMenuFg, ColDialogBg, ColDialogFg,
 	Theme, ThemeMode, ThemeActions,

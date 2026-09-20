@@ -868,9 +868,12 @@ impl SettingsDialog {
 			h,
 		};
 		let specs: &'static [Spec] = &ui().specs;
-		// the user's own values: the live copy wears the performance profile
+		// the user's own values: the live copy wears the performance profile, and
+		// the text and cursor it shows may be the wallpaper's rather than the
+		// user's - which would otherwise be what a saved theme stored
 		let mut settings = (*config::settings()).clone();
 		crate::profile::unapply(&mut settings);
+		crate::autotheme::unapply(&mut settings);
 		Self {
 			orig: settings.clone(),
 			edited: settings,
@@ -3108,6 +3111,7 @@ impl SettingsDialog {
 			Key::BgRotate => s.wallpaper_rotate_enabled,
 			Key::BgHonorXmp => s.wallpaper_honor_xmp,
 			Key::BgHonorXmpLook => s.wallpaper_honor_xmp_look,
+			Key::ColFromWallpaper => s.colors_from_wallpaper,
 			Key::SmoothScroll => s.scroll_smooth,
 			Key::Scrollbar => s.scrollbar,
 			Key::ScrollbarAutoHide => s.scrollbar_auto_hide,
@@ -3150,6 +3154,7 @@ impl SettingsDialog {
 			Key::BgRotate => self.edited.wallpaper_rotate_enabled = on,
 			Key::BgHonorXmp => self.edited.wallpaper_honor_xmp = on,
 			Key::BgHonorXmpLook => self.edited.wallpaper_honor_xmp_look = on,
+			Key::ColFromWallpaper => self.edited.colors_from_wallpaper = on,
 			Key::SmoothScroll => self.edited.scroll_smooth = on,
 			Key::Scrollbar => self.edited.scrollbar = on,
 			Key::ScrollbarAutoHide => self.edited.scrollbar_auto_hide = on,
@@ -3419,6 +3424,7 @@ impl SettingsDialog {
 			Key::BgHonorXmpLook => {
 				edited.wallpaper_honor_xmp_look == defaults.wallpaper_honor_xmp_look
 			}
+			Key::ColFromWallpaper => edited.colors_from_wallpaper == defaults.colors_from_wallpaper,
 			Key::ScrimRamp => edited.text_scrim_ramp == defaults.text_scrim_ramp,
 			Key::ScrimFunction => edited.text_scrim_function == defaults.text_scrim_function,
 			Key::CursorAnimation => edited.cursor_animation == defaults.cursor_animation,
@@ -3532,6 +3538,7 @@ impl SettingsDialog {
 			| Key::BgRotate
 			| Key::BgHonorXmp
 			| Key::BgHonorXmpLook
+			| Key::ColFromWallpaper
 			| Key::Scrollbar
 			| Key::ScrollbarAutoHide
 			| Key::Minimap
@@ -3560,6 +3567,7 @@ impl SettingsDialog {
 					Key::BgRotate => self.defaults.wallpaper_rotate_enabled,
 					Key::BgHonorXmp => self.defaults.wallpaper_honor_xmp,
 					Key::BgHonorXmpLook => self.defaults.wallpaper_honor_xmp_look,
+					Key::ColFromWallpaper => self.defaults.colors_from_wallpaper,
 					Key::SmoothScroll => self.defaults.scroll_smooth,
 					Key::Scrollbar => self.defaults.scrollbar,
 					Key::ScrollbarAutoHide => self.defaults.scrollbar_auto_hide,
@@ -9131,5 +9139,73 @@ mod tests {
 		d.tab = d.specs[i].tab;
 		d.open_edit(super::shell_field_row(0, false), true);
 		assert_eq!(d.key_enter(), Action::Ok);
+	}
+
+	// While the wallpaper is picking the text colors, the two rows for them gray
+	// out and still read the USER's own values rather than the derived pair. The
+	// live copy wears the derived one, and a dialog that took it as the baseline
+	// would write it to the file and store it in the next saved theme.
+	#[test]
+	fn the_wallpaper_switch_grays_its_two_rows_and_leaves_their_values_the_users() {
+		let mine = ([0x12u8, 0x34, 0x56], [0x65u8, 0x43, 0x21]);
+		let _store = config::test_store_lock();
+		let saved = config::settings();
+
+		let mut live = (*saved).clone();
+		crate::profile::unapply(&mut live);
+		crate::autotheme::unapply(&mut live);
+		// Custom, so nothing about the wallpaper is governed out from under this
+		live.performance_profile = "custom".to_string();
+		live.performance_automatic = false;
+		live.wallpaper_enabled = true;
+		live.colors_from_wallpaper = true;
+		live.fg = mine.0;
+		live.cursor = mine.1;
+		live.wallpaper_summary = Some(crate::autotheme::Summary {
+			luma_hi: 0.3,
+			luma_lo: 0.02,
+			alpha: 1.0,
+			hue: 250.0,
+			chroma: 0.08,
+			opacity: 0.35,
+		});
+		config::update(live);
+		assert_ne!(
+			config::settings().fg,
+			mine.0,
+			"the derived text color should be live"
+		);
+
+		let d = mk_dialog(4000.0);
+		assert_eq!(
+			d.edited.fg, mine.0,
+			"the row shows the user's own text color"
+		);
+		assert_eq!(d.edited.cursor, mine.1, "and their own cursor");
+		assert!(d.disabled(Key::ColFg), "Foreground should gray out");
+		assert!(d.disabled(Key::ColCursor), "Cursor should gray out");
+		assert!(
+			!d.disabled(Key::ColBg),
+			"the background is not one of the two"
+		);
+		assert!(
+			!d.disabled(Key::ColFromWallpaper),
+			"the switch itself stays live"
+		);
+
+		config::update((*saved).clone());
+	}
+
+	// Switching it off in the dialog ungrays them in the same pass, since the
+	// gates read the edited copy rather than the live one.
+	#[test]
+	fn switching_it_off_ungrays_the_two_rows_at_once() {
+		let mut d = mk_dialog(4000.0);
+		d.edited.wallpaper_enabled = true;
+		d.set_toggle(Key::ColFromWallpaper, true);
+		assert!(d.disabled(Key::ColFg));
+		d.set_toggle(Key::ColFromWallpaper, false);
+		assert!(!d.disabled(Key::ColFg));
+		assert!(!d.disabled(Key::ColCursor));
 	}
 }

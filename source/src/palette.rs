@@ -127,7 +127,7 @@ pub(crate) fn to_oklab(c: [u8; 3]) -> (f32, f32, f32) {
 	)
 }
 
-fn from_oklab(lightness: f32, a: f32, b: f32) -> [u8; 3] {
+pub(crate) fn from_oklab(lightness: f32, a: f32, b: f32) -> [u8; 3] {
 	let l = (lightness + 0.396_337_78 * a + 0.215_803_76 * b).powi(3);
 	let m = (lightness - 0.105_561_346 * a - 0.063_854_17 * b).powi(3);
 	let s = (lightness - 0.089_484_18 * a - 1.291_485_5 * b).powi(3);

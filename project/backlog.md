@@ -114,12 +114,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
-- 🔘 Option: Dynamic text theme based on wallpaper
-	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
-	- A boolean checkmark under themes, that disables only those specific color settings.
-	- A nontrivial problem. Need to search the web for color theory research, probably. Starting point idea: Average entire image into a single hex color.
-	- Opened: 20260804-134813
-
 - 🔘 Settings dialog:
 	- 🔘 A color picker. The colored boxes on the Colors tab should be clickable, and open a picker of the familiar sort:
 		- A square on the left carrying saturation and brightness.
@@ -1939,6 +1933,16 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Option: Dynamic text theme based on wallpaper.
+	- `Fixed:` a "Text colors from wallpaper" switch on the Themes tab, off by default. The text and cursor come from the picture behind them; the Foreground and Cursor rows gray out and keep showing the colors that come back when it goes off. Nothing derived is written to the file, since it follows whatever picture is up.
+	- `Decided:` the hue comes from the picture, not from the theme. A lightness-only version was the safer option and measured as a no-op on most of the pack at the shipped visibility, because the shipped foregrounds already clear the floor there. Leaning the theme's own hue partway was worse than either: at Matrix's saturation a 40 degree lean reads as flat yellow.
+	- `Decided:` lightness and hue are settled separately. A complement at the same lightness as its ground is the least readable pairing there is, so the two cannot come from one number.
+	- `Measured:` the starting-point idea in this entry, averaging the image to one color, is wrong twice over. For lightness, a photo varies cell to cell and text readable over a dark sky vanishes into a cloud, so the bright end is what counts. For hue, opposite colors cancel: 17 of the 104 shipped wallpapers average to a near-gray whose hue is noise, one of them 174 degrees from the hue that is all over it.
+	- `Measured:` one foreground clears the 45% floor on the whole shipped pack at 10% visibility, on about two thirds at 35%, and on a fifth at 100%. Past that no color exists and the scrim covers it. design.md says so rather than the feature pretending otherwise.
+	- `Pinned by:` twenty tests in `autotheme.rs` plus three for the wiring, eight of them mutation-checked - the dialog baseline, the two gates, the gamut clip, the persist path, the hue weight, the bright-end percentile, the theme floor and the chroma cutoff.
+	- `Measured:` seen on `:98` against the shipped pack, and in the app with the switch on and off. The row's label costs the dialog 10 px of width; the first wording cost 69 and was cut.
+	- Opened: 20260804-134813. Closed: 20260920
 
 - ✅ Themes: a fourth built-in theme.
 	- `Fixed:` Pastel, dark and light, as the backlog described it - soft cream text on a dark gray carrying a faint blue tint, which is the complement of the text. The light variant turns it round: the same hues deepened, on cream paper.
