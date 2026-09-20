@@ -1509,6 +1509,9 @@ fn layout_about(
 	let loose = text.dip(ABOUT_LOOSE_GAP);
 	// which build this is, then which cross target it was compiled for
 	let build = config::build_target();
+	// read as the box opens, so it is what the session had reached then rather
+	// than a figure that ticks while nobody is reading it
+	let uptime = crate::tabtitle::elapsed(config::uptime().as_secs());
 	#[rustfmt::skip]
 	let content: Vec<(String, [u8; 3], f32, f32, bool, f32)> = vec![
 		(format!("About {}", config::APP_NAME), menu_fg, 0.0, 0.0, true, 1.5),
@@ -1520,6 +1523,7 @@ fn layout_about(
 		(format!("Renderer:  {}", info.name), menu_dim, indent, 0.0, false, 1.0),
 		(format!("Backend:  {:?}", info.backend), menu_dim, indent, 0.0, false, 1.0),
 		(format!("Acceleration:  {accel}"), menu_dim, indent, 0.0, false, 1.0),
+		(format!("Uptime:  {uptime}"), menu_dim, indent, 0.0, false, 1.0),
 		(repo_url.clone(), menu_link, 0.0, gap, false, 1.0),
 		("Click a link to open it in your browser  ·  Esc to close".into(), menu_dim, 0.0, gap, false, 1.0),
 	];

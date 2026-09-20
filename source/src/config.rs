@@ -120,6 +120,22 @@ pub fn build_target() -> String {
 	)
 }
 
+// How long this run has been going, for the About box. Marked from main before
+// anything else, so the number is the session's rather than the first reader's.
+static LAUNCHED: OnceLock<std::time::Instant> = OnceLock::new();
+
+pub fn mark_launch() {
+	let _ = LAUNCHED.set(std::time::Instant::now());
+}
+
+// Zero until the mark is set, which only something that skips main can see.
+// A second mark does not restart the clock.
+pub fn uptime() -> std::time::Duration {
+	LAUNCHED
+		.get()
+		.map_or(std::time::Duration::ZERO, std::time::Instant::elapsed)
+}
+
 // The display scale factor to lay out at, given what the window reports.
 // SILK_SCALE overrides it, which is the only way to see a high-DPI layout on a
 // 1x display: chrome written in raw pixels is INVISIBLE at 1x and only thins out
@@ -5493,6 +5509,24 @@ shell:
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// The About box reports how long the session has been up, and the clock it
+	// reads runs from the mark main sets rather than from whatever first asked.
+	// A second mark must not restart it, or a later caller would reset the
+	// session's own clock.
+	#[test]
+	fn a_session_uptime_runs_from_the_launch_mark() {
+		mark_launch();
+		let first = uptime();
+		std::thread::sleep(std::time::Duration::from_millis(20));
+		let later = uptime();
+		assert!(
+			later >= first + std::time::Duration::from_millis(10),
+			"{later:?}"
+		);
+		mark_launch();
+		assert!(uptime() >= later, "a second mark restarted the clock");
+	}
 
 	// The shipped menu background is the inactive tab's own bytes, so a tip
 	// filled with it drew as a tab that grew downward. It has to sit off every

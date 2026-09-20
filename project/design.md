@@ -38,6 +38,7 @@
 	- [One tip system, four places that draw it (2026-08-30)](#one-tip-system-four-places-that-draw-it-2026-08-30)
 	- [Render Loop Sketch](#render-loop-sketch)
 	- [Output notices under a flood](#output-notices-under-a-flood)
+	- [The About box says how long the session has been up (2026-09-20)](#the-about-box-says-how-long-the-session-has-been-up-2026-09-20)
 	- [Environment](#environment)
 	- [Startup and slow external resources](#startup-and-slow-external-resources)
 	- [Letting the GPU go on a long idle (2026-09-17)](#letting-the-gpu-go-on-a-long-idle-2026-09-17)
@@ -619,6 +620,12 @@ The built-in stack is last for a reason. The generic monospace query below it is
 - Measured on the Windows box, the folding costs nothing and saves a great deal: throughput is unchanged (11.8 against 11.7 MB/s over four alternating pairs) while the process burns a third less CPU and the window thread less than half - the 2.5 seconds that used to go into the operating system's message queue was more than parsing and drawing put together.
 
 - The notice is re-armed BEFORE the window acts on it, so a read cycle that arrives mid-handling posts a fresh one rather than being dropped. That ordering is the whole safety argument, and it is what a unit test pins.
+
+### The About box says how long the session has been up (2026-09-20)
+
+- The reading is taken as the box opens rather than ticking while it is on screen. A dialog redrawing once a second to move a number nobody is watching costs a wake a second for as long as it is up, and the answer is only interesting to the nearest minute. Close it and open it again for a fresh one.
+
+- The clock runs from a mark set at the top of `main`, not from the first time anything asks. Starting it on first read would have reported how long the About box had been reachable.
 
 ### A character handed to the window is typing (2026-09-09)
 

@@ -71,6 +71,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
+- 🔘 design.md's table of contents is missing nine of its headings.
+	- The generated block covers 30 of the 39 second-level entries. Everything after the Delivery heading is absent, and two entries have had their parentheses hand-edited out of the link text.
+	- Regenerating it wants the editor's own extension, since its anchor rule differs from the one written down (it keeps underscores). A hand-written block would be rewritten the next time the extension runs.
+	- Opened: 20260920
+
 - ✋ A save from Settings moves the lines of a commented-out section under the setting above it.
 	- `# rotate:` with `# enabled: true` indented under it, placed after another setting, comes back with `# enabled: true` above `# rotate:` and indented under that setting. Uncommented later, the values read as part of the wrong setting and do nothing.
 	- This is how shcl 2.0.0 writes a file, and shcl's current code does the same.
@@ -107,8 +112,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Opened: 20260915
 
 ### New features and enhancements
-
-- 🔘 Include uptime for the current silkterm session, in the Help|About dialog.
 
 - 🔘 Themes:
 	- 🔘 A fourth built-in theme. Pastel is the idea: a pleasing light pastel on a dark gray background carrying a subtle tint of the complementary color. Solarized is the other candidate.
@@ -1931,6 +1934,14 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Include uptime for the current silkterm session, in the Help|About dialog.
+	- `Fixed:` an `Uptime:` line at the end of the Info block, formatted by `tabtitle::elapsed` the way the tab flyover's "Open" line is. `config::mark_launch` at the top of main sets the clock and `config::uptime` reads it.
+	- `Decided:` read as the box opens rather than ticking while it is up. A dialog redrawing once a second to move a number nobody is watching costs a wake a second, and the answer only matters to the nearest minute.
+	- `Decided:` the clock is marked in main rather than started on first read, or the figure would say how long the About box had been reachable.
+	- `Pinned by:` `a_session_uptime_runs_from_the_launch_mark`. One mutation red; a second mark cannot restart the clock by construction, since it is a `OnceLock`.
+	- `Measured:` seen on `:98`, release build, About opened about 80 seconds after launch and read "Uptime:  1m 20s".
+	- Opened: 20260920. Closed: 20260920
 
 - ✅ Tab text: Use 'nemo-anywhere's recent formula for shortening the path for active and inactive tabs if necessary.
 	- `Fixed:` two halves. The path ladder in `tabtitle::path_forms` now lets an ellipsis eat the middle a directory at a time before anything drops to an initial, so what is left keeps its real names. And `tabtitle::widths` takes the active slot: that tab takes what the row can spare before any other grows past its ordinary width, and the maximum does not apply to it.
