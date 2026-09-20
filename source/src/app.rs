@@ -2249,11 +2249,19 @@ impl State {
 		let shown = crate::tabtitle::tabs_that_fit(total, &floors, first)
 			.min(self.tabs.len().saturating_sub(first));
 		let settings = config::settings();
+		// The tab in front takes what the row can spare, so the strip has to know
+		// which slot it is on this page - and nothing, when it is on another.
+		let active_slot = self
+			.tabs
+			.active
+			.checked_sub(first)
+			.filter(|slot| *slot < shown);
 		let widths = crate::tabtitle::widths(
 			total,
 			&demands[first..first + shown],
 			settings.tab_regular_pct,
 			settings.tab_max_pct,
+			active_slot,
 		);
 		// The widest form that fits the space this tab ended up with, else the
 		// shortest there is - which still names the shell, so it reads as a tab
