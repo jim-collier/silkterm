@@ -106,16 +106,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✋ The next shcl release may fix this. Check again once it is out.
 	- Opened: 20260915
 
-- 🛠️ A clipboard write can leave SilkTerm owning the selection with nothing behind it.
-	- x11-clipboard drops the stored text whenever another program takes the selection, without checking when that happened. One left over from an earlier hand-over, arriving after the next copy, wipes the text that copy just stored.
-	- SilkTerm still owns the selection at that point, so a program asking to paste gets no answer at all and waits out its own timeout. It reads as every copy route failing at once.
-	- `Reproduced:` 20260920. 19 broken rounds out of 900 on the stock crate, against 0 out of 900 with the fix. The driver is `private/clipboard-race/`, which needs only a display.
-	- `Fixed:` one line, not applied - delete the `setmap.remove` from the `SelectionClear` arm of the crate's `run.rs`, keeping the INCR cleanup beside it. The value is never served while another program owns the selection, and the next store overwrites it.
-	- `Left alone:` asking the server who owns the selection now. The crate's event loop blocks on `poll(fd, -1)`, so a round trip there drains the socket, leaves a pending event in x11rb's own queue with the fd no longer readable, and the thread never wakes. That version answered no requests at all.
-	- `Note:` blocked on a decision, asked 20260920 and not yet answered. The fix is in a transitive dependency, so carrying it means either a fork under jim-collier reached by `[patch.crates-io]` (the way the alacritty fork is carried, plus an upstream PR since this one is small enough to be merged), or vendoring the crate into the repo as a path dependency. Both routes were checked: `[patch.crates-io]` does reach x11-clipboard straight through copypasta.
-	- Recorded in working notes since 20260905 and filed 20260919.
-	- Opened: 20260919
-
 - 🔘 Minimap: the marker sits above the part of the map the screen is showing, and a click in the column lands off center.
 	- Reproduced: at a prompt with 100 lines of scrollback in a 900 px column, scrolled halfway back, the marker is drawn about 24 px above the lines it stands for on a map 151 px tall. With the default 10,000-line scrollback the gap is about 13 px, ten times the marker's own height. A click halfway down the column puts the clicked line at the top of the new view rather than its middle.
 	- Cause: the marker's travel is measured against the whole buffer while the map draws only as far as the last line with output, so the marker and the image move at different rates. Both were exact before the marker was reworked to read back the position it was drawn at.
@@ -273,6 +263,18 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ A clipboard write can leave SilkTerm owning the selection with nothing behind it.
+	- x11-clipboard drops the stored text whenever another program takes the selection, without checking when that clear was generated. One left over from an earlier hand-over, arriving after the next copy, wipes the text that copy just stored.
+	- SilkTerm still owns the selection at that point, so a program asking to paste gets no answer at all and waits out its own timeout. It reads as every copy route failing at once.
+	- `Reproduced:` 19 broken rounds out of 900 on the stock crate, against 0 out of 900 with the fix. The driver is `private/clipboard-race/`, which needs only a display.
+	- `Fixed:` in the fork, on `keep-value-on-clear-0.9.3` at d2cd11f9, reached by `[patch.crates-io]`. The `SelectionClear` arm keeps the value and cleans up only the INCR state beside it. The value is never served while another program owns the selection, and the next copy overwrites it.
+	- `Decided:` a fork under jim-collier rather than vendoring the crate, so the patch is one branch named for the release it sits on - the same way the engine patch is carried. The branch is the published 0.9.3 plus that one change, not upstream's master, which carries two unreleased changes of its own including one that alters what a failed store reports.
+	- `Left alone:` asking the server who owns the selection now, which was tried first and is worse than the bug. The crate's event loop waits on `poll(fd, -1)`, so a round trip there drains the socket, leaves a pending event in x11rb's own queue with the fd no longer readable, and the thread never wakes. That version answered no requests at all.
+	- `Pinned by:` `a_stale_selection_clear_does_not_wipe_a_newer_store` in the fork, watched red against the unpatched file and green with it.
+	- `Note:` seen against a real build on the rig - twelve rounds of another program taking the clipboard and SilkTerm taking it straight back, with the text readable every time.
+	- Recorded in working notes since 20260905 and filed 20260919.
+	- Opened: 20260919. Closed: 20260920
 
 - 🔬 The About box and the notice box do not follow a change of display scale.
 	- Same hole the Settings dialog had. They are laid out once when they open, into fixed positions, so a monitor at another scale leaves every measurement wrong.
