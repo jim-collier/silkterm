@@ -73,26 +73,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 - 🔘 Selecting text all the way to the bottom of the screen - or all the way to the top - no longer auto-scrolls to reveal more to keep selecting. (It worked at some point in the past, possibly weeks ago.)
 
-- 🔬 The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
-	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even muffer's autocopy doesn't work.)
-	- CTRL+shift+C on selected text doesn't work.
-	- Right-click and choose "Copy", DOES work.
-	- Note: There's some chance this is a bug in muffer (whether or not autocopy is enabled), and possibly not silkterm's.
-		- With muffer autocopy disabled, I can't get XFCE terminal to copy the selection. Even the Copy menu is grayed out, seemingly indicating it doesn't notice that anything selected.
-		- With muffer autocopy enabled, it doesn't always work.
-		- It seems the longer the muffer session, the less likely it is to work.
-	- Why it keeps coming back: there are four ways to copy, each with its own gate, and every fix so far reached only one of them.
-		- Right-click Copy has no gate, which is why it works.
-		- Ctrl+Shift+C was dropped whenever the window-focus flag read false. That gate came in with the bare arrow fix.
-		- Copy on select only runs after a drag SilkTerm saw itself. A program that tracks the mouse, like muffer, takes the drag.
-		- muffer's own auto-copy asks the terminal to set the clipboard with an escape sequence, and SilkTerm has never acted on that request.
-	- Changed: Ctrl+Shift+C copies even while the focus flag reads false. It types nothing, so it cannot be the bare arrow that gate stops.
-	- Changed: a program can now set the clipboard, and on Linux the primary selection, from the pane in use. Other panes and tabs are ignored. That is the route muffer's auto-copy takes.
-	- Copy on select still only follows a drag SilkTerm sees. An app that takes the mouse copies for itself now instead.
-	- Interesting note: In muffer at least, if text is highlighted, then in another application text is copied and pasted, then you go back to muffer in silkterm to re-copy the still-selected text to clipboard: No mechanism will do it, not even the menu. You have to re-select the text, then it will work.
-	- Cause of that last one, and it is not one of the four routes: muffer tracks the mouse, so the highlight on screen is muffer's own and SilkTerm holds no selection of its own to copy. The only channel is the escape sequence muffer sends when the selection is made, and it does not send it again afterwards. Re-selecting is what makes it send one. Nothing here can be fixed from this end without muffer offering the text again.
-	- Opened: 20260909.
-
 - ✋ A save from Settings moves the lines of a commented-out section under the setting above it.
 	- `# rotate:` with `# enabled: true` indented under it, placed after another setting, comes back with `# enabled: true` above `# rotate:` and indented under that setting. Uncommented later, the values read as part of the wrong setting and do nothing.
 	- This is how shcl 2.0.0 writes a file, and shcl's current code does the same.
@@ -163,8 +143,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 			- Deselect "Choose automatically"
 			- Change 'Profile' to "Custom".
 	- Opened: 20260919-155433 by JC.
-
-- 🔘 Make text scrim falloff "Exponential" more agressive. E.g., increase the exponent.
 
 - 🔘 Tab flyover help text: Make a different color than the tabs. Maybe slightly lighter background and sublty different, complimentary shade, and a different font color. Maybe flyover help needs its own theme colors.
 
@@ -303,9 +281,38 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- At 100,000 lines one redraw holds the terminal for about 150 ms, and at the 1,000,000-line maximum it would be over a second. The time between redraws already grows with it, so the average cost stays small; the pause itself does not.
 	- Opened: 20260919
 
+- 🔘 Minimap: stop the map where the eased text has reached, rather than at the live bottom of the buffer.
+	- Under heavy output the text eases in behind the newest line, so the column draws lines that are not on screen yet. This is the reading meant by the closed item "When drawing new output, don't exceed what is currently shown on screen". That one built the other reading of the same sentence, and it stays.
+	- Tried on 20260919 and taken back out. Trimming by how far the view sits behind reads a scroll to the bottom as output, since that eases in the same way. Trimming only while the output chase owns the motion misses the rest of a flood after a single keystroke, because a keystroke aims the view at the bottom and that flag does not clear while output keeps arriving.
+	- Wants a design before another try: the scroll model carries the chase's undrained backlog and a gesture's remaining travel in one number, and nothing outside it can tell the two apart.
+	- Opened: 20260919-190000
+
 ### Done
 
 #### Done - Bugs
+
+- ✅ The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
+	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even muffer's autocopy doesn't work.)
+	- CTRL+shift+C on selected text doesn't work.
+	- Right-click and choose "Copy", DOES work.
+	- Note: There's some chance this is a bug in muffer (whether or not autocopy is enabled), and possibly not silkterm's.
+		- With muffer autocopy disabled, I can't get XFCE terminal to copy the selection. Even the Copy menu is grayed out, seemingly indicating it doesn't notice that anything selected.
+		- With muffer autocopy enabled, it doesn't always work.
+		- It seems the longer the muffer session, the less likely it is to work.
+	- Why it keeps coming back: there are four ways to copy, each with its own gate, and every fix so far reached only one of them.
+		- Right-click Copy has no gate, which is why it works.
+		- Ctrl+Shift+C was dropped whenever the window-focus flag read false. That gate came in with the bare arrow fix.
+		- Copy on select only runs after a drag SilkTerm saw itself. A program that tracks the mouse, like muffer, takes the drag.
+		- muffer's own auto-copy asks the terminal to set the clipboard with an escape sequence, and SilkTerm has never acted on that request.
+	- Changed: Ctrl+Shift+C copies even while the focus flag reads false. It types nothing, so it cannot be the bare arrow that gate stops.
+	- Changed: a program can now set the clipboard, and on Linux the primary selection, from the pane in use. Other panes and tabs are ignored. That is the route muffer's auto-copy takes.
+	- Copy on select still only follows a drag SilkTerm sees. An app that takes the mouse copies for itself now instead.
+	- Interesting note: In muffer at least, if text is highlighted, then in another application text is copied and pasted, then you go back to muffer in silkterm to re-copy the still-selected text to clipboard: No mechanism will do it, not even the menu. You have to re-select the text, then it will work.
+	- Cause of that last one, and it is not one of the four routes: muffer tracks the mouse, so the highlight on screen is muffer's own and SilkTerm holds no selection of its own to copy. The only channel is the escape sequence muffer sends when the selection is made, and it does not send it again afterwards. Re-selecting is what makes it send one. Nothing here can be fixed from this end without muffer offering the text again.
+	- Opened: 20260909.
+	- Confirmed in use 20260919: the three changed routes hold. The hotkey copies with the window out of focus, and a program setting the clipboard itself works from the pane in use.
+	- Left alone: re-copying a selection an app drew itself. That is the app's highlight, not SilkTerm's, and the app only offers the text once.
+	- Closed: 20260919-182500
 
 - ✅ After a crash in VSCodium required switching to VT-1, the terminal on the same virtual desktop came back with background-only, no text visible. (This looks a lot like a previous bug many weeks ago.)
 	- On some other silkterm windows (but not all), text is visible, but the background is gray, not the theme's black. (Even after changing the theme.) Some silkterm windows seem fine.
@@ -1919,6 +1926,14 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Make text scrim falloff "Exponential" more agressive. E.g., increase the exponent.
+	- Fixed: the exponent doubled, from 3 to 6. A quarter of the way out to the halo's edge the scrim is at 22 percent of full rather than 44, and halfway out under 5 rather than 18.
+	- Left alone: the other four curves, and the halo's width. The curve still reaches exactly zero at the edge, which it has to: past that the distance passes saturate and whatever it returns there is the alpha of every pixel in the pane.
+	- Pinned by: `the_exponential_falloff_drops_away_hard`, watched failing with the old exponent put back.
+	- To confirm: how it looks. The curve is pinned by number, not by eye.
+	- Opened: 20260919
+	- Closed: 20260919-190000
 
 - ✅ Minimap:
 	- ✅ Make text lines even MORE text-like. Still looks to blobbish and not like text viewed from a distance. Needs fewer output pixels per input line, and possibly more anti-aliasing.

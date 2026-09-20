@@ -798,8 +798,8 @@ fn falloff(td: f32, ramp: f32) -> f32 {
         return 1.0 - t;
     } else if (ramp < 3.5) {          // logarithmic: drops fast, then slow
         return clamp(1.0 - log(1.0 + 1.7182818 * t), 0.0, 1.0);
-    } else {                          // exponential: near-full, then drops fast
-        let k = 3.0;
+    } else {                          // exponential: drops away hard
+        let k = 6.0;
         return (exp(-k * t) - exp(-k)) / (1.0 - exp(-k));
     }
 }
@@ -950,6 +950,17 @@ fn fs_comp(in: VsOut) -> @location(0) vec4<f32> {
 mod tests {
 	use super::{EXT_MAX, WGSL, alloc_size, clamp_ext};
 
+	// The exponential arm's exponent, mirrored so the curve can be checked
+	// without a GPU. The shader owns the number and the test below holds the
+	// two against each other.
+	const EXP_K: f32 = 6.0;
+
+	fn exp_falloff(t: f32) -> f32 {
+		let t = t.clamp(0.0, 1.0);
+		let e = (-EXP_K).exp();
+		(((-EXP_K * t).exp()) - e) / (1.0 - e)
+	}
+
 	// Bytes the set costs: three Rgba16Float (8 per pixel), the coverage texture
 	// and the bgcolor map (4 each).
 	fn bytes((w, h): (u32, u32)) -> u64 {
@@ -999,6 +1010,30 @@ mod tests {
 		assert!((clamp_ext(20.0 * 2.0) - EXT_MAX).abs() < f32::EPSILON);
 		// and what the config file allows past it
 		assert!((clamp_ext(50.0 * 2.0) - EXT_MAX).abs() < f32::EPSILON);
+	}
+
+	// The exponential curve is the one for a halo that hugs the glyph, so it has
+	// to be well under a straight line rather than near it. It still has to
+	// reach zero at the edge: the distance paths saturate there, so whatever it
+	// returns at 1 is the alpha of every pixel in the pane.
+	#[test]
+	fn the_exponential_falloff_drops_away_hard() {
+		assert!(
+			WGSL.contains(&format!("let k = {EXP_K:.1};")),
+			"the exponent and the shader's own have drifted apart"
+		);
+		assert!((exp_falloff(0.0) - 1.0).abs() < 1e-6);
+		assert_eq!(exp_falloff(1.0), 0.0);
+		// a quarter of the way out it is already under a quarter, and halfway
+		// out there is almost nothing left
+		assert!(exp_falloff(0.25) < 0.25, "{}", exp_falloff(0.25));
+		assert!(exp_falloff(0.5) < 0.1, "{}", exp_falloff(0.5));
+		let mut prev = f32::INFINITY;
+		for i in 0..=20 {
+			let v = exp_falloff(i as f32 / 20.0);
+			assert!(v < prev, "not falling at {i}");
+			prev = v;
+		}
 	}
 
 	#[test]
