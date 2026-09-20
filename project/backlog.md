@@ -282,7 +282,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Opened: 20260919
 
 - 🔘 Minimap: stop the map where the eased text has reached, rather than at the live bottom of the buffer.
-	- Under heavy output the text eases in behind the newest line, so the column draws lines that are not on screen yet. This is the reading meant by the closed item "When drawing new output, don't exceed what is currently shown on screen". That one built the other reading of the same sentence, and it stays.
+	- Under heavy output the text eases in behind the newest line, so the column draws lines that are not on screen yet. This is the reading meant by the closed item "When drawing new output, don't exceed what is currently shown on screen". That one built the other reading of the same sentence, which is out again.
 	- Tried on 20260919 and taken back out. Trimming by how far the view sits behind reads a scroll to the bottom as output, since that eases in the same way. Trimming only while the output chase owns the motion misses the rest of a flood after a single keystroke, because a keystroke aims the view at the bottom and that flag does not clear while output keeps arriving.
 	- Wants a design before another try: the scroll model carries the chase's undrained backlog and a gesture's remaining travel in one number, and nothing outside it can tell the two apart.
 	- Probable fix: the scroll model counts the output lines the view has not come down to yet - arriving lines add to the count and the view gives it back as it reaches them - and the map stops there. A gesture neither creates that count nor clears it, so a jump to the bottom does not shorten the column and typing during a flood does not turn the trim off.
