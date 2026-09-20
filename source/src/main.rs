@@ -90,6 +90,7 @@ fn prints_and_exits(cli: &cli::Cli) -> bool {
 }
 
 fn main() -> anyhow::Result<()> {
+	config::mark_launch();
 	env_logger::init();
 	alacritty_terminal::tty::setup_env();
 	// Drop the launching shell's private variables before anything can spawn
