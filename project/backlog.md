@@ -281,13 +281,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- At 100,000 lines one redraw holds the terminal for about 150 ms, and at the 1,000,000-line maximum it would be over a second. The time between redraws already grows with it, so the average cost stays small; the pause itself does not.
 	- Opened: 20260919
 
-- 🔘 Minimap: stop the map where the eased text has reached, rather than at the live bottom of the buffer.
-	- Under heavy output the text eases in behind the newest line, so the column draws lines that are not on screen yet. This is the reading meant by the closed item "When drawing new output, don't exceed what is currently shown on screen". That one built the other reading of the same sentence, which is out again.
-	- Tried on 20260919 and taken back out. Trimming by how far the view sits behind reads a scroll to the bottom as output, since that eases in the same way. Trimming only while the output chase owns the motion misses the rest of a flood after a single keystroke, because a keystroke aims the view at the bottom and that flag does not clear while output keeps arriving.
-	- Wants a design before another try: the scroll model carries the chase's undrained backlog and a gesture's remaining travel in one number, and nothing outside it can tell the two apart.
-	- Probable fix: the scroll model counts the output lines the view has not come down to yet - arriving lines add to the count and the view gives it back as it reaches them - and the map stops there. A gesture neither creates that count nor clears it, so a jump to the bottom does not shorten the column and typing during a flood does not turn the trim off.
-	- Opened: 20260919-190000
-
 ### Done
 
 #### Done - Bugs
@@ -1927,6 +1920,18 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Minimap: stop the map where the eased text has reached, rather than at the live bottom of the buffer.
+	- Under heavy output the text eases in behind the newest line, so the column drew lines that were not on screen yet.
+	- Cause: two earlier tries each read the scroll position from outside the scroll model, and that one number carries the output chase's undrained backlog and a gesture's remaining travel together. Trimming whenever the view follows the bottom read a jump to the bottom as output. Trimming only while the chase owned the motion lost the rest of a flood after one keystroke.
+	- Fixed: the scroll model counts the output lines the view has not come down to. Arriving lines raise the count, and the view gives it back as it reaches them, so a gesture neither creates it nor clears it. The map stops at that point, and a short map asks for another compose and follows the ease down.
+	- Decided: the count lives inside the scroll model, since only it can tell a gesture's remaining travel from the chase's backlog.
+	- Pinned by: `a_gesture_to_the_bottom_is_not_unshown_output`, `a_flood_stays_trimmed_through_a_keystroke`, `unshown_output_drains_as_the_view_reaches_it`, `smooth_off_leaves_nothing_unshown`, `the_map_stops_where_the_eased_text_has_reached`, `blank_rows_under_a_prompt_are_part_of_the_map`, `a_trimmed_compose_owes_another` and `a_parked_view_stops_owing_composes`. Each watched failing with its own rule taken out, and with both narrower readings put back one at a time.
+	- Fixed: a short map owed a redraw for as long as it was short, and a view parked in the scrollback freezes the lag, so it asked for a frame and a whole redraw about eleven times a second with no output at all. It owes one only while the count is draining now.
+	- Note: this widens the open bug about the marker moving at a different rate from the map under it, from at most a screen of blank rows to the whole output lag, measured at 218 against 225 lines under a 600 lines/s flood, and the gap now stays while the view is parked.
+	- To confirm: how it looks under a real flood. It is pinned by number, not by eye.
+	- Opened: 20260919-190000
+	- Closed: 20260920-081500
 
 - ✅ Make text scrim falloff "Exponential" more agressive. E.g., increase the exponent.
 	- Fixed: the exponent doubled, from 3 to 6. A quarter of the way out to the halo's edge the scrim is at 22 percent of full rather than 44, and halfway out under 5 rather than 18.
