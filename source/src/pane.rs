@@ -476,6 +476,36 @@ fn render_char(c: char) -> char {
 	if c.is_control() { ' ' } else { c }
 }
 
+// Edge autoscroll while a selection is being dragged. Lines a second right at
+// the edge, plus this much more for every cell the pointer is held past it, up
+// to the cap. The creep at the edge is what lets a careful drag pick up one more
+// line without overshooting; the cap stops a pointer flung to the top of the
+// screen from crossing the whole buffer before the button comes up.
+const EDGE_SCROLL_MIN: f32 = 3.0;
+const EDGE_SCROLL_PER_CELL: f32 = 9.0;
+const EDGE_SCROLL_MAX_CELLS: f32 = 6.0;
+// Seconds of holding past the edge to reach the same speed as pushing the
+// pointer the full distance. A maximized window has its top edge against the top
+// of the screen, so there is nowhere to push the pointer and distance alone
+// would leave that window creeping forever.
+const EDGE_SCROLL_RAMP_S: f32 = 2.0;
+
+// Lines a second the view should crawl while a drag-selection is held past the
+// top (positive, back into history) or bottom (negative) of its pane. Zero while
+// the pointer is inside. `held_s` is how long it has been past the edge.
+pub fn edge_scroll_rate(y: f32, top: f32, bottom: f32, cell_h: f32, held_s: f32) -> f32 {
+	let over = if y < top {
+		top - y
+	} else if y > bottom {
+		bottom - y
+	} else {
+		return 0.0;
+	};
+	let cells = (over.abs() / cell_h.max(1.0)).min(EDGE_SCROLL_MAX_CELLS);
+	let ramp = (held_s / EDGE_SCROLL_RAMP_S).clamp(0.0, 1.0) * EDGE_SCROLL_MAX_CELLS;
+	(EDGE_SCROLL_MIN + cells.max(ramp) * EDGE_SCROLL_PER_CELL) * over.signum()
+}
+
 // Rows a hyperlink may span. A logical line can be the entire scrollback (one
 // `cat` of a huge line wraps forever) and this scan runs per pointer move, so
 // the wrap walk is capped instead of following the line to its real ends.
@@ -3071,14 +3101,23 @@ impl Pane {
 	// Map a window pixel to a grid point + which half of the cell, for selection.
 	// Returns None if the pixel is outside this pane.
 	pub fn point_at(&self, x: f32, y: f32, ctx: &TextCtx) -> Option<(Point, Side)> {
-		if !self.rect.contains(x, y) {
-			return None;
-		}
+		self.rect
+			.contains(x, y)
+			.then(|| self.point_clamped(x, y, ctx))
+	}
+
+	// Same, but a pixel outside the pane is pulled to the nearest edge cell. This
+	// is what a drag held past an edge wants: the selection runs on to the end of
+	// what is on screen instead of stopping dead, and a drag that strays into a
+	// neighboring pane still belongs to the one it started in.
+	pub fn point_clamped(&self, x: f32, y: f32, ctx: &TextCtx) -> (Point, Side) {
 		let cols = self.term.cols as i32;
 		let lines = self.term.lines as i32;
 		let rel_x = (x - self.rect.x - ctx.margin).max(0.0);
-		let colf = (rel_x / ctx.cell_w).floor();
-		let col = (colf as i32).clamp(0, cols - 1);
+		// clamp the column BEFORE the half-cell test, so a pointer past the right
+		// edge reads as the far half of the last cell and takes it whole
+		let colf = (rel_x / ctx.cell_w).floor().clamp(0.0, (cols - 1) as f32);
+		let col = colf as i32;
 		let side = if rel_x - colf * ctx.cell_w < ctx.cell_w / 2.0 {
 			Side::Left
 		} else {
@@ -3088,10 +3127,10 @@ impl Pane {
 			.floor()
 			.clamp(0.0, (lines - 1) as f32) as i32;
 		let display_offset = self.term.term.lock_unfair().grid().display_offset() as i32;
-		Some((
+		(
 			Point::new(Line(screen_row - display_offset), Column(col as usize)),
 			side,
-		))
+		)
 	}
 
 	// If a double-click `point` sits inside a matched pair on its line, return
@@ -4590,13 +4629,13 @@ mod tests {
 		OffStrip, PROMPT_SKEL_MIN, PauseState, Rect, SLIDE_TOP_BAND_APPS, StripCell, adopt_band,
 		band_row_line, bar_applies_to, bar_pos_to_lines, bar_thumb_span, bell_brighten,
 		bracket_reach, capture_grid_text, capture_start, child_areas, cursor_cycle,
-		cursor_slide_step, distinct_pair, divider_at, equalize_dir_run, fingerprint_frame, fnv_row,
-		fnv_row_skel, glide_to_full, has_ink, layout, ledger_makes_room, ledger_step, link_at,
-		logical_line_bounds, move_is_input, next_capture_poll, output_advance, output_band,
-		pair_inside, paste_payload, prompt_strip, pushed_since, render_char, repainted_edge,
-		resume_delay, same_char_pair, scroll_shift_signed, shift_makes_room, shown_cursor_shape,
-		slide_bands, slide_is_visible, snapshot_rows, static_bands, strip_rows, translate_span,
-		vanished_range, weld_region_clip,
+		cursor_slide_step, distinct_pair, divider_at, edge_scroll_rate, equalize_dir_run,
+		fingerprint_frame, fnv_row, fnv_row_skel, glide_to_full, has_ink, layout,
+		ledger_makes_room, ledger_step, link_at, logical_line_bounds, move_is_input,
+		next_capture_poll, output_advance, output_band, pair_inside, paste_payload, prompt_strip,
+		pushed_since, render_char, repainted_edge, resume_delay, same_char_pair,
+		scroll_shift_signed, shift_makes_room, shown_cursor_shape, slide_bands, slide_is_visible,
+		snapshot_rows, static_bands, strip_rows, translate_span, vanished_range, weld_region_clip,
 	};
 	use crate::config;
 	use alacritty_terminal::event::{Event, EventListener};
@@ -7065,5 +7104,48 @@ mod tests {
 				}
 			});
 		}
+	}
+
+	// A drag-selection held past the top or bottom of the pane has to keep the
+	// view moving, and a pointer inside must never move it.
+	#[test]
+	fn a_drag_past_an_edge_scrolls_and_one_inside_does_not() {
+		let (top, bottom, cell) = (100.0, 500.0, 20.0);
+		let rate = |y: f32| edge_scroll_rate(y, top, bottom, cell, 0.0);
+		for y in [100.0, 200.0, 499.0, 500.0] {
+			assert_eq!(rate(y), 0.0, "pointer at {y} is inside the pane");
+		}
+		// above the top scrolls back into history, below the bottom scrolls down
+		assert!(rate(99.0) > 0.0);
+		assert!(rate(501.0) < 0.0);
+		// right at the edge it creeps rather than standing still, so a careful
+		// drag can pick up one more line
+		assert!(rate(99.0) >= 1.0);
+		// and it speeds up the further past the edge the pointer is held
+		let (near, far) = (rate(90.0), rate(40.0));
+		assert!(far > near, "{far} should beat {near}");
+		// but not without limit: a pointer flung off the screen is capped
+		let off = rate(-4000.0);
+		assert_eq!(off, rate(top - 6.0 * cell));
+		assert!(off < 100.0, "{off} lines a second is a jump, not a scroll");
+		// symmetric: the same distance either way moves at the same speed
+		assert_eq!(rate(top - 55.0), -rate(bottom + 55.0));
+	}
+
+	// A maximized window has its top edge against the top of the screen, so the
+	// pointer can barely get past it. Holding there has to build speed anyway, or
+	// that window could only ever creep.
+	#[test]
+	fn holding_at_an_edge_with_no_room_still_builds_speed() {
+		let (top, bottom, cell) = (0.0, 500.0, 20.0);
+		let at = |held: f32| edge_scroll_rate(-1.0, top, bottom, cell, held);
+		assert!(at(0.0) > 0.0, "it moves from the start");
+		assert!(at(1.0) > at(0.0), "and picks up while held");
+		// it tops out at what a full-distance push gives, and goes no further
+		let full = edge_scroll_rate(top - 20.0 * cell, top, bottom, cell, 0.0);
+		assert_eq!(at(10.0), full);
+		assert_eq!(at(2.0), full);
+		// coming back inside the pane stops it however long it was held
+		assert_eq!(edge_scroll_rate(250.0, top, bottom, cell, 10.0), 0.0);
 	}
 }

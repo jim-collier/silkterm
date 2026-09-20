@@ -2058,6 +2058,7 @@ struct State {
 	mouse_btn: Option<input::MouseBtn>, // button held after a reported press (mouse-tracking apps)
 	mouse_cell: Option<(usize, usize)>, // last cell reported, to de-dupe motion
 	selecting: Option<PaneId>,          // pane with an in-progress drag-select
+	select_edge_held: f32,              // seconds that drag has been past a pane edge
 	last_click: Option<(Instant, f32, f32)>, // for multi-click detection
 	click_count: u32,                   // consecutive clicks in the same spot (2=double, 3=triple)
 	// (active tab, focused pane, window focused) at the last frame - a change
@@ -2763,6 +2764,43 @@ impl State {
 		let menu_changed = up != self.menu_tip_up;
 		self.menu_tip_up = up;
 		self.update_tab_tip() || menu_changed
+	}
+
+	// A drag-selection held past the top or bottom of its pane crawls the view
+	// that way and keeps extending, so a selection can run past what is on screen.
+	// Returns true while it is scrolling, which keeps frames coming - the pointer
+	// is stationary, so nothing else would ask for one.
+	fn autoscroll_selection(&mut self, dt: f32) -> bool {
+		let Some(id) = self.selecting else {
+			self.select_edge_held = 0.0;
+			return false;
+		};
+		let (x, y) = self.mouse;
+		let cell_h = self.text.cell_h;
+		let held = self.select_edge_held;
+		let Some(pane) = self.tabs.cur_mut().panes.get_mut(&id) else {
+			return false;
+		};
+		let rate =
+			crate::pane::edge_scroll_rate(y, pane.rect.y, pane.rect.y + pane.rect.h, cell_h, held);
+		if rate == 0.0 {
+			self.select_edge_held = 0.0;
+			return false;
+		}
+		self.select_edge_held = held + dt;
+		let was = pane.scroll.target_lines();
+		pane.scroll.wheel(rate * dt);
+		let moved = pane.scroll.target_lines() != was;
+		if moved {
+			pane.poke_scrollbar();
+		}
+		// The pointer sits still while the content moves under it, so the far end
+		// of the selection has to be re-read against the rows now on screen.
+		let (point, side) = pane.point_clamped(x, y, &self.text);
+		pane.update_selection(point, side);
+		// Pinned at either end there is nothing left to reveal, so don't ask for
+		// another frame - held past the bottom, that would be a spin.
+		moved
 	}
 
 	// When the loop next has to wake for any tip.
@@ -4543,6 +4581,9 @@ impl State {
 		// retained-frame app-scroll slide geometry per pane (None = no active slide)
 		let mut slides: HashMap<u64, Option<crate::pane::Slide>> = HashMap::new();
 		let mut animating = bell > 0.0;
+		if self.autoscroll_selection(dt) {
+			animating = true;
+		}
 		// text-scrim color map needs each cell's bg (so a glyph's halo takes its
 		// own cell color, not always the global) - collect them while building.
 		// The outline shares the scrim's source and composite, so the pass runs
@@ -6709,6 +6750,7 @@ impl ApplicationHandler<UserEvent> for App {
 			mouse_btn: None,
 			mouse_cell: None,
 			selecting: None,
+			select_edge_held: 0.0,
 			last_click: None,
 			click_count: 0,
 			cursor_focus_sig: None,
@@ -7092,11 +7134,12 @@ impl ApplicationHandler<UserEvent> for App {
 						.drag_divider(&mut state.text, &path, area, x, y);
 					state.dirty = true;
 				} else if let Some(id) = state.selecting {
-					// extend an in-progress drag-selection
+					// extend an in-progress drag-selection. Clamped, not bounded: a
+					// pointer dragged off the pane keeps selecting to the edge cell,
+					// and the per-frame step below scrolls to reveal more.
 					if let Some(p) = state.tabs.cur().panes.get(&id) {
-						if let Some((point, side)) = p.point_at(x, y, &state.text) {
-							p.update_selection(point, side);
-						}
+						let (point, side) = p.point_clamped(x, y, &state.text);
+						p.update_selection(point, side);
 					}
 					state.dirty = true;
 				} else if state.dragging_pane.is_some() {

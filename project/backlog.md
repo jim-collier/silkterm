@@ -71,8 +71,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
-- 🔘 Selecting text all the way to the bottom of the screen - or all the way to the top - no longer auto-scrolls to reveal more to keep selecting. (It worked at some point in the past, possibly weeks ago.)
-
 - ✋ A save from Settings moves the lines of a commented-out section under the setting above it.
 	- `# rotate:` with `# enabled: true` indented under it, placed after another setting, comes back with `# enabled: true` above `# rotate:` and indented under that setting. Uncommented later, the values read as part of the wrong setting and do nothing.
 	- This is how shcl 2.0.0 writes a file, and shcl's current code does the same.
@@ -292,6 +290,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ Selecting text all the way to the bottom of the screen - or all the way to the top - no longer auto-scrolls to reveal more to keep selecting. (It worked at some point in the past, possibly weeks ago.)
+	- `Note:` not a regression. Searched the whole history: no pane ever had this. The only edge autoscroll in the tree is the Settings dialog's, for text fields.
+	- `Fixed:` a drag held past the top or bottom of its pane scrolls that way and keeps selecting. A pointer outside the pane is pulled to the nearest edge cell instead of being ignored, so a drag into a neighboring pane also stays with the one it started in.
+	- `Decided:` the speed is the larger of how far past the edge the pointer is and how long it has been held there. Distance alone leaves a maximized window creeping, since its top edge is already at the top of the screen. See design.md.
+	- `Measured:` on the rig at 24 rows, a 3 second hold selected 133 lines dragging up and 127 dragging down.
+	- `Left alone:` no extra CPU once the view is pinned at either end - it stops asking for frames, measured against an idle control.
+	- `Pinned by:` `a_drag_past_an_edge_scrolls_and_one_inside_does_not` and `holding_at_an_edge_with_no_room_still_builds_speed`, both mutation-checked.
+	- Opened: n/a. Closed: 20260920
 
 - ✅ The copy-to-clipboard bug is back. First, figure out why it keeps regressing.
 	- Auto-copy on select doesn't work. (With the appropriate setting enabled. Even muffer's autocopy doesn't work.)
