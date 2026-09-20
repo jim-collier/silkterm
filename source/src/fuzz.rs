@@ -56,6 +56,14 @@ impl Rng {
 	}
 }
 
+// The seeds every target runs whatever the clock says. A count taken from the
+// budget alone moves with how busy the box is, and config-rating, which checks
+// a whole launch per case, sat right on the old floor of 10 and went red on a
+// loaded box while covering exactly as much as it does on an idle one. A fixed
+// minimum is the same coverage either way, and a target that gets slow shows up
+// as a slow test rather than a flaky one.
+const MIN_CASES: u64 = 10;
+
 // How long one target gets. A plain `cargo test` wants to stay quick, so the
 // default is a fraction of a second; the pipeline sets SILK_FUZZ_SECS for a real
 // soak. Seeds run in order from 0, so a longer budget only ever adds cases -
@@ -76,7 +84,8 @@ fn one_seed() -> Option<u64> {
 		.and_then(|v| v.parse().ok())
 }
 
-// Run `case` over seeds until the budget is spent. A panic is caught so the
+// Run `case` over seeds: MIN_CASES of them at least, then on while the budget
+// holds out. A panic is caught so the
 // report names the seed that caused it, which is the whole reproduction recipe.
 pub fn soak(name: &str, mut case: impl FnMut(u64)) {
 	if let Some(seed) = one_seed() {
@@ -85,7 +94,7 @@ pub fn soak(name: &str, mut case: impl FnMut(u64)) {
 	}
 	let deadline = Instant::now() + budget();
 	let mut seed = 0u64;
-	while Instant::now() < deadline {
+	while seed < MIN_CASES || Instant::now() < deadline {
 		let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| case(seed)));
 		assert!(
 			outcome.is_ok(),
@@ -98,10 +107,6 @@ pub fn soak(name: &str, mut case: impl FnMut(u64)) {
 	// that has quietly become too slow to cover anything shows up as a small
 	// number rather than as a pass.
 	println!("fuzz {name}: {seed} cases");
-	// A target that has become slow enough to cover almost nothing still reports
-	// a pass, which is the way a gate goes quiet without anyone noticing. The
-	// slowest target here manages a few hundred cases in the default budget.
-	assert!(seed >= 10, "fuzz target '{name}' only managed {seed} cases");
 }
 
 fn corpus_dir(target: &str) -> PathBuf {
