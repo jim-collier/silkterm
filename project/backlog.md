@@ -71,8 +71,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
-- 🔘 In light mode (on Linux), the same system fonts appear too thin aand harder to read. (Both for proportional dialog fonts, and fixed-width in the terminal (except for bold modified terminal font).
-
 - ✋ A save from Settings moves the lines of a commented-out section under the setting above it.
 	- `# rotate:` with `# enabled: true` indented under it, placed after another setting, comes back with `# enabled: true` above `# rotate:` and indented under that setting. Uncommented later, the values read as part of the wrong setting and do nothing.
 	- This is how shcl 2.0.0 writes a file, and shcl's current code does the same.
@@ -238,6 +236,16 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ In light mode the same system fonts read too thin, in the terminal and in the dialogs alike, with bold terminal text the exception.
+	- `Cause:` the color pipeline blends in linear light, glyph coverage included. A half covered pixel comes out near three quarters brightness whichever way round the colors are, which is a strong edge on a dark background and almost no ink on a light one. Bold escapes it because most of its pixels are fully covered.
+	- `Decided:` correct the coverage rather than blend text in gamma space. A second sRGB encode inside the text pass is the thing the color pipeline contract exists to stop.
+	- `Fixed:` a coverage exponent in glyphon's fragment shader, carried in the padding its params uniform already had, on fork branch `coverage-gamma-0.11.0` at 7d515a8. At 1.0 the shader takes the old path exactly. `text.dark_on_light_gamma` sets it, default 0.65, and it applies only where the text is darker than what is behind it.
+	- `Measured:` on the rig under the built-in light theme, partly covered pixels went from 42.5% ink to 48.4%, and the whole block of text from 6.9% to 7.6%. The paper behind it did not move. Seen side by side as well.
+	- `Note:` one pass draws the whole main window, so a light theme thickens the menu and tab labels a little too. They sit on dark chrome in both modes, so that is the wrong direction, but it is a small strip and mild. design.md says why it is left there.
+	- `Pinned by:` `only_text_darker_than_its_background_is_thickened` in text.rs, and two tests in the fork holding the uniform's layout and the shader's own text. Both watched red.
+	- `Left alone:` the Settings dialog has no row for it. It is a config line.
+	- Opened: 20260920. Closed: 20260920
 
 - ✅ When releasing the minimap scroll with the mouse, it first springs back, then eases in to where it was released.
 	- `Reproduced:` on the rig, a marker dragged from row 646 to row 299 of the column and let go mid-ease was drawn back down at 531 on the next frame, then crawled up to 294 over about a second.

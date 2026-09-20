@@ -47,6 +47,20 @@ fn pin_mono_family(fs: &FontSystem) {
 // Weight a terminal bold cell should request: the closest weight to Bold the
 // pinned mono family really ships. Use instead of a literal Weight::BOLD, which
 // kicks the family out (into a proportional fallback) when it has no bold face.
+// Glyph coverage is blended in linear light, so a half covered pixel comes out
+// near three quarters brightness whichever way round the two colors are. On a
+// dark background that reads as a strong edge; on a light one it is almost no
+// ink at all, and the thin parts of every letter go with it. Raising coverage
+// by an exponent below 1 gives them back, and only text darker than what is
+// behind it needs that - the other way round is already heavy enough.
+pub fn coverage_gamma(fg: [u8; 3], bg: [u8; 3], setting: f32) -> f32 {
+	if crate::palette::to_oklab(fg).0 < crate::palette::to_oklab(bg).0 {
+		setting
+	} else {
+		1.0
+	}
+}
+
 pub fn mono_bold_weight() -> glyphon::Weight {
 	use std::sync::atomic::Ordering;
 	glyphon::Weight(MONO_WEIGHT_BOLD.load(Ordering::Relaxed))
@@ -810,6 +824,12 @@ impl TextCtx {
 		);
 	}
 
+	// Set the coverage exponent for every renderer sharing this context. Cheap
+	// per frame: the uniform is only rewritten when the value moves.
+	pub fn set_coverage_gamma(&mut self, queue: &wgpu::Queue, gamma: f32) {
+		self.gpu().viewport.set_coverage_gamma(queue, gamma);
+	}
+
 	pub fn update_viewport(&mut self, queue: &wgpu::Queue, w: u32, h: u32) {
 		let gpu = self.gpu();
 		// called per frame; only changes on resize
@@ -1048,6 +1068,28 @@ fn shaped_ink(
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// Only dark-on-light gets the correction. Applying it the other way would
+	// fatten text that linear blending has already made heavy enough.
+	#[test]
+	fn only_text_darker_than_its_background_is_thickened() {
+		let (black, white) = ([0, 0, 0], [255, 255, 255]);
+		assert_eq!(coverage_gamma(black, white, 0.65), 0.65);
+		assert_eq!(coverage_gamma(white, black, 0.65), 1.0);
+		// a light theme's real pair, not just the extremes
+		assert_eq!(
+			coverage_gamma([0x30, 0x2c, 0x28], [0xf2, 0xef, 0xe9], 0.65),
+			0.65
+		);
+		assert_eq!(
+			coverage_gamma([0xd8, 0xd4, 0xcc], [0x1c, 0x1c, 0x22], 0.65),
+			1.0
+		);
+		// nothing to correct where the two are the same
+		assert_eq!(coverage_gamma(white, white, 0.65), 1.0);
+		// the setting off means the shader takes its old path either way
+		assert_eq!(coverage_gamma(black, white, 1.0), 1.0);
+	}
 
 	// A monospace face routinely carries a double-width char at its ordinary
 	// single advance (Monaspace Argon does it for 53 of them, emoji included).

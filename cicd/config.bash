@@ -246,9 +246,9 @@ GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
 ## descends to test each entry. private/source is bulk working material that
 ## never ships, same treatment.
 ##
-## forks/ holds working clones of the two patched dependencies. Each has its own
+## forks/ holds working clones of the patched dependencies. Each has its own
 ## remote, so the archive would otherwise carry 50 MB of a copy of something
-## already kept elsewhere, and more as either one gets built. What that costs is
+## already kept elsewhere, and more as each one gets built. What that costs is
 ## work committed in a clone and not pushed, which is not in the backup either -
 ## already true of this repo, whose .git is excluded the same way.
 ##
