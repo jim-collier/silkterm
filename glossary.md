@@ -56,6 +56,7 @@ Terminal jargon that any terminal shares is left out unless SilkTerm gives it a 
 - [Softness](#softness)
 - [Sub-group](#sub-group)
 - [Tab strip](#tab-strip)
+- [Text colors from the wallpaper](#text-colors-from-the-wallpaper)
 - [Text outline](#text-outline)
 - [Theme and mode](#theme-and-mode)
 - [Wallpaper](#wallpaper)
@@ -228,6 +229,10 @@ A run of Settings rows that belong to the row above them, shown by indenting the
 ## Tab strip
 
 The row of tabs under the menu bar. Each tab is as wide as its own label needs, and the tab in front takes whatever the row can spare, so it spells its label out while the others fall back to a shorter form. When they no longer fit, the strip pages rather than shrinking them to nothing.
+
+## Text colors from the wallpaper
+
+A switch on the Themes tab that takes the text and cursor colors from the picture behind them rather than from the theme. The text goes as far from the picture's brightest areas as the screen allows, in a hue complementary to the picture's own, and the cursor follows it a third of the color circle round. While it is on, the Foreground and Cursor rows gray out and keep showing the colors that come back when it goes off. Nothing picked this way is saved: it follows whatever picture is up.
 
 ## Text outline
 

@@ -22,6 +22,7 @@
 	- [Minimap](#minimap)
 	- [Text readability scrim](#text-readability-scrim)
 	- [Minimum contrast (2026-08-30)](#minimum-contrast-2026-08-30)
+	- [Text colors from the wallpaper (2026-09-20)](#text-colors-from-the-wallpaper-2026-09-20)
 	- [Performance profiles (2026-09-03)](#performance-profiles-2026-09-03)
 	- [Font fallback stack](#font-fallback-stack)
 	- [Hyperlinks](#hyperlinks)
@@ -372,6 +373,32 @@ The default floor is 45%, which puts previously invisible text at roughly 2.8:1 
 Every built-in theme's own foreground clears the floor on its own, which is checked at build time. A theme whose body text needed lifting would mean the floor was repainting the thing it is measured against.
 
 The block cursor is a second background. It is drawn as a plate at 55% under the glyph, and the glyph keeps its own color, so the text on it has to clear the same floor against the plate as blended over the theme's background. That is checked for every built-in theme and mode the same way. A cursor at the text's own brightness fails it outright, which is what the monochrome themes shipped with. In a light theme the rule also sets how dark the text has to be: the plate sits between the text and the background, and a paler foreground leaves no room for one that both shows as a block and carries the text.
+
+### Text colors from the wallpaper (2026-09-20)
+
+A switch on the Themes tab that takes the text and cursor colors from the picture behind them instead of from the theme. Off by default. While it is on, the Foreground and Cursor rows gray out, and nothing derived this way is written to the file - a rotation would otherwise rewrite the config every few minutes, and the colors would outlive the picture they came from.
+
+Two halves, decided separately. Harmony and legibility are unrelated problems, and one number cannot answer both: a complement at the same lightness as its ground is the least readable pairing there is, which is where the shimmer at the edge of vivid opposites comes from.
+
+- **Lightness** comes from how bright the background actually gets. This is the half that does the work, and the obvious approach is the wrong one: averaging the image says nothing useful, because a photo's brightness varies from cell to cell and text readable over a dark sky vanishes into a cloud. The text is placed the contrast floor away from the field's bright end - the 95th percentile of what the cells behind it are, once the picture has been composited over the theme's background at its visibility setting.
+
+- **Hue** comes from the picture's own dominant hue, turned to its complement and held to a gentle tint. A mean color cannot supply it either, and for a different reason: opposite hues cancel, so a picture full of color averages to gray and the hue of that gray is noise. Of the 104 shipped wallpapers, 17 average to something that faint, and one of them reads 174 degrees away from the hue that is all over it. The hue is taken from a chroma-weighted histogram instead, the way a picture's color is normally found.
+
+- **The cursor** takes a further third of the circle, which is where every built-in theme's cursor already sits against its foreground. Its plate is a second background the text has to clear the floor on, so the plate is placed exactly the floor away from the text - the furthest it can get from the picture while still carrying a glyph - and the cursor that draws it is found from there.
+
+Three limits, said here rather than left to be discovered.
+
+- **It cannot guarantee the floor, and does not pretend to.** Measured over the shipped pack, one foreground clears a 45% gap on every image at the shipped 10% visibility, on about two thirds at 35%, and on a fifth at 100%. Past that no color exists: the picture's own bright end is already inside the floor of white. The derived color takes the best position available and the text scrim covers the rest, which is the job the scrim already had. Nothing else is switched on behind the user's back to make up the difference.
+
+- **A dark picture never dims the text.** The theme says how bright its text should be and the picture may only ask for more. Without that floor a near-black wallpaper answers mid-gray text, which reads as the wallpaper spoiling the theme rather than serving it.
+
+- **The theme still decides which side the text sits on.** A light theme keeps dark text however dark the picture is. Flipping polarity from a photograph would stop it being the theme that was chosen.
+
+The chroma is capped low for every theme, which is the one place a theme's own identity is deliberately overridden. Carrying a monochrome theme's saturation to a complementary hue turns Matrix's green into flat yellow - the cast is decoration and the lightness is the legibility, so the cast is what gives way. A picture with almost no color in it keeps the theme's own hue instead, since there is nothing there to complement.
+
+The grayed rows show the user's own colors, not the derived pair. A row a performance profile governs shows the profile's value, because there is no other way to see it; a color is different, since it is on screen behind the dialog. So the rows say what comes back when the switch goes off, and the live copy's derived pair never reaches the dialog, the file, or a saved theme.
+
+The work splits across two threads. The wallpaper worker already holds the finished pixels, so it reduces the picture to six numbers there. The colors themselves are worked out from those numbers wherever the live settings are, which is what lets a theme change re-color the text with no second decode. Luma is what gets summarized rather than lightness, because luma survives being composited over a background color later and lightness does not.
 
 ### Performance profiles (2026-09-03)
 

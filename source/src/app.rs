@@ -4253,6 +4253,18 @@ impl State {
 					.then(|| Instant::now() + Duration::from_secs_f32(ivl));
 			}
 		}
+		// The derived text and cursor colors follow the picture (autotheme.rs), so
+		// what this one is worth goes live with it. Session state: none of it
+		// reaches the file, the same as a rotated pick.
+		let summary = loaded.image.as_ref().map(|img| img.summary);
+		if config::settings().wallpaper_summary != summary {
+			let mut settings = config::settings().as_ref().clone();
+			settings.wallpaper_summary = summary;
+			config::update(settings);
+			// the text is a different color now, so nothing retained is good
+			self.invalidate_prepared();
+			self.chrome = None;
+		}
 		// A window without a device drops the pixels: the rebuild asks for the
 		// wallpaper again, and decoding it twice beats holding a copy of it.
 		if let Some(gpu) = self.gpu.as_mut() {

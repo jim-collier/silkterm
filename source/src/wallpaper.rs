@@ -107,6 +107,10 @@ pub struct Prepared {
 	pub opacity: f32,
 	pub fit: Fit,
 	pub anchor: [f32; 2],
+	// What this picture is worth to a derived text color (autotheme.rs). Summed
+	// here because this is where the finished pixels are, and it is six numbers
+	// rather than a copy of them.
+	pub summary: crate::autotheme::Summary,
 }
 
 // What a scan found. Absent when the request didn't scan, or when the folder
@@ -362,11 +366,13 @@ fn prepare(
 			anchor = tagged;
 		}
 	}
+	let summary = crate::autotheme::summarize(&img, opacity);
 	Some(Prepared {
 		rgba: img,
 		opacity,
 		fit,
 		anchor,
+		summary,
 	})
 }
 
