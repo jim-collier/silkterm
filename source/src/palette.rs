@@ -111,7 +111,7 @@ pub fn readable(fg: [u8; 3], bg: [u8; 3], min_gap: f32) -> [u8; 3] {
 	from_oklab(target.clamp(0.0, 1.0), a, b)
 }
 
-fn to_oklab(c: [u8; 3]) -> (f32, f32, f32) {
+pub(crate) fn to_oklab(c: [u8; 3]) -> (f32, f32, f32) {
 	let (r, g, b) = (
 		crate::config::to_linear(c[0]),
 		crate::config::to_linear(c[1]),

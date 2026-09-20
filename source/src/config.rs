@@ -230,6 +230,46 @@ pub fn menu_border() -> [u8; 3] {
 pub fn menu_sep() -> [u8; 3] {
 	shade(menu_bg(), 20)
 }
+// Flyover help in the main window: the tab strip's tip and a menu row's. Both
+// hang off chrome that is painted in the menu color - the shipped menu bg is the
+// inactive tab's own bytes - so a tip filled with it reads as the thing it is
+// explaining. It lifts by the same step the strip puts between an inactive and
+// an active tab, and warms, since every tab color leans faintly blue. The
+// dialogs' tips already stand off their panel this way, with dialog_btn().
+// Each derivation is a pure function of the menu color it comes from, so a test
+// can ask what a given menu color yields without the live user config deciding
+// the answer (see the config lock the settings tests take).
+const TIP_LIFT: i16 = 34;
+const TIP_WARMTH: i16 = 8;
+const TIP_TEXT_WARMTH: i16 = 5;
+pub fn tip_bg() -> [u8; 3] {
+	tip_bg_of(menu_bg())
+}
+pub fn tip_border() -> [u8; 3] {
+	tip_border_of(menu_bg())
+}
+pub fn tip_fg() -> [u8; 3] {
+	tip_fg_of(menu_fg())
+}
+pub(crate) fn tip_bg_of(menu_bg: [u8; 3]) -> [u8; 3] {
+	warm(shade(menu_bg, TIP_LIFT), TIP_WARMTH)
+}
+pub(crate) fn tip_border_of(menu_bg: [u8; 3]) -> [u8; 3] {
+	shade(tip_bg_of(menu_bg), 34)
+}
+pub(crate) fn tip_fg_of(menu_fg: [u8; 3]) -> [u8; 3] {
+	warm(menu_fg, TIP_TEXT_WARMTH)
+}
+// Tilt a color toward the warm end: red up, blue down, green where it was. The
+// lightness barely moves, so a contrast check reads about the same either side.
+fn warm(color: [u8; 3], magnitude: i16) -> [u8; 3] {
+	let step = |channel: u8, delta: i16| (channel as i16 + delta).clamp(0, 255) as u8;
+	[
+		step(color[0], magnitude),
+		color[1],
+		step(color[2], -magnitude),
+	]
+}
 // Nudge a color toward more contrast: lighten a dark base, darken a light one.
 fn shade(color: [u8; 3], magnitude: i16) -> [u8; 3] {
 	let luminance = (color[0] as i16 * 30 + color[1] as i16 * 59 + color[2] as i16 * 11) / 100;
@@ -5413,6 +5453,72 @@ shell:
 mod tests {
 	use super::*;
 
+	// The shipped menu background is the inactive tab's own bytes, so a tip
+	// filled with it drew as a tab that grew downward. It has to sit off every
+	// tab color - lighter, and warm where the whole strip leans blue - without
+	// turning into a different surface. The lightness floor and ceiling are the
+	// strip's own inactive-to-active step either side, so "slightly lighter"
+	// means what the strip already means by it.
+	#[test]
+	fn a_tip_sits_off_every_tab_color() {
+		let l = |c: [u8; 3]| crate::palette::to_oklab(c).0;
+		let warmth = |c: [u8; 3]| crate::palette::to_oklab(c).2;
+		let tip = tip_bg_of(crate::theme::MENU_BG_DEF);
+		let step = l(TAB_ACTIVE) - l(TAB_INACTIVE);
+		for (name, tab) in [
+			("bar", TAB_BAR_BG),
+			("inactive", TAB_INACTIVE),
+			("active", TAB_ACTIVE),
+		] {
+			assert!(
+				l(tip) - l(tab) >= step * 0.75,
+				"{name}: the tip is not clearly lighter ({:.4} against a {step:.4} tab step)",
+				l(tip) - l(tab)
+			);
+			assert!(
+				warmth(tip) - warmth(tab) >= 0.012,
+				"{name}: the tip is not warmer than the tab"
+			);
+		}
+		// The ceiling is against the lightest tab, since that is the one a tip can
+		// stop looking like chrome by outrunning.
+		assert!(
+			l(tip) - l(TAB_ACTIVE) <= step * 2.5,
+			"the tip has stopped being a shade of the chrome ({:.4})",
+			l(tip) - l(TAB_ACTIVE)
+		);
+	}
+
+	// The three tip colors are the point of the item, so none of them may come
+	// back as the menu color it is derived from.
+	#[test]
+	fn a_tip_is_not_painted_in_the_menu_colors() {
+		let (bg, fg) = (crate::theme::MENU_BG_DEF, crate::theme::MENU_FG_DEF);
+		assert_ne!(tip_bg_of(bg), bg);
+		assert_ne!(tip_border_of(bg), bg);
+		assert_ne!(tip_border_of(bg), tip_bg_of(bg));
+		assert_ne!(tip_fg_of(fg), fg);
+	}
+
+	// A custom menu color carries the tip with it, which is the whole reason
+	// these are shades rather than two more colors on the Themes tab. shade()
+	// picks its direction from luminance, so a light menu color has to send the
+	// tip the other way rather than off the top end.
+	#[test]
+	fn a_tip_follows_a_custom_menu_color_either_way() {
+		let l = |c: [u8; 3]| crate::palette::to_oklab(c).0;
+		let dark = [0x18, 0x1a, 0x20];
+		let light = [0xe4, 0xe4, 0xe8];
+		assert!(
+			l(tip_bg_of(dark)) > l(dark),
+			"a dark menu wants a lighter tip"
+		);
+		assert!(
+			l(tip_bg_of(light)) < l(light),
+			"a light menu wants a darker tip"
+		);
+	}
+
 	// A Windows console writes the terminal's rights into the titles it sends
 	// while elevated, and that copy is taken back off. Nothing on unix writes
 	// one, so taking anything off there could only lose somebody's own text.
@@ -7280,7 +7386,7 @@ mod tests {
 					|s| format!("{:?}", s.font_family),
 				),
 				(
-					"a renamed colour under a commented heading",
+					"a renamed color under a commented heading",
 					"performance.automatic: true\ncolors:\n\t# x:\n\t\tfocus: \"#112233\"\n"
 						.to_string(),
 					|s| format!("{:?} {:?}", s.focus, s.highlight),
@@ -9431,7 +9537,7 @@ mod tests {
 			lines.insert(header + 1, "\t# x:".to_string());
 			lines.insert(header + 2, "\t\tfocus: \"#112233\"".to_string());
 			cases.push((
-				"a renamed colour under a commented heading",
+				"a renamed color under a commented heading",
 				joined(&lines),
 				|s| format!("{:?} {:?}", s.focus, s.highlight),
 				true,
