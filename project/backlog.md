@@ -71,6 +71,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
+- 🔘 Minimap: the marker sits above the part of the map the screen is showing, and a click in the column lands off center.
+	- Reproduced: at a prompt with 100 lines of scrollback in a 900 px column, scrolled halfway back, the marker is drawn about 24 px above the lines it stands for on a map 151 px tall. With the default 10,000-line scrollback the gap is about 13 px, ten times the marker's own height. A click halfway down the column puts the clicked line at the top of the new view rather than its middle.
+	- Cause: the marker's travel is measured against the whole buffer while the map draws only as far as the last line with output, so the marker and the image move at different rates. Both were exact before the marker was reworked to read back the position it was drawn at.
+	- Opened: 20260919-164554
+
 - ✋ A save from Settings moves the lines of a commented-out section under the setting above it.
 	- `# rotate:` with `# enabled: true` indented under it, placed after another setting, comes back with `# enabled: true` above `# rotate:` and indented under that setting. Uncommented later, the values read as part of the wrong setting and do nothing.
 	- This is how shcl 2.0.0 writes a file, and shcl's current code does the same.
@@ -106,14 +111,10 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✋ The next shcl release may fix this. Check again once it is out.
 	- Opened: 20260915
 
-- 🔘 Minimap: the marker sits above the part of the map the screen is showing, and a click in the column lands off center.
-	- Reproduced: at a prompt with 100 lines of scrollback in a 900 px column, scrolled halfway back, the marker is drawn about 24 px above the lines it stands for on a map 151 px tall. With the default 10,000-line scrollback the gap is about 13 px, ten times the marker's own height. A click halfway down the column puts the clicked line at the top of the new view rather than its middle.
-	- Cause: the marker's travel is measured against the whole buffer while the map draws only as far as the last line with output, so the marker and the image move at different rates. Both were exact before the marker was reworked to read back the position it was drawn at.
-	- Opened: 20260919-164554
-
 ### New features and enhancements
 
 - 🔘 The minimap looks MUCH better, but shows aliasing or moire artifacts.
+	- Opened: 20260920-103552 by JC.
 
 - 🔘 New default for text outline: 1px
 	- Opened: 20260919-155433 by JC.
