@@ -106,11 +106,14 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✋ The next shcl release may fix this. Check again once it is out.
 	- Opened: 20260915
 
-- 🔘 A clipboard write can leave SilkTerm owning the selection with nothing behind it.
+- 🛠️ A clipboard write can leave SilkTerm owning the selection with nothing behind it.
 	- x11-clipboard drops the stored text whenever another program takes the selection, without checking when that happened. One left over from an earlier hand-over, arriving after the next copy, wipes the text that copy just stored.
 	- SilkTerm still owns the selection at that point, so a program asking to paste gets no answer at all and waits out its own timeout. It reads as every copy route failing at once.
-	- Found by reading the crate, not reproduced. It wants a race to hit, so it would be intermittent, which fits how the copy bug above keeps coming back.
-	- Recorded in working notes since 20260905 and never filed.
+	- `Reproduced:` 20260920. 19 broken rounds out of 900 on the stock crate, against 0 out of 900 with the fix. The driver is `private/clipboard-race/`, which needs only a display.
+	- `Fixed:` one line, not applied - delete the `setmap.remove` from the `SelectionClear` arm of the crate's `run.rs`, keeping the INCR cleanup beside it. The value is never served while another program owns the selection, and the next store overwrites it.
+	- `Left alone:` asking the server who owns the selection now. The crate's event loop blocks on `poll(fd, -1)`, so a round trip there drains the socket, leaves a pending event in x11rb's own queue with the fd no longer readable, and the thread never wakes. That version answered no requests at all.
+	- `Note:` blocked on a decision, asked 20260920 and not yet answered. The fix is in a transitive dependency, so carrying it means either a fork under jim-collier reached by `[patch.crates-io]` (the way the alacritty fork is carried, plus an upstream PR since this one is small enough to be merged), or vendoring the crate into the repo as a path dependency. Both routes were checked: `[patch.crates-io]` does reach x11-clipboard straight through copypasta.
+	- Recorded in working notes since 20260905 and filed 20260919.
 	- Opened: 20260919
 
 - 🔘 The About box and the notice box do not follow a change of display scale.
