@@ -353,7 +353,8 @@ impl Minimap {
 	// `advanced` is the count of lines that entered history since the last
 	// build - the same number the output ease rides. `lag` is how far behind
 	// the newest output the eased view still sits, in whole lines, which is
-	// where the map has to stop.
+	// where the map has to stop, and `draining` is whether that lag is still
+	// falling.
 	#[allow(clippy::too_many_arguments)]
 	pub fn update(
 		&mut self,
@@ -367,6 +368,7 @@ impl Minimap {
 		cols: usize,
 		advanced: usize,
 		lag: usize,
+		draining: bool,
 		cut: bool,
 		now: Instant,
 	) {
@@ -429,11 +431,15 @@ impl Minimap {
 			self.catch_up(grid, colors, cfg, lag);
 			self.compose(img_h, scale);
 			self.spent = began.elapsed();
-			// Still short of the bottom, so another compose is owed even if no
-			// more output arrives: the ease drains on its own and the map has
-			// to follow it down. `pending` drives the build gate and the timed
-			// wake, so this is the whole mechanism.
-			self.pending = self.shown < self.hist + self.lines;
+			// Short of the bottom AND the lag is still falling, so another
+			// compose is owed even if no more output arrives: the ease drains
+			// on its own and the map has to follow it down. `pending` drives
+			// the build gate and the timed wake, so this is the whole
+			// mechanism - and it is why the drain half matters. A view parked
+			// in the scrollback freezes the lag, and owing a compose there
+			// asked for a frame and a full recompose several times a second
+			// for as long as the pane sat there (F155).
+			self.pending = draining && self.shown < self.hist + self.lines;
 		} else {
 			self.pending = true;
 		}
@@ -1449,6 +1455,7 @@ mod tests {
 				cols,
 				chunk,
 				0,
+				true,
 				false,
 				now,
 			);
@@ -1508,6 +1515,7 @@ mod tests {
 				cols,
 				1,
 				0,
+				true,
 				false,
 				now,
 			);
@@ -1546,6 +1554,7 @@ mod tests {
 				cols,
 				1,
 				0,
+				true,
 				false,
 				now,
 			);
@@ -1760,6 +1769,7 @@ mod tests {
 				0,
 				lag,
 				true,
+				true,
 				Instant::now(),
 			);
 			(map, hist)
@@ -1850,6 +1860,7 @@ mod tests {
 			0,
 			0,
 			true,
+			true,
 			Instant::now(),
 		);
 		let shown = map.shown_lines(hist, lines);
@@ -1917,6 +1928,7 @@ mod tests {
 				0,
 				lag,
 				true,
+				true,
 				Instant::now(),
 			);
 			map
@@ -1926,6 +1938,78 @@ mod tests {
 		// a lag past the whole buffer still leaves a line, so the column stays
 		let deep = composed(10_000);
 		assert_eq!(deep.shown_lines(0, lines), 1);
+	}
+
+	// F155. A view parked in the scrollback freezes the lag, so no later compose
+	// can draw anything new. Owing one anyway had `wake()` asking app.rs for a
+	// frame and a full recompose about eleven times a second for as long as the
+	// pane sat there, with no output and nobody touching it.
+	#[test]
+	fn a_parked_view_stops_owing_composes() {
+		let _g = config::test_store_lock();
+		config::update(config::Settings::default());
+		let settings = config::Settings::default();
+		let (cols, lines) = (40, 24);
+		let (width, img_h) = (16, 300);
+
+		// a flood at the bottom, then the user scrolls back and stays there
+		let mut scroll = crate::scroll::Scroll::new();
+		scroll.set_max(10_000.0);
+		for _ in 0..60 {
+			scroll.nudge_output(10.0, lines as f32);
+			scroll.advance(0.016);
+		}
+		scroll.scroll_to(1000.0);
+		for _ in 0..2000 {
+			scroll.advance(0.016);
+		}
+		let lag = scroll.unshown_lines().round() as usize;
+		assert!(lag > 100, "the flood left only {lag} lines unshown");
+		assert!(
+			!scroll.unshown_draining(),
+			"parked, but the lag still drains"
+		);
+
+		let (mut term, mut parser) = live_term(cols, lines, 10_000);
+		parser.advance(&mut term, "x\r\n".repeat(2000).as_bytes());
+		let start = Instant::now();
+		let drive = |map: &mut Minimap, draining: bool, step: u64| {
+			map.update(
+				term.grid(),
+				term.colors(),
+				&settings,
+				width,
+				img_h,
+				1.0,
+				lines,
+				cols,
+				0,
+				lag,
+				draining,
+				false,
+				start + Duration::from_millis(step * 100),
+			);
+		};
+
+		// parked: one compose settles it and nothing more is owed, however long
+		// the pane sits there
+		let mut map = Minimap::default();
+		for step in 0..50 {
+			drive(&mut map, scroll.unshown_draining(), step);
+			assert!(!map.pending(), "step {step}: a frozen lag owes a compose");
+			assert!(map.wake().is_none(), "step {step}: and asks for a frame");
+		}
+		assert!(
+			map.shown_lines(0, lines) < 2000,
+			"the map was not trimmed at all"
+		);
+
+		// and the control: the same short map while the ease is still draining
+		// does owe one, or it would never follow the ease down
+		let mut draining = Minimap::default();
+		drive(&mut draining, true, 0);
+		assert!(draining.pending(), "a draining lag owes a compose");
+		assert!(draining.wake().is_some(), "a draining lag asks for a frame");
 	}
 
 	#[test]
@@ -1988,6 +2072,7 @@ mod tests {
 					args.4,
 					pushed,
 					lag,
+					true,
 					cut,
 					now,
 				);
@@ -2008,6 +2093,7 @@ mod tests {
 					args.4,
 					0,
 					lag,
+					true,
 					false,
 					now,
 				);

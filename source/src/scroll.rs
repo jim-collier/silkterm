@@ -364,6 +364,15 @@ impl Scroll {
 		self.unshown
 	}
 
+	// Whether that count is still falling. It only falls as `visual` comes down
+	// past it, and `visual` is heading for `target`, so a target below it will
+	// drain it and a target above it leaves it frozen. The minimap asks because
+	// a map held short by a frozen count has nothing more to draw until the view
+	// moves, and owing a compose anyway recomposed forever (F155).
+	pub fn unshown_draining(&self) -> bool {
+		self.target < self.unshown
+	}
+
 	pub fn advance(&mut self, dt_s: f32) {
 		// one settings() snapshot per call - this runs per pane per frame
 		let cfg = config::settings();
@@ -662,13 +671,25 @@ mod tests {
 			s.advance(0.016);
 			check(&s, &mut last, true, "flood");
 		}
+		assert!(
+			s.unshown_draining(),
+			"at the bottom with a backlog still to show"
+		);
 		s.scroll_to(1000.0);
 		for _ in 0..600 {
 			s.nudge_output(10.0, 48.0); // ignored while scrolled back
 			s.advance(0.016);
 			check(&s, &mut last, false, "parked");
 		}
+		// parked above the lines it has not reached, the count is frozen, so a
+		// map held short by it has nothing more to draw until the view moves
+		assert!(s.unshown_lines() > 0.0, "the flood left nothing unshown");
+		assert!(!s.unshown_draining(), "parked, but the count still drains");
 		s.jump_bottom();
+		assert!(
+			s.unshown_draining(),
+			"heading back down past the unshown lines"
+		);
 		for _ in 0..4000 {
 			s.advance(0.016);
 			check(&s, &mut last, false, "coming back");

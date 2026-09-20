@@ -1289,6 +1289,7 @@ impl Pane {
 					cols,
 					advanced,
 					lag,
+					self.scroll.unshown_draining(),
 					cut,
 					std::time::Instant::now(),
 				);
