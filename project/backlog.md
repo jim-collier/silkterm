@@ -285,6 +285,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Under heavy output the text eases in behind the newest line, so the column draws lines that are not on screen yet. This is the reading meant by the closed item "When drawing new output, don't exceed what is currently shown on screen". That one built the other reading of the same sentence, and it stays.
 	- Tried on 20260919 and taken back out. Trimming by how far the view sits behind reads a scroll to the bottom as output, since that eases in the same way. Trimming only while the output chase owns the motion misses the rest of a flood after a single keystroke, because a keystroke aims the view at the bottom and that flag does not clear while output keeps arriving.
 	- Wants a design before another try: the scroll model carries the chase's undrained backlog and a gesture's remaining travel in one number, and nothing outside it can tell the two apart.
+	- Probable fix: the scroll model counts the output lines the view has not come down to yet - arriving lines add to the count and the view gives it back as it reaches them - and the map stops there. A gesture neither creates that count nor clears it, so a jump to the bottom does not shorten the column and typing during a flood does not turn the trim off.
 	- Opened: 20260919-190000
 
 ### Done
@@ -1945,7 +1946,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✅ When drawing new output, don't exceed what is currently shown on screen. The bottom line of the minimap should never show more than the bottom of real output.
 		- Cause: the map took the buffer to be the history plus the whole screen grid, so the blank rows under a short prompt still took up track. On a fresh terminal that left a tall empty marker under two pixels of ink.
 		- Fixed: the map now ends at the last screen row with output in it, and the marker ends there too. A wholly blank screen keeps one line, so the column never disappears.
-		- Decided: the wording reads two ways, and this is the half with a symptom on screen all the time. The other half - that the map runs ahead of the eased text under a flood - is asked about in the run's questions document. The change is small to undo if that was the one meant.
+		- Decided: the wording reads two ways, and this is the half with a symptom on screen all the time. The other half - that the map runs ahead of the eased text under a flood - turned out to be the one meant, so the trim to the last inked row comes back out and the blank rows under a prompt are part of the buffer again. That half is its own open item.
 		- Left alone: scrolling does not move where the map ends, since the screen is the screen whatever the display offset is.
 		- Pinned by: `the_map_ends_at_the_last_line_with_output`, watched failing with the trim taken out.
 	- Fixed: reworking the marker to end on the last drawn line broke the round trip between where it is drawn and the position a drag reads back from it, so a press plus one pixel of movement scrolled the view by itself. The marker's height and travel now come off one helper and the two directions divide by the same travel. The same fault was reachable before this work at a deep scrollback, where the marker's minimum height ate into its travel; that is fixed with it.
