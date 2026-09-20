@@ -565,10 +565,20 @@ pub fn path_forms(raw: &str, home: Option<&str>, style: Style) -> Vec<String> {
 		return vec![anchor];
 	}
 	let mut forms = vec![join(&parts)];
-	// PyCmd's abbreviation: everything ABOVE the current directory shrinks to its
-	// initial, the current one stays whole - that last name is the whole point of
-	// showing a path at all.
 	let last = parts.len() - 1;
+	// The ellipsis eats the middle a directory at a time, and what is left of the
+	// path keeps its real names. It costs four columns where a whole name costs
+	// more, so the first steps are LONGER than what they replace - push_shorter
+	// drops those, which is what "only if it shortens further" means here.
+	for keep in (0..last).rev() {
+		let mut items = parts[..keep].to_vec();
+		items.push(ELLIPSIS.to_string());
+		items.push(parts[last].clone());
+		push_shorter(&mut forms, join(&items));
+	}
+	// Initials for everything ABOVE the current directory, which stays whole.
+	// Only a shallow path gets here: on a deep one the ellipsis has already
+	// covered more ground than a column of single letters would.
 	let abbreviated: Vec<String> = parts
 		.iter()
 		.enumerate()
@@ -581,16 +591,6 @@ pub fn path_forms(raw: &str, home: Option<&str>, style: Style) -> Vec<String> {
 		})
 		.collect();
 	push_shorter(&mut forms, join(&abbreviated));
-	// Then eat the middle, one initial at a time. An ellipsis costs four columns
-	// where an initial costs two, so the early steps are LONGER than what they
-	// replace - push_shorter drops those, which is what "only if it shortens
-	// further" means in practice.
-	for keep in (0..last).rev() {
-		let mut items = abbreviated[..keep].to_vec();
-		items.push(ELLIPSIS.to_string());
-		items.push(parts[last].clone());
-		push_shorter(&mut forms, join(&items));
-	}
 	push_shorter(&mut forms, format!("{anchor}{ELLIPSIS}{sep}"));
 	forms
 }
@@ -702,14 +702,26 @@ fn bounds(total: f32, regular_pct: f32, max_pct: f32) -> (f32, f32) {
 	(regular, max)
 }
 
-/// How wide each tab on the page is.
+/// How wide each tab on the page is. `active` is the SLOT of the tab in front,
+/// where it is on this page at all.
 ///
 /// The regular width is a TARGET, not a share: with room to spare every tab
 /// sits at it, and the bar simply ends early rather than stretching a couple of
 /// tabs across the window. A tab whose label wants more grows past it, up to
 /// the maximum; a crowded bar pushes every tab back below it, down to its own
 /// floor. Whatever room is left over after all that stays empty.
-pub fn widths(total: f32, demands: &[Demand], regular_pct: f32, max_pct: f32) -> Vec<f32> {
+///
+/// The tab in front is the exception, since it is the one being read. It takes
+/// what the row can spare before any other tab grows past its ordinary width,
+/// and it is not held to the maximum - room it does not take is no use to tabs
+/// that are already at the cap.
+pub fn widths(
+	total: f32,
+	demands: &[Demand],
+	regular_pct: f32,
+	max_pct: f32,
+	active: Option<usize>,
+) -> Vec<f32> {
 	let (regular, max) = bounds(total, regular_pct, max_pct);
 	let floors: Vec<f32> = demands.iter().map(|d| d.floor.clamp(0.0, max)).collect();
 	let mut alloc = floors.clone();
@@ -721,9 +733,18 @@ pub fn widths(total: f32, demands: &[Demand], regular_pct: f32, max_pct: f32) ->
 	spread(&mut alloc, &target, &mut spare);
 	let want: Vec<f32> = demands
 		.iter()
+		.enumerate()
 		.zip(&target)
-		.map(|(d, t)| d.natural.clamp(*t, max))
+		.map(|((i, d), t)| {
+			let cap = if Some(i) == active { total } else { max };
+			d.natural.clamp(*t, cap.max(*t))
+		})
 		.collect();
+	if let Some(i) = active.filter(|i| *i < alloc.len()) {
+		let give = (want[i] - alloc[i]).max(0.0).min(spare.max(0.0));
+		alloc[i] += give;
+		spare -= give;
+	}
 	spread(&mut alloc, &want, &mut spare);
 	alloc
 }
@@ -976,21 +997,35 @@ mod tests {
 		);
 	}
 
+	// The ellipsis eats the middle first, so what is left of the path keeps its
+	// real names. Initials only get a look in on a shallow path, where an
+	// ellipsis costs more than the one directory it would cover.
 	#[test]
-	fn directories_above_the_current_one_drop_to_their_initials() {
+	fn a_path_loses_its_middle_before_its_names() {
 		let forms = path_forms(r"C:\Users\jim\data\prs\dev", None, Style::Windows);
 		assert_eq!(forms[0], r"C:\Users\jim\data\prs\dev\");
-		assert_eq!(forms[1], r"C:\U\j\d\p\dev\");
+		// Directories above the current one used to drop to their initials first:
+		//     assert_eq!(forms[1], r"C:\U\j\d\p\dev\");
+		assert_eq!(forms[1], r"C:\Users\jim\...\dev\");
+		assert_eq!(forms[2], r"C:\Users\...\dev\");
+		assert!(
+			!forms.iter().any(|form| form == r"C:\U\j\d\p\dev\"),
+			"a deep path has no room for a column of initials: {forms:?}"
+		);
+
+		// One directory above the current one, and the ellipsis is no shorter
+		// than the name it covers, so the initial is what shortens it.
+		assert_eq!(
+			path_forms("/Documents/x", None, Style::Posix),
+			["/Documents/x/", "/.../x/", "/D/x/"]
+		);
 		// A hidden directory keeps the letter after its dot, or every one of them
 		// would abbreviate to a bare dot.
-		assert_eq!(
-			path_forms("/home/jim/.config/silkterm/x", None, Style::Posix)[1],
-			"/h/j/.c/s/x/"
-		);
+		assert_eq!(path_forms("/.config/x", None, Style::Posix)[2], "/.c/x/");
 	}
 
-	// The ellipsis is a LAST resort and only earns its place when it is shorter
-	// than the initials it replaces - four columns against two apiece.
+	// An ellipsis only earns its place where it is shorter than what it covers -
+	// four columns against a whole directory name.
 	#[test]
 	fn an_ellipsis_only_appears_where_it_actually_shortens() {
 		let forms = path_forms(r"C:\a\b\c\d\e\project", None, Style::Windows);
@@ -1113,7 +1148,7 @@ mod tests {
 			[
 				r"PowerShell 7 [cargo] C:\Users\jim\dev\",
 				r"PS 7 [cargo] C:\Users\jim\dev\",
-				r"PS 7 [cargo] C:\U\j\dev\",
+				r"PS 7 [cargo] C:\...\dev\",
 				r"PS 7 [cargo] C:\...\",
 				r"PS 7 - C:\...\",
 				"PS 7",
@@ -1287,7 +1322,10 @@ mod tests {
 			};
 			3
 		];
-		assert_eq!(widths(1000.0, &demands, 10.0, 100.0), [100.0, 100.0, 100.0]);
+		assert_eq!(
+			widths(1000.0, &demands, 10.0, 100.0, None),
+			[100.0, 100.0, 100.0]
+		);
 	}
 
 	// A label that wants more gets more, and only after every other tab has its
@@ -1304,9 +1342,80 @@ mod tests {
 				floor: 40.0,
 			},
 		];
-		assert_eq!(widths(1000.0, &demands, 10.0, 100.0), [400.0, 100.0]);
+		assert_eq!(widths(1000.0, &demands, 10.0, 100.0, None), [400.0, 100.0]);
 		// the maximum still caps it
-		assert_eq!(widths(1000.0, &demands, 10.0, 25.0), [250.0, 100.0]);
+		assert_eq!(widths(1000.0, &demands, 10.0, 25.0, None), [250.0, 100.0]);
+	}
+
+	// The tab in front is the one being read, so it spells its label out with
+	// whatever the row can spare: past the maximum, and ahead of any other tab
+	// growing beyond its ordinary width.
+	#[test]
+	fn the_tab_in_front_takes_what_the_row_can_spare() {
+		let demands = [
+			Demand {
+				natural: 200.0,
+				floor: 40.0,
+			},
+			Demand {
+				natural: 900.0,
+				floor: 40.0,
+			},
+			Demand {
+				natural: 200.0,
+				floor: 40.0,
+			},
+		];
+		// Held to the cap with nothing in front: 250 apiece and the rest bare.
+		assert_eq!(
+			widths(1000.0, &demands, 10.0, 25.0, None),
+			[200.0, 250.0, 200.0]
+		);
+		// In front, it takes the bar less the other two at their regular width.
+		let w = widths(1000.0, &demands, 10.0, 25.0, Some(1));
+		assert_eq!(w, [100.0, 800.0, 100.0]);
+		// and it may still not take what another tab needs to be ordinary
+		assert!(w[0] >= 100.0 && w[2] >= 100.0);
+		// A short label in front takes only what it wants, so the rest of the
+		// row still grows to its own.
+		assert_eq!(
+			widths(1000.0, &demands, 10.0, 25.0, Some(0)),
+			[200.0, 250.0, 200.0]
+		);
+	}
+
+	// Being in front buys nothing the label does not ask for, and nothing the
+	// row has not got.
+	#[test]
+	fn the_tab_in_front_asks_for_no_more_than_its_label_wants() {
+		let demands = vec![
+			Demand {
+				natural: 100.0,
+				floor: 40.0
+			};
+			3
+		];
+		assert_eq!(
+			widths(1000.0, &demands, 10.0, 100.0, Some(0)),
+			[100.0, 100.0, 100.0]
+		);
+		// a crowded bar shares the shortfall as before
+		let crowded = vec![
+			Demand {
+				natural: 100.0,
+				floor: 40.0
+			};
+			12
+		];
+		let w = widths(600.0, &crowded, 10.0, 100.0, Some(3));
+		for one in &w {
+			assert!((one - 50.0).abs() < 0.01, "{w:?} is not an even share");
+		}
+		// a slot off the page is no slot at all
+		assert_eq!(
+			widths(1000.0, &demands, 10.0, 100.0, Some(9)),
+			widths(1000.0, &demands, 10.0, 100.0, None)
+		);
 	}
 
 	// A crowded bar pushes every tab back below the regular width by the same
@@ -1320,7 +1429,7 @@ mod tests {
 			};
 			12
 		];
-		let w = widths(600.0, &demands, 10.0, 100.0);
+		let w = widths(600.0, &demands, 10.0, 100.0, None);
 		for one in &w {
 			assert!((one - 50.0).abs() < 0.01, "{w:?} is not an even share");
 		}
@@ -1397,8 +1506,8 @@ mod tests {
 			3
 		];
 		assert_eq!(
-			widths(1000.0, &demands, 30.0, 10.0),
-			widths(1000.0, &demands, 10.0, 30.0)
+			widths(1000.0, &demands, 30.0, 10.0, None),
+			widths(1000.0, &demands, 10.0, 30.0, None)
 		);
 	}
 
@@ -1408,9 +1517,9 @@ mod tests {
 			natural: 100.0,
 			floor: 40.0,
 		}];
-		assert!(widths(0.0, &demands, 12.0, 26.0)[0] >= 0.0);
-		assert!(widths(-5.0, &demands, 12.0, 26.0)[0] >= 0.0);
-		assert!(widths(100.0, &[], 12.0, 26.0).is_empty());
+		assert!(widths(0.0, &demands, 12.0, 26.0, None)[0] >= 0.0);
+		assert!(widths(-5.0, &demands, 12.0, 26.0, None)[0] >= 0.0);
+		assert!(widths(100.0, &[], 12.0, 26.0, None).is_empty());
 	}
 
 	#[test]

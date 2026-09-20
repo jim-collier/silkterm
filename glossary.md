@@ -227,7 +227,7 @@ A run of Settings rows that belong to the row above them, shown by indenting the
 
 ## Tab strip
 
-The row of tabs under the menu bar. Each tab is as wide as its own label needs, and when they no longer fit, the strip pages rather than shrinking them to nothing.
+The row of tabs under the menu bar. Each tab is as wide as its own label needs, and the tab in front takes whatever the row can spare, so it spells its label out while the others fall back to a shorter form. When they no longer fit, the strip pages rather than shrinking them to nothing.
 
 ## Text outline
 

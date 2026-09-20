@@ -906,7 +906,8 @@ A tab used to say the application's own name on Windows and the shell's process 
 
 - The shell a pane runs is resolved once, when the pane is spawned. Leaving it as "whatever the default shell is" let the answer change under a running pane, since the background scan fills the list seconds after launch and the Shells tab reorders it - so a pane could be labelled with a shell it was not running.
 
-- The path is shortened the way PyCmd's prompt does it: directories above the current one drop to their initials, and only if that is still too wide does an ellipsis eat the middle. Two things survive every step, because they are what distinguish a location from a command - the anchor it starts from and the separator it ends with. Windows keeps its drive letter and gets no `~`, since neither shell there prints one.
+- The path is shortened by an ellipsis eating the middle a directory at a time, so what is left keeps its real names. Only when that has run out do the directories above the current one drop to their initials, which on any path deeper than a couple of levels never happens - the ellipsis has already covered more ground than a column of single letters would. Two things survive every step, because they are what distinguish a location from a command - the anchor it starts from and the separator it ends with. Windows keeps its drive letter and gets no `~`, since neither shell there prints one.
+	- This reverses the original order (2026-09-20), which was PyCmd's: initials first, ellipsis only where it was shorter still. It came from nemo-anywhere, which had already been through the same argument. A middle left out reads as a place with a gap in it; a column of initials reads as neither the path nor anything else, and it gives up every name at once to save a few columns.
 
 - Tab width is two percentages of the window rather than a fixed cap, so the extra text has room on a wide display while a lone tab still reads as a tab. See the entry below for what those two now mean.
 
@@ -921,6 +922,8 @@ Tabs used to divide the bar evenly between a minimum and a maximum percentage of
 - The first percentage is the REGULAR width: what a tab is when nothing is pushing on it. It is a target, not a share - three tabs on a wide bar sit at it and leave the rest of the bar empty, rather than a couple of them stretching across the window.
 
 - A tab whose label wants more room grows past it, up to the maximum. A crowded bar pushes every tab back below it. Everyone reaches the regular width before anyone grows past it, so a long path can never cost another tab its ordinary size, and under crowding each tab gives up the same fraction rather than the last few being starved.
+
+- The tab in front is the exception (2026-09-20). It takes what the row can spare before any other tab grows past its ordinary width, and the maximum does not apply to it, so it spells its label out wherever there is room. The room it leaves is no use to tabs already at the cap, and it is the one being read. The tabs behind it give way for it, each dropping to whatever rung of its own ladder still fits, and none of them goes below the regular width. With the shipped 10% regular width that can leave an inactive tab saying only its shell's name; raising the regular width is what buys them a path back. Taken from nemo-anywhere, whose tab row had the same problem.
 
 - Defaults are 10% regular and 100% maximum. The old pair (8% and 26%) made sense when the bar was divided evenly; a maximum now only says how far one tab may grow when it has the room, which is worth allowing in full for a window holding a single tab.
 

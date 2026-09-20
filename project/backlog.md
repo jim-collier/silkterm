@@ -108,8 +108,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
-- 🔘 Tab text: Use 'nemo-anywhere's recent formula for shortening the path for active and inactive tabs if necessary.
-
 - 🔘 Include uptime for the current silkterm session, in the Help|About dialog.
 
 - 🔘 Themes:
@@ -1933,6 +1931,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Tab text: Use 'nemo-anywhere's recent formula for shortening the path for active and inactive tabs if necessary.
+	- `Fixed:` two halves. The path ladder in `tabtitle::path_forms` now lets an ellipsis eat the middle a directory at a time before anything drops to an initial, so what is left keeps its real names. And `tabtitle::widths` takes the active slot: that tab takes what the row can spare before any other grows past its ordinary width, and the maximum does not apply to it.
+	- `Decided:` nemo's "the tabs behind take the same step as each other" was left out. Its ladders are all path forms, so one rung number means the same thing on every tab; a SilkTerm label is shell plus task plus path, and rung 3 on one tab is nothing like rung 3 on the next. Each tab drops to whatever rung of its own ladder fits instead.
+	- `Note:` a deep path never reaches the initials rung any more - the ellipsis has already beaten it. Initials still win on a one-directory path, where the ellipsis costs more than the name it covers.
+	- `Note:` with the shipped 10% regular width, a tab in front with a long path can leave the others saying only their shell's name. That is the formula working; raising `window.tab_regular_width_pct` is what buys them a path back.
+	- `Pinned by:` `a_path_loses_its_middle_before_its_names`, `the_tab_in_front_takes_what_the_row_can_spare`, `the_tab_in_front_asks_for_no_more_than_its_label_wants`. Three mutations red.
+	- `Measured:` seen on `:98`, release build, four tabs in the repo directory at a 1071 px window. The tab in front drew the whole path at about 750 px and the other three sat at 107 px saying "Dash"; clicking the first tab moved it, and the strip redrew the other way round.
+	- Opened: 20260920. Closed: 20260920
 
 - ✅ Extension to the idea of "Silk: Allow 'Profile' to be selected even when 'Choose automatically' is enabled:
 	- Also allow dependent settings to be changed. (A reversal of the design to disable dependent settings.)
