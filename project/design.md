@@ -258,7 +258,9 @@ The mapping, which is the load-bearing decision:
 
 - The whole buffer - history plus screen - always maps linearly onto the column, top-anchored, oldest first. The editors slide their minimap once the document outgrows it; this one never does.
 
-- The buffer ends at the last screen row with output in it, not at the bottom of the screen grid. The blank rows under a short prompt are not something the user printed, so neither the track nor the viewport marker reaches over them. A wholly blank screen still keeps one line, so the map does not disappear at a fresh prompt.
+- The map stops where the eased text has reached, not at the live bottom of the buffer. Under a flood the view sits behind the newest output by however far the output ease is holding it, and drawing past that puts lines in the column that are not on screen. Only the output chase counts: a scroll back to the bottom eases in the same way, and trimming by that would shorten the column for the length of the gesture. The extent is settled when the picture is composed, so the marker is never measured against a picture nobody drew, and a map that came out short asks for another compose and follows the ease down. One line is always kept, so the column never disappears.
+
+- An earlier pass read the same sentence the other way and stopped the map at the last screen row with output, so the blank rows under a short prompt took no track. That is out again. The blank rows are part of the buffer.
 
 - With a short buffer, lines draw at a capped height (1.5 px at 1x) and the preview just does not reach the bottom of the column yet. That cap is scaled but not rounded to whole pixels, on purpose: a line has to be able to sit at a fraction of one, or its ink lands inside a single pixel row and a page goes back to reading as a slab.
 
