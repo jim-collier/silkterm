@@ -159,6 +159,10 @@ pub struct Scroll {
 	app_chase: Chase, // the slide's own chase, so an app's scroll eases like output
 	sweep: bool,      // user jumped back to the bottom: full ease speed until caught up
 	wheel_dir: f32,   // sign of the last wheel motion, so the detent sits ahead of it
+	// Output lines below the view that it has never come down to. Arriving
+	// output raises it and the view gives it back as it reaches them, so it is
+	// a history rather than a state - see `unshown_lines`.
+	unshown: f32,
 }
 
 impl Scroll {
@@ -174,6 +178,7 @@ impl Scroll {
 			app_chase: Chase::REST,
 			sweep: false,
 			wheel_dir: 0.0,
+			unshown: 0.0,
 		}
 	}
 
@@ -222,6 +227,7 @@ impl Scroll {
 		self.chase = Chase::REST;
 		self.cancel_app_scroll();
 		self.sweep = false;
+		self.unshown = self.unshown.min(self.visual);
 	}
 
 	// Current alt-screen slide offset in lines (added to the render's vertical
@@ -242,6 +248,7 @@ impl Scroll {
 		self.target = self.target.clamp(0.0, self.max);
 		self.visual = self.visual.clamp(0.0, self.max);
 		self.mid = self.mid.clamp(0.0, self.max);
+		self.unshown = self.unshown.min(self.visual);
 	}
 
 	pub fn following(&self) -> bool {
@@ -314,6 +321,10 @@ impl Scroll {
 			// cascade stage rides along - shifting it keeps its lead over `visual`
 			// intact, which is what preserves the eased speed across a burst
 			self.mid = (self.mid + (self.visual - before)).clamp(0.0, self.visual);
+			// the new lines printed below the view, so it has not reached them.
+			// The delta is `visual - before` and not `grown`: the floor and the
+			// history clamp above can both make the two differ.
+			self.unshown = (self.unshown + (self.visual - before)).min(self.visual);
 		}
 	}
 
@@ -336,6 +347,30 @@ impl Scroll {
 	// The output ease is chasing new lines, as opposed to resting or a user sweep.
 	pub fn chasing_output(&self) -> bool {
 		self.chase.burst > 0.0 && self.following() && !self.sweep
+	}
+
+	// How far above the newest line the eased view still sits, in lines, which
+	// is where the minimap has to stop drawing: past it is text the pane has not
+	// shown. Only output raises this, and only the view arriving lowers it, so a
+	// gesture neither shortens the map nor turns the trim off.
+	//
+	// It cannot be worked out from `visual`, `following()` or `chasing_output()`
+	// after the fact. `visual` carries a gesture's remaining travel as well as
+	// the chase's backlog and the two read the same from outside; `following()`
+	// is true the moment a gesture AIMS at the bottom, and `chasing_output()`
+	// goes false for the rest of a flood at the first keystroke. Those were
+	// F150 and F153, the same site in opposite directions.
+	pub fn unshown_lines(&self) -> f32 {
+		self.unshown
+	}
+
+	// Whether that count is still falling. It only falls as `visual` comes down
+	// past it, and `visual` is heading for `target`, so a target below it will
+	// drain it and a target above it leaves it frozen. The minimap asks because
+	// a map held short by a frozen count has nothing more to draw until the view
+	// moves, and owing a compose anyway recomposed forever (F155).
+	pub fn unshown_draining(&self) -> bool {
+		self.target < self.unshown
 	}
 
 	pub fn advance(&mut self, dt_s: f32) {
@@ -420,6 +455,13 @@ impl Scroll {
 			}
 		}
 
+		// `visual` is final for the frame, so whatever the view came down to has
+		// now been shown. Ratcheting it here rather than clamping in the getter
+		// is what makes it a history: a later scroll back raises `visual` again,
+		// and a getter that only took a `min` would hand back a count the view
+		// had already reached.
+		self.unshown = self.unshown.min(self.visual);
+
 		// Ease the alt-screen slide home: the cascade and the chase above, run
 		// against a target of 0, so an app's region scroll reads exactly like
 		// plain output does.
@@ -498,6 +540,198 @@ mod tests {
 		s.nudge_output(3.0, 24.0);
 		s.wheel(-1.0); // the user drives it back down: a sweep, not the chase
 		assert!(!s.chasing_output());
+	}
+
+	// F150. A gesture aimed at the bottom eases in exactly the way output does,
+	// so `following()` and `visual` both read as a lag while one is in flight.
+	// Nothing printed, so nothing is unshown, whatever the view is doing.
+	#[test]
+	fn a_gesture_to_the_bottom_is_not_unshown_output() {
+		let _g = pin();
+		for jump in [true, false] {
+			let mut s = Scroll::new();
+			s.set_max(10_000.0);
+			s.scroll_to(if jump { 500.0 } else { 120.0 });
+			for _ in 0..2000 {
+				s.advance(0.016);
+			}
+			assert_eq!(s.unshown_lines(), 0.0, "settled back, nothing printed");
+			if jump {
+				s.jump_bottom();
+			} else {
+				s.wheel(-120.0);
+			}
+			for _ in 0..400 {
+				assert_eq!(
+					s.unshown_lines(),
+					0.0,
+					"jump {jump}: trimmed at {}",
+					s.visual_lines()
+				);
+				s.advance(0.016);
+				if s.visual_lines() == 0.0 {
+					break;
+				}
+			}
+			assert_eq!(
+				s.visual_lines(),
+				0.0,
+				"jump {jump}: the gesture never arrived"
+			);
+		}
+	}
+
+	// F153. Every keystroke calls `jump_bottom`, and a wheel notch at the bottom
+	// is the same shape. Neither shows the user anything, so neither may cancel
+	// a flood's trim - the fix for F150 read `chasing_output()`, which goes false
+	// for the rest of the flood at the first one.
+	#[test]
+	fn a_flood_stays_trimmed_through_a_keystroke() {
+		let _g = pin();
+		for keystroke in [true, false] {
+			let mut s = Scroll::new();
+			s.set_max(10_000.0);
+			for _ in 0..60 {
+				s.nudge_output(10.0, 48.0);
+				s.advance(0.016);
+			}
+			let built = s.unshown_lines();
+			assert!(built > 100.0, "the flood built only {built} lines of lag");
+			if keystroke {
+				s.jump_bottom();
+			} else {
+				s.wheel(-1.0);
+			}
+			for frame in 0..240 {
+				s.nudge_output(10.0, 48.0);
+				s.advance(0.016);
+				assert!(
+					s.unshown_lines() > 100.0,
+					"keystroke {keystroke}: trim gone at frame {frame}, {} of {}",
+					s.unshown_lines(),
+					s.visual_lines()
+				);
+				assert!(
+					s.unshown_lines() <= s.visual_lines() + 1e-3,
+					"keystroke {keystroke}: {} past the view at {}",
+					s.unshown_lines(),
+					s.visual_lines()
+				);
+			}
+		}
+	}
+
+	// The count is what the map trims by, so it has to be the ease's own backlog
+	// under a plain flood, and it has to drain to nothing once output stops. The
+	// second half walks a mixed script and holds the invariants over all of it.
+	#[test]
+	fn unshown_output_drains_as_the_view_reaches_it() {
+		let _g = pin();
+		let mut s = Scroll::new();
+		s.set_max(10_000.0);
+		for _ in 0..60 {
+			s.nudge_output(10.0, 48.0);
+			s.advance(0.016);
+		}
+		assert!(
+			(s.unshown_lines() - s.visual_lines()).abs() < 1e-3,
+			"a plain flood is all backlog"
+		);
+		for _ in 0..4000 {
+			s.advance(0.016);
+		}
+		assert_eq!(s.visual_lines(), 0.0, "the ease never arrived");
+		assert_eq!(
+			s.unshown_lines(),
+			0.0,
+			"the view reached the bottom with lines still unshown"
+		);
+
+		// flood, park 1000 lines back, flood stops, jump to the bottom
+		let mut s = Scroll::new();
+		s.set_max(10_000.0);
+		let mut last = 0.0;
+		let check = |s: &Scroll, last: &mut f32, printed: bool, note: &str| {
+			let u = s.unshown_lines();
+			assert!(
+				u >= 0.0 && u <= s.visual_lines() + 1e-3,
+				"{note}: {u} of {}",
+				s.visual_lines()
+			);
+			if !printed {
+				assert!(
+					u <= *last + 1e-3,
+					"{note}: rose to {u} from {last} with nothing printed"
+				);
+			}
+			*last = u;
+		};
+		for _ in 0..40 {
+			s.nudge_output(10.0, 48.0);
+			s.advance(0.016);
+			check(&s, &mut last, true, "flood");
+		}
+		assert!(
+			s.unshown_draining(),
+			"at the bottom with a backlog still to show"
+		);
+		s.scroll_to(1000.0);
+		for _ in 0..600 {
+			s.nudge_output(10.0, 48.0); // ignored while scrolled back
+			s.advance(0.016);
+			check(&s, &mut last, false, "parked");
+		}
+		// parked above the lines it has not reached, the count is frozen, so a
+		// map held short by it has nothing more to draw until the view moves
+		assert!(s.unshown_lines() > 0.0, "the flood left nothing unshown");
+		assert!(!s.unshown_draining(), "parked, but the count still drains");
+		s.jump_bottom();
+		assert!(
+			s.unshown_draining(),
+			"heading back down past the unshown lines"
+		);
+		for _ in 0..4000 {
+			s.advance(0.016);
+			check(&s, &mut last, false, "coming back");
+		}
+		assert_eq!(s.visual_lines(), 0.0, "never settled");
+		assert_eq!(
+			s.unshown_lines(),
+			0.0,
+			"settled at the bottom with lines still unshown"
+		);
+
+		// the alt screen pins the view to 0, so nothing can be unshown there
+		let mut s = Scroll::new();
+		s.set_max(10_000.0);
+		for _ in 0..40 {
+			s.nudge_output(10.0, 48.0);
+			s.advance(0.016);
+		}
+		assert!(s.unshown_lines() > 0.0);
+		s.set_max(0.0);
+		assert_eq!(s.unshown_lines(), 0.0);
+	}
+
+	// Smooth scrolling off: the grid already sits at the bottom, so there is no
+	// lag to ease and nothing for the map to hold back.
+	#[test]
+	fn smooth_off_leaves_nothing_unshown() {
+		let _g = pin();
+		// a profile would mask the master switch, so pin the feel to custom
+		with(config::Settings {
+			scroll_smooth: false,
+			..config::Settings::default()
+		});
+		let mut s = Scroll::new();
+		s.set_max(10_000.0);
+		for _ in 0..40 {
+			s.nudge_output(10.0, 48.0);
+			s.advance(0.016);
+			assert_eq!(s.unshown_lines(), 0.0);
+		}
+		// leave the shared store on defaults for tests outside this module
+		config::update(config::Settings::default());
 	}
 
 	#[test]

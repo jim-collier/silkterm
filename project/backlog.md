@@ -281,12 +281,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- At 100,000 lines one redraw holds the terminal for about 150 ms, and at the 1,000,000-line maximum it would be over a second. The time between redraws already grows with it, so the average cost stays small; the pause itself does not.
 	- Opened: 20260919
 
-- 🔘 Minimap: stop the map where the eased text has reached, rather than at the live bottom of the buffer.
-	- Under heavy output the text eases in behind the newest line, so the column draws lines that are not on screen yet. This is the reading meant by the closed item "When drawing new output, don't exceed what is currently shown on screen". That one built the other reading of the same sentence, and it stays.
-	- Tried on 20260919 and taken back out. Trimming by how far the view sits behind reads a scroll to the bottom as output, since that eases in the same way. Trimming only while the output chase owns the motion misses the rest of a flood after a single keystroke, because a keystroke aims the view at the bottom and that flag does not clear while output keeps arriving.
-	- Wants a design before another try: the scroll model carries the chase's undrained backlog and a gesture's remaining travel in one number, and nothing outside it can tell the two apart.
-	- Opened: 20260919-190000
-
 ### Done
 
 #### Done - Bugs
@@ -1927,6 +1921,18 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 #### Done - New features and enhancements
 
+- ✅ Minimap: stop the map where the eased text has reached, rather than at the live bottom of the buffer.
+	- Under heavy output the text eases in behind the newest line, so the column drew lines that were not on screen yet.
+	- Cause: two earlier tries each read the scroll position from outside the scroll model, and that one number carries the output chase's undrained backlog and a gesture's remaining travel together. Trimming whenever the view follows the bottom read a jump to the bottom as output. Trimming only while the chase owned the motion lost the rest of a flood after one keystroke.
+	- Fixed: the scroll model counts the output lines the view has not come down to. Arriving lines raise the count, and the view gives it back as it reaches them, so a gesture neither creates it nor clears it. The map stops at that point, and a short map asks for another compose and follows the ease down.
+	- Decided: the count lives inside the scroll model, since only it can tell a gesture's remaining travel from the chase's backlog.
+	- Pinned by: `a_gesture_to_the_bottom_is_not_unshown_output`, `a_flood_stays_trimmed_through_a_keystroke`, `unshown_output_drains_as_the_view_reaches_it`, `smooth_off_leaves_nothing_unshown`, `the_map_stops_where_the_eased_text_has_reached`, `blank_rows_under_a_prompt_are_part_of_the_map`, `a_trimmed_compose_owes_another` and `a_parked_view_stops_owing_composes`. Each watched failing with its own rule taken out, and with both narrower readings put back one at a time.
+	- Fixed: a short map owed a redraw for as long as it was short, and a view parked in the scrollback freezes the lag, so it asked for a frame and a whole redraw about eleven times a second with no output at all. It owes one only while the count is draining now.
+	- Note: this widens the open bug about the marker moving at a different rate from the map under it, from at most a screen of blank rows to the whole output lag, measured at 218 against 225 lines under a 600 lines/s flood, and the gap now stays while the view is parked.
+	- To confirm: how it looks under a real flood. It is pinned by number, not by eye.
+	- Opened: 20260919-190000
+	- Closed: 20260920-081500
+
 - ✅ Make text scrim falloff "Exponential" more agressive. E.g., increase the exponent.
 	- Fixed: the exponent doubled, from 3 to 6. A quarter of the way out to the halo's edge the scrim is at 22 percent of full rather than 44, and halfway out under 5 rather than 18.
 	- Left alone: the other four curves, and the halo's width. The curve still reaches exactly zero at the edge, which it has to: past that the distance passes saturate and whatever it returns there is the alpha of every pixel in the pane.
@@ -1944,12 +1950,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Note: judged by eye against the same output rendered under the old model, off the GPU, since the column's pixels are composed on the CPU.
 	- ✅ When drawing new output, don't exceed what is currently shown on screen. The bottom line of the minimap should never show more than the bottom of real output.
 		- Cause: the map took the buffer to be the history plus the whole screen grid, so the blank rows under a short prompt still took up track. On a fresh terminal that left a tall empty marker under two pixels of ink.
-		- Fixed: the map now ends at the last screen row with output in it, and the marker ends there too. A wholly blank screen keeps one line, so the column never disappears.
-		- Decided: the wording reads two ways, and this is the half with a symptom on screen all the time. The other half - that the map runs ahead of the eased text under a flood - is asked about in the run's questions document. The change is small to undo if that was the one meant.
+		- Fixed: the map stops where the eased text has reached. Under a flood the view sits behind the newest line, and the column now holds back the output the view has not come down to. A gesture does not create that count and does not clear it, so a jump to the bottom never shortens the column and typing during a flood does not switch the trim off. A short map asks for another compose and follows the ease down. One line is always kept, so the column never disappears.
+		- Decided: the wording reads two ways, and this is the half with a symptom on screen all the time. The other half - that the map runs ahead of the eased text under a flood - turned out to be the one meant, so the trim to the last inked row comes back out and the blank rows under a prompt are part of the buffer again. That half is its own open item.
 		- Left alone: scrolling does not move where the map ends, since the screen is the screen whatever the display offset is.
-		- Pinned by: `the_map_ends_at_the_last_line_with_output`, watched failing with the trim taken out.
+		- Pinned by: `a_gesture_to_the_bottom_is_not_unshown_output`, `a_flood_stays_trimmed_through_a_keystroke`, `unshown_output_drains_as_the_view_reaches_it`, `the_map_stops_where_the_eased_text_has_reached`, `blank_rows_under_a_prompt_are_part_of_the_map` and `a_trimmed_compose_owes_another`. Each watched failing with its own rule taken out, and with the two narrower readings put back one at a time.
 	- Fixed: reworking the marker to end on the last drawn line broke the round trip between where it is drawn and the position a drag reads back from it, so a press plus one pixel of movement scrolled the view by itself. The marker's height and travel now come off one helper and the two directions divide by the same travel. The same fault was reachable before this work at a deep scrollback, where the marker's minimum height ate into its travel; that is fixed with it.
-	- Pinned by: `a_marker_reads_back_the_position_it_was_drawn_at`, over 21 positions across five buffer shapes, watched failing on both.
+	- Pinned by: `a_marker_reads_back_the_position_it_was_drawn_at`, over 21 positions across six buffer shapes, watched failing on both.
 	- Note: the marker now moves at a slightly different rate from the map under it, which is filed as its own bug.
 	- Opened: 20260918-110145
 	- Closed: 20260919-165500
