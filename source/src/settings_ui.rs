@@ -192,8 +192,8 @@ const RAMP_DOWN_MAX: f32 = 4500.0;
 const EASE_OUT_MIN: f32 = 13.0;
 const EASE_OUT_MAX: f32 = 1300.0;
 
-// The rows a performance profile sets - one list, so the dialog's graying and
-// profile.rs's field list cannot drift apart without a test noticing.
+// The rows a performance profile sets - one list, so the dialog's display rule
+// and profile.rs's field list cannot drift apart without a test noticing.
 const GOVERNED: &[Key] = &[
 	Key::SmoothScroll,
 	Key::ScrollEaseIn,
@@ -212,8 +212,8 @@ const GOVERNED: &[Key] = &[
 	Key::BgBlur,
 	Key::BgContrastMask,
 ];
-const LOCKED_TIP: &str =
-	"Set by the performance profile. Choose Custom on the Silk tab to change it.";
+const PROFILE_TIP: &str =
+	"Showing the performance profile's value. Changing it switches the profile to Custom.";
 
 // A slider's handle, centered on the value, so it overhangs the track's ends.
 const SLIDER_HANDLE_W: f32 = 10.0;
@@ -2344,7 +2344,7 @@ impl SettingsDialog {
 			let grayed = self.disabled(self.specs[i].key);
 			let tip = match self.disabled_tip(self.specs[i].key).filter(|_| grayed) {
 				Some(why) => why,
-				None if self.locked(self.specs[i].key) => LOCKED_TIP,
+				None if self.profile_shows(self.specs[i].key) => PROFILE_TIP,
 				None if !self.specs[i].help.is_empty() => self.specs[i].help,
 				None => continue,
 			};
@@ -2465,13 +2465,14 @@ impl SettingsDialog {
 	}
 	// Is this row at its config default? (drives the revert icon). A Dual row is
 	// "default" only when both its keys are.
-	// A locked setting has nothing to revert - the profile, not the user, set it -
-	// so it is skipped rather than answering for the row. Skipping it matters on a
-	// shared line, where one half can be governed and the other not.
+	// A row showing a profile's value has nothing to revert - what is on screen is
+	// not the user's value - so it is skipped rather than answering for the row.
+	// Skipping it matters on a shared line, where one half can be governed and the
+	// other not.
 	fn row_is_default(&self, i: usize) -> bool {
 		self.row_keys(i)
 			.iter()
-			.filter(|&&k| !self.locked(k))
+			.filter(|&&k| !self.profile_shows(k))
 			.all(|&k| self.is_default(k))
 	}
 	// A row of push-buttons has no value, and the shells grid is a list rather
@@ -2499,10 +2500,10 @@ impl SettingsDialog {
 		keys
 	}
 	// Revert a whole row to defaults - every key the row's own arrow covers, less
-	// the ones a profile is holding.
+	// the ones a profile is showing for.
 	fn row_revert(&mut self, i: usize) {
 		for k in self.row_keys(i) {
-			if !self.locked(k) && !self.is_default(k) {
+			if !self.profile_shows(k) && !self.is_default(k) {
 				self.revert(k);
 			}
 		}
@@ -2971,6 +2972,7 @@ impl SettingsDialog {
 		}
 	}
 	fn set_f32(&mut self, key: Key, value: f32) {
+		self.leave_profile(key);
 		// adjusting the size explicitly means we're no longer following the OS size
 		if key == Key::FontSize {
 			self.edited.use_system_font_size = false;
@@ -3114,6 +3116,7 @@ impl SettingsDialog {
 		}
 	}
 	fn set_toggle(&mut self, key: Key, on: bool) {
+		self.leave_profile(key);
 		match key {
 			Key::PerfAuto => {
 				// the step belongs to the automatic choice, so it goes when that does
@@ -3197,6 +3200,7 @@ impl SettingsDialog {
 		}
 	}
 	fn set_radio(&mut self, key: Key, idx: usize) {
+		self.leave_profile(key);
 		match key {
 			// Remote is never stored: picking it raises the session override and
 			// leaves the stored profile for the next launch to come back to. Any
@@ -3282,12 +3286,21 @@ impl SettingsDialog {
 		!ui().needs_of(key).iter().all(|need| self.gate_ok(need))
 			// nothing for a system-font toggle to follow (the tip says so)
 			|| self.disabled_tip(key).is_some()
-			|| self.locked(key)
 	}
 	// A row the chosen performance profile sets. It shows the profile's value
-	// and takes no input until the profile is Custom again.
-	fn locked(&self, key: Key) -> bool {
+	// rather than the user's own, and still takes input - see `leave_profile`.
+	fn profile_shows(&self, key: Key) -> bool {
 		crate::profile::current(&self.edited) != Profile::Custom && GOVERNED.contains(&key)
+	}
+	// Changing a row a profile governs is the user taking the settings back.
+	// The values on screen become their own and the profile drops to Custom, so
+	// the edit is a change to what was visible rather than to values the profile
+	// had been hiding. Cheap to call on every drag step: it does nothing once
+	// Custom is in force.
+	fn leave_profile(&mut self, key: Key) {
+		if GOVERNED.contains(&key) {
+			crate::profile::adopt(&mut self.edited);
+		}
 	}
 	// Is one declared prerequisite satisfied? A slider counts while it sits above
 	// zero, everything else while it is switched on - except the two system-font
@@ -6202,11 +6215,11 @@ mod tests {
 		assert!(pairs >= 2, "expected paired rows, saw {pairs}");
 	}
 
-	// A pair shares one revert arrow, so a profile holding the FIRST half must not
+	// A pair shares one revert arrow, so a profile showing the FIRST half must not
 	// silence the arrow for the second - which is not governed and can still be
 	// off its default with no other way back.
 	#[test]
-	fn a_locked_half_does_not_silence_its_partner_s_revert() {
+	fn a_governed_half_does_not_silence_its_partner_s_revert() {
 		let mut d = mk_dialog(4000.0);
 		let lead = d
 			.specs
@@ -6216,8 +6229,14 @@ mod tests {
 		d.tab = d.specs[lead].tab;
 		let follow = SettingsDialog::paired_with(d.specs, lead, d.tab).expect("a row beside it");
 		d.set_radio(Key::PerfProfile, super::Profile::Max.index());
-		assert!(d.locked(Key::ScrimFunction), "the first half is governed");
-		assert!(!d.locked(d.specs[follow].key), "the second half is not");
+		assert!(
+			d.profile_shows(Key::ScrimFunction),
+			"the first half is governed"
+		);
+		assert!(
+			!d.profile_shows(d.specs[follow].key),
+			"the second half is not"
+		);
 
 		// take the ungoverned half off its default
 		let ramp = d.specs[follow].key;
@@ -6694,11 +6713,11 @@ mod tests {
 	}
 
 	// While a profile is chosen, every row it governs shows the profile's value
-	// and takes no input, and the user's own value waits underneath. Custom is
-	// the one profile that governs nothing.
+	// and the user's own value waits underneath. Custom is the one profile that
+	// governs nothing.
 	#[test]
-	fn a_profile_shows_its_values_and_locks_its_rows() {
-		use super::{GOVERNED, LOCKED_TIP};
+	fn a_profile_shows_its_values_in_its_rows() {
+		use super::{GOVERNED, PROFILE_TIP};
 		let mut d = mk_dialog(4000.0);
 		d.edited.scroll_ease_in_ms = 300.0;
 		d.edited.wallpaper_enabled = false;
@@ -6720,13 +6739,19 @@ mod tests {
 			7.0,
 			"an ungoverned row is untouched"
 		);
+		// Governed rows used to be grayed. They take input now, and the edit is
+		// what switches the profile off:
+		//     assert!(d.disabled(*key), "{key:?} should be locked");
 		for key in GOVERNED {
-			assert!(d.disabled(*key), "{key:?} should be locked");
+			assert!(!d.disabled(*key), "{key:?} should still take input");
 		}
 		assert!(!d.disabled(Key::Margin));
 		let outline = d.specs.iter().position(|s| s.key == Key::Outline).unwrap();
 		d.edited.text_outline = 3.0;
-		assert!(d.row_is_default(outline), "a locked row offers no revert");
+		assert!(
+			d.row_is_default(outline),
+			"a row showing a profile's value offers no revert"
+		);
 		// a member of a locked switch is grayed by the shown value, not the stored one
 		assert!(!d.disabled(Key::BgImage), "the wallpaper is on under Max");
 		// and the flyover says why, in place of the row's own help
@@ -6740,7 +6765,7 @@ mod tests {
 		let tip = d
 			.hover_tip_dip(ctl.x + 1.0, ctl.y + 1.0)
 			.map(|(text, _)| text);
-		assert_eq!(tip, Some(LOCKED_TIP));
+		assert_eq!(tip, Some(PROFILE_TIP));
 
 		d.set_radio(Key::PerfProfile, super::Profile::Custom.index());
 		assert_eq!(
@@ -6759,6 +6784,76 @@ mod tests {
 		assert!(!d.disabled(Key::PerfProfile));
 		d.set_toggle(Key::PerfAuto, false);
 		assert!(!d.disabled(Key::PerfProfile));
+	}
+
+	// A row's shown value, whichever kind it is, as something comparable.
+	fn shown_of(d: &SettingsDialog, i: usize, key: Key) -> String {
+		match d.specs[i].kind {
+			super::Kind::Slider { .. } => format!("{}", d.get_f32(key)),
+			super::Kind::Toggle | super::Kind::Dual { .. } => format!("{}", d.get_toggle(key)),
+			_ => format!("{}", d.get_radio(key)),
+		}
+	}
+
+	// Changing a row a profile governs is how the profile is taken back. The
+	// values on screen become the user's own, the profile drops to Custom and
+	// the machine stops choosing - and every other governed row keeps what it
+	// was showing, so only the row that was touched moves.
+	#[test]
+	fn changing_a_governed_row_takes_the_profile_to_custom() {
+		use super::GOVERNED;
+		for &key in GOVERNED {
+			let mut d = mk_dialog(4000.0);
+			d.set_radio(Key::PerfProfile, super::Profile::Low.index());
+			d.edited.performance_automatic = true; // the pick above switched it off
+			let i = d.specs.iter().position(|s| s.key == key).unwrap();
+			let others: Vec<(usize, Key, String)> = GOVERNED
+				.iter()
+				.filter(|&&k| k != key)
+				.map(|&k| {
+					let j = d.specs.iter().position(|s| s.key == k).unwrap();
+					(j, k, shown_of(&d, j, k))
+				})
+				.collect();
+			let before = shown_of(&d, i, key);
+
+			nudge(&mut d, i, key);
+
+			assert_eq!(
+				crate::profile::current(&d.edited),
+				super::Profile::Custom,
+				"{key:?} should take the profile to Custom"
+			);
+			assert!(
+				!d.edited.performance_automatic,
+				"{key:?} should switch the automatic choice off"
+			);
+			assert_ne!(
+				shown_of(&d, i, key),
+				before,
+				"{key:?} should hold what was typed into it"
+			);
+			for (j, k, was) in others {
+				assert_eq!(shown_of(&d, j, k), was, "{k:?} should keep what it showed");
+			}
+		}
+	}
+
+	// Remote lasts the session only and normally leaves the stored profile alone.
+	// A change to a setting it governs is the one thing that has to move it: the
+	// override would otherwise go on covering the new value, and so would the
+	// stored profile underneath it.
+	#[test]
+	fn changing_a_governed_row_under_remote_drops_the_override() {
+		let mut d = mk_dialog(900.0);
+		d.edited.performance_profile = "high".to_string();
+		d.set_radio(Key::PerfProfile, super::Profile::Remote.index());
+		assert!(d.edited.remote_override);
+
+		d.set_f32(Key::Outline, 3.0);
+		assert!(!d.edited.remote_override, "the override has to go");
+		assert_eq!(d.edited.performance_profile, "custom");
+		assert_eq!(d.get_f32(Key::Outline), 3.0);
 	}
 
 	// Naming a profile is how the automatic choice is taken back, or the pick
@@ -8774,8 +8869,10 @@ mod tests {
 			d.get_radio(Key::PerfProfile),
 			super::Profile::Remote.index()
 		);
+		// governing used to mean graying, so this read `d.disabled`:
+		//     assert!(d.disabled(Key::SmoothScroll), "Remote governs like Standard");
 		assert!(
-			d.disabled(Key::SmoothScroll),
+			d.profile_shows(Key::SmoothScroll),
 			"Remote governs like Standard"
 		);
 		d.set_radio(Key::PerfProfile, super::Profile::Low.index());

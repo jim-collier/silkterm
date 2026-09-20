@@ -79,7 +79,7 @@ The dialog is declared in `settings_ui.shcl`, which is the file to edit when add
 - A fraction stored as 0..1 is shown as a whole percent. The file keeps the decimal.
 - Every row that holds a value has a revert control at the right edge, which puts the shipped default back. A heading, a `buttons` row and the shells grid hold no single value, so none of them carries one.
 - Every row must actually write what it edits. A row whose setting is never persisted is worse than no row, because the change appears to take and then vanishes at the next launch.
-- Why a row is grayed out beats what it does, so a row grayed by the machine says so in its flyover in place of its usual text. A row grayed by another setting says nothing extra, because the switch that did it is the row above. A row set by the performance profile is the exception and says so, naming the tab the profile is on.
+- Why a row is grayed out beats what it does, so a row grayed by the machine says so in its flyover in place of its usual text. A row grayed by another setting says nothing extra, because the switch that did it is the row above. A row set by the performance profile is not grayed at all - it takes input, and its flyover says that it is showing the profile's value and that changing it switches the profile to Custom.
 
 ## Buttons and prompts
 

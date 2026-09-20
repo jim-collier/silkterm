@@ -192,6 +192,26 @@ pub fn apply(s: &mut Settings) {
 	s.profile_shadow = Some(Box::new(shadow));
 }
 
+// Keep what a profile is showing and make it the user's own, then drop to
+// Custom. This is what editing a governed setting means: the change starts from
+// the values on screen, not from whatever the file held before the profile went
+// on. Also switches the automatic choice off, since a machine still picking for
+// itself would overwrite the edit at the next launch.
+pub fn adopt(s: &mut Settings) {
+	let profile = current(s);
+	if profile == Profile::Custom && !s.performance_automatic {
+		return;
+	}
+	if profile != Profile::Custom {
+		unapply(s);
+		values(profile, s);
+	}
+	s.remote_override = false;
+	s.stepped_profile = None;
+	s.performance_profile = Profile::Custom.key().to_string();
+	s.performance_automatic = false;
+}
+
 // The profile in force: the remote override while it is on, then a step the
 // display watch took this session, then the stored one. A step only ever makes
 // a ladder rung cheaper, and only while automatic is on - it is the automatic

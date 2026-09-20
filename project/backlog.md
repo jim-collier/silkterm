@@ -108,20 +108,19 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
-- 🔘 Extension to the idea of "Silk: Allow 'Profile' to be selected even when 'Choose automatically' is enabled:
-	- Also allow dependent settings to be changed. (A reversal of the design to disable dependent settings.)
-		- But if a dependent setting IS changed by the user:
-			- Deselect "Choose automatically"
-			- Change 'Profile' to "Custom".
-	- Opened: 20260919-155433 by JC.
-
 - 🔘 Tab text: Use 'nemo-anywhere's recent formula for shortening the path for active and inactive tabs if necessary.
+
+- 🔘 Include uptime for the current silkterm session, in the Help|About dialog.
 
 - 🔘 Themes:
 	- 🔘 A fourth built-in theme. Pastel is the idea: a pleasing light pastel on a dark gray background carrying a subtle tint of the complementary color. Solarized is the other candidate.
 	- Opened: 20260628-083740
 
-- 🔘 Include uptime for the current silkterm session, in the Help|About dialog.
+- 🔘 Option: Dynamic text theme based on wallpaper
+	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
+	- A boolean checkmark under themes, that disables only those specific color settings.
+	- A nontrivial problem. Need to search the web for color theory research, probably. Starting point idea: Average entire image into a single hex color.
+	- Opened: 20260804-134813
 
 - 🔘 Settings dialog:
 	- 🔘 A color picker. The colored boxes on the Colors tab should be clickable, and open a picker of the familiar sort:
@@ -140,12 +139,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
 	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
 	- Opened: 20260918
-
-- 🔘 Option: Dynamic text theme based on wallpaper
-	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
-	- A boolean checkmark under themes, that disables only those specific color settings.
-	- A nontrivial problem. Need to search the web for color theory research, probably. Starting point idea: Average entire image into a single hex color.
-	- Opened: 20260804-134813
 
 - NOTE: Stop here to work on releasing RC1.
 
@@ -1940,6 +1933,19 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Extension to the idea of "Silk: Allow 'Profile' to be selected even when 'Choose automatically' is enabled:
+	- Also allow dependent settings to be changed. (A reversal of the design to disable dependent settings.)
+		- But if a dependent setting IS changed by the user:
+			- Deselect "Choose automatically"
+			- Change 'Profile' to "Custom".
+	- `Fixed:` the rows a profile governs are no longer grayed. Changing one calls `profile::adopt`, which keeps the values that were on screen as the user's own, sets the profile to Custom and clears "Choose automatically". `leave_profile` in settings_ui.rs calls it from the three setters.
+	- `Decided:` the values kept are the ones the profile was showing, not the older ones underneath it. The edit was made against what could be seen. Picking Custom from the dropdown is still the other way in, and that one does bring the older values back.
+	- `Decided:` Remote (temporary) is no exception. It governs, so an edit under it drops the session override and the stored profile with it, or the new value would be covered up by one or the other.
+	- `Note:` a row showing a profile's value still offers no revert arrow, since what it shows is not a value the user set. Its flyover says it is showing the profile's value and what changing it does.
+	- `Pinned by:` `changing_a_governed_row_takes_the_profile_to_custom` walks every governed row and checks the other governed rows keep what they showed; `changing_a_governed_row_under_remote_drops_the_override`. Three mutations red.
+	- `Measured:` seen on `:98`, release build, with `automatic: true` in a scratch config. The machine rated Low; switching off Smooth scrolling put Profile at Custom, cleared the switch, grayed "Check for hardware change" and left every other value where it was. Apply wrote `automatic: false`, `profile: custom`, `outline: 2` and `ease_in_ms: 41`.
+	- Opened: 20260919-155433 by JC. Closed: 20260920
 
 - ✅ New default for text outline: 1px
 	- `Note:` no code. The shipped default has been 1.0 since 2026-08-04 and the template's commented line says so.
