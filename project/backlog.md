@@ -115,8 +115,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Text boxes to the right: Red %, Green %, Blue %, Brightness %, Saturation %, and a hex value.
 		- Buttons at the bottom right: "Cancel|OK", with OK the default.
 
-- 🔘 Allow programs to change the tab title.
-
 - 🔘 When other settings are changed automatically based on a user action to a different setting (e.g. "Choose automatically" and/or "Profile", visually alert the user to the change:
 	- Use Effect 1 from "Rolling epic 'GPU FX'", around the setting that gets programmatically changed based on a user doing something elsewhere.
 
@@ -1953,6 +1951,17 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Allow programs to change the tab title.
+	- `Fixed:` a title the running program asks for now names the tab, outranked only by a name typed on the tab. A fifth switch on the Window tab, "Program's own title", turns it off.
+	- `Decided:` the order is the window title's, which already prefers a program's title over the tab's own text. The two are a pair, since the window title falls back to the tab, and having them disagree about what a program said would only confuse.
+	- `Decided:` the title sits above the tab's ladder of shortenings rather than inside it. A program's title has no shorter forms of its own, so folding it in would drop every rung longer than whatever the program happened to say, and a narrow tab would jump straight from a full title to the shell's initials.
+	- `Decided:` shipped on. The switch is there for a shell that retitles on every prompt, which turns a strip of labels into a row of the same `user@host` text.
+	- `Fixed:` the tab reads the title through the same filter the window title uses, so a Windows console naming the program it started still says nothing.
+	- `Fixed:` the tab's flyover carries a "Program title" line when there is one, whatever the switch says.
+	- `Pinned by:` `a_program_title_heads_the_tabs_forms` and `a_tab_passes_over_a_title_that_only_names_a_program`, both watched red three ways - the title dropped, the switch ignored, and the filter taken out.
+	- `Measured:` seen on `:98`, two tabs, one of them setting its own title. On: the tab reads "build - release" and the other its shell and path. Off: both read their shell and path. The flyover line was not looked at on screen.
+	- Opened: 20260628-083740. Closed: 20260920
 
 - ✅ Option: Dynamic text theme based on wallpaper.
 	- `Fixed:` a "Text colors from wallpaper" switch on the Themes tab, off by default. The text and cursor come from the picture behind them; the Foreground and Cursor rows gray out and keep showing the colors that come back when it goes off. Nothing derived is written to the file, since it follows whatever picture is up.
