@@ -157,6 +157,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 - 🔘 Option: Dynamic theme based on wallpaper
 	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
+	- A boolean checkmark under themes, that disables only those specific color settings.
 	- A nontrivial problem. Need to search the web for color theory research, probably. Starting point idea: Average entire image into a single hex color.
 	- Opened: 20260804-134813
 
