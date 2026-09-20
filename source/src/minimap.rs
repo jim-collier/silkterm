@@ -135,27 +135,13 @@ fn line_px(track_h: f32, total: usize, scale: f32) -> f32 {
 	(track_h / total as f32).min(MAX_LINE_PX * scale)
 }
 
-// The marker's height and how far down the track it can travel, in px. The
-// image draws `shown` lines, but the marker stands for the viewport inside the
-// whole buffer, so it is measured against `total`. That is what keeps it
-// inside the track when the two differ, and what lets the position and its
-// inverse below be exact: a floor on the height eats into the travel, and
-// both of them read the travel from here.
-fn marker(track_h: f32, total: usize, shown: usize, rows: usize, scale: f32) -> (f32, f32) {
-	let used = line_px(track_h, shown, scale) * shown as f32;
-	if total == 0 {
-		return (0.0, 0.0);
-	}
-	let h = (rows as f32 * used / total as f32)
-		.max(config::dip(MIN_HANDLE, scale))
-		.min(used);
-	(h, (used - h).max(0.0))
-}
-
 // Where the viewport marker sits, as (y offset down the track, height). `pos`
 // is the scroll model's lines-back-from-the-bottom, the same number the
-// scrollbar rides, so `pos` at its largest puts the marker at the top and 0
-// puts its bottom on the last line the map draws.
+// scrollbar rides. Both the height and the offset are measured at the map's
+// own pitch, so the marker covers the lines the image draws under it. The
+// image stops at `shown`, since under a flood the eased text has not reached
+// the rest, and measuring the marker against the whole buffer instead left it
+// drifting above the lines it stood for (F148).
 fn handle_span(
 	track_h: f32,
 	total: usize,
@@ -164,25 +150,22 @@ fn handle_span(
 	pos: f32,
 	scale: f32,
 ) -> (f32, f32) {
-	let (h, travel) = marker(track_h, total, shown, rows, scale);
-	let back = total.saturating_sub(rows) as f32;
-	let y = if back > 0.0 {
-		(1.0 - pos / back) * travel
-	} else {
-		0.0
-	};
-	(y.clamp(0.0, travel), h)
+	let pitch = line_px(track_h, shown, scale);
+	let used = pitch * shown as f32;
+	let covers = rows as f32 * pitch; // what the viewport really takes up
+	let h = covers.max(config::dip(MIN_HANDLE, scale)).min(used);
+	// A deep buffer puts the viewport under the height floor. A marker taller
+	// than the lines it stands for grows both ways from their middle, so it
+	// still reads as pointing at them.
+	let first = total.saturating_sub(rows) as f32 - pos;
+	let y = first * pitch + (covers - h) * 0.5;
+	(y.clamp(0.0, (used - h).max(0.0)), h)
 }
 
-// Inverse of `handle_span`: a marker top back to a scroll position in lines.
-// A grab feeds the drawn top straight back through here, so the two have to
-// agree exactly or a press with no movement scrolls the view by itself.
-fn span_to_pos(track_h: f32, total: usize, shown: usize, rows: usize, y: f32, scale: f32) -> f32 {
-	let (_, travel) = marker(track_h, total, shown, rows, scale);
-	if travel <= 0.0 {
-		return 0.0;
-	}
-	(1.0 - y / travel) * total.saturating_sub(rows) as f32
+// Lines to one preview pixel.
+fn lines_per_px(track_h: f32, shown: usize, scale: f32) -> f32 {
+	let pitch = line_px(track_h, shown, scale);
+	if pitch > 0.0 { 1.0 / pitch } else { 0.0 }
 }
 
 // The column's geometry for a pane. `pos` rides the eased scroll position;
@@ -243,28 +226,44 @@ pub fn hit(g: &Geom, x: f32, y: f32) -> Option<Hit> {
 	})
 }
 
-// The scroll position a click at `y` should center the viewport on. Read as
-// "put the middle of the marker here", so the ends of the track reach the ends
-// of the buffer even where the marker is shorter than the viewport it stands
-// for.
+// The scroll position a click at `y` should center the viewport on. The bottom
+// of the map stands for the newest output as well as the last line it drew, so
+// a click there means the bottom of the buffer rather than the line the trim
+// stopped on. That is also what makes both ends of the track reachable where
+// the marker is shorter than the viewport it stands for.
 pub fn center_on(g: &Geom, total: usize, shown: usize, rows: usize, y: f32, scale: f32) -> f32 {
-	let (h, _) = marker(g.preview.h, total, shown, rows, scale);
-	let want = (y - g.preview.y - h * 0.5).max(0.0);
-	span_to_pos(g.preview.h, total, shown, rows, want, scale)
-		.clamp(0.0, total.saturating_sub(rows) as f32)
+	let per_px = lines_per_px(g.preview.h, shown, scale);
+	if per_px <= 0.0 {
+		return 0.0;
+	}
+	let back = total.saturating_sub(rows) as f32;
+	let first = (y - g.preview.y) * per_px - rows as f32 * 0.5;
+	let pos = back - first;
+	if pos <= total.saturating_sub(shown) as f32 {
+		0.0
+	} else {
+		pos.min(back)
+	}
 }
 
-// Drag: put the marker's top where the pointer says, and map back to lines.
-pub fn drag_to(g: &Geom, total: usize, shown: usize, rows: usize, top: f32, scale: f32) -> f32 {
-	span_to_pos(
-		g.preview.h,
-		total,
-		shown,
-		rows,
-		(top - g.preview.y).max(0.0),
-		scale,
-	)
-	.clamp(0.0, total.saturating_sub(rows) as f32)
+// Drag: the pointer has moved from where it grabbed the marker, so the view
+// moves the matching number of lines from where it sat then. `grab` is that
+// pointer y and that position. Reading the marker's drawn top back instead
+// cannot work, because the height floor makes the marker taller than the lines
+// it covers on a deep buffer, so its top is a rounded reading of the position
+// rather than the position itself.
+pub fn drag_to(
+	g: &Geom,
+	total: usize,
+	shown: usize,
+	rows: usize,
+	grab: (f32, f32),
+	y: f32,
+	scale: f32,
+) -> f32 {
+	let (from_y, from_pos) = grab;
+	let moved = (y - from_y) * lines_per_px(g.preview.h, shown, scale);
+	(from_pos - moved).clamp(0.0, total.saturating_sub(rows) as f32)
 }
 
 // ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -1275,21 +1274,74 @@ mod tests {
 		assert!((bot_y + bot_h - used).abs() < 0.01); // at the newest
 	}
 
+	// A drag moves the view at the map's own rate, from where it started. This
+	// used to read the marker's drawn top back through the inverse of where it
+	// was drawn; the height floor makes that reading approximate, so the drag
+	// works from the grab instead.
 	#[test]
 	fn a_drag_round_trips_through_the_mapping() {
 		let track = 600.0;
 		let (total, rows) = (1000, 40);
+		let g = track_geom(track, total, total, rows);
+		let pitch = line_px(track, total, 1.0);
 		for pos in [0.0, 120.0, 500.0, 960.0] {
 			let (y, _) = handle_span(track, total, total, rows, pos, 1.0);
-			let back = span_to_pos(track, total, total, rows, y, 1.0);
-			assert!((back - pos).abs() < 1.0, "{pos} -> {back}");
+			let still = drag_to(&g, total, total, rows, (y, pos), y, 1.0);
+			assert!(
+				(still - pos).abs() < 1e-3,
+				"{pos} moved to {still} on its own"
+			);
+			// ten lines' worth of pixels up the column is ten lines back
+			let want = (pos + 10.0).min((total - rows) as f32);
+			let moved = drag_to(&g, total, total, rows, (y, pos), y - 10.0 * pitch, 1.0);
+			assert!(
+				(moved - want).abs() < 0.01,
+				"{pos} -> {moved}, wanted {want}"
+			);
 		}
 	}
 
-	// A grab stores the pointer's offset inside the marker and the first drag
-	// event feeds the marker's own top straight back, so the two directions
-	// have to agree exactly. Where they do not, a press and one pixel of
-	// movement scrolls the view on its own.
+	// The marker covers the lines that are on screen. Under a flood the map
+	// stops where the eased text has reached, and measuring the marker against
+	// the whole buffer instead left it well above those lines, with a click in
+	// the column landing off center (F148). Where the height floor makes the
+	// marker taller than the rows it stands for, it grows from their middle,
+	// so the slack is half that excess and no more.
+	#[test]
+	fn the_marker_sits_over_the_lines_it_stands_for() {
+		let track = 900.0;
+		let rows = 48;
+		for &(total, shown) in &[(148, 101), (1048, 1001), (10_048, 9_858)] {
+			let pitch = line_px(track, shown, 1.0);
+			let lag = (total - shown) as f32;
+			let top = (total - rows) as f32;
+			let used = pitch * shown as f32;
+			for step in 0..=10 {
+				let pos = lag + (top - lag) * step as f32 / 10.0;
+				let (y, h) = handle_span(track, total, shown, rows, pos, 1.0);
+				let first = top - pos;
+				let want = (first + rows as f32 * 0.5) * pitch;
+				let note = format!("{total}/{shown} at {pos}: {y}+{h} of {used}");
+				if want - h * 0.5 >= 0.01 && want + h * 0.5 <= used - 0.01 {
+					assert!(
+						(y + h * 0.5 - want).abs() < 0.6,
+						"{note}: middle {} wants {want}",
+						y + h * 0.5
+					);
+				} else {
+					// within half a floored marker of an end, so it sits flush
+					// with that end rather than hanging off the map
+					let flush = y < 0.01 || (y + h - used).abs() < 0.01;
+					assert!(flush, "{note}: neither centered nor flush");
+				}
+			}
+		}
+	}
+
+	// A grab stores the pointer and the position it stood for, and the first
+	// drag event feeds the same pointer back, so it has to come out unmoved.
+	// Where it does not, a press and one pixel of movement scrolls the view on
+	// its own.
 	#[test]
 	fn a_marker_reads_back_the_position_it_was_drawn_at() {
 		let track = 900.0;
@@ -1303,11 +1355,12 @@ mod tests {
 			(10_048, 10_048, 48),
 			(58, 11, 48),
 		] {
+			let g = track_geom(track, total, shown, rows);
 			let back = (total - rows) as f32;
 			for step in 0..=20 {
 				let pos = back * step as f32 / 20.0;
 				let (y, h) = handle_span(track, total, shown, rows, pos, 1.0);
-				let read = span_to_pos(track, total, shown, rows, y, 1.0);
+				let read = drag_to(&g, total, shown, rows, (y, pos), y, 1.0);
 				assert!(
 					(read - pos).abs() < 0.5,
 					"{total}/{shown}: drawn at {pos} reads back {read}"
@@ -1321,24 +1374,6 @@ mod tests {
 			}
 			// the bottom of the buffer is reachable by clicking the track, not
 			// only by dragging past the end of it
-			let g = geom(
-				Rect {
-					x: 0.0,
-					y: 0.0,
-					w: 400.0,
-					h: track,
-				},
-				0.0,
-				1.0,
-				&cfg(true, 60.0),
-				total,
-				shown,
-				rows,
-				0.0,
-				false,
-				true,
-			)
-			.unwrap();
 			let used = line_px(track, shown, 1.0) * shown as f32;
 			assert_eq!(
 				center_on(&g, total, shown, rows, used, 1.0),
@@ -1346,6 +1381,28 @@ mod tests {
 				"{total}/{shown}: a click on the last drawn line misses the newest output"
 			);
 		}
+	}
+
+	// A column of the given height, for the tests that need a `Geom`.
+	fn track_geom(track: f32, total: usize, shown: usize, rows: usize) -> Geom {
+		geom(
+			Rect {
+				x: 0.0,
+				y: 0.0,
+				w: 400.0,
+				h: track,
+			},
+			0.0,
+			1.0,
+			&cfg(true, 60.0),
+			total,
+			shown,
+			rows,
+			0.0,
+			false,
+			true,
+		)
+		.unwrap()
 	}
 
 	#[test]
@@ -1827,7 +1884,7 @@ mod tests {
 			handle.y + handle.h
 		);
 		// and the whole scrollback is still reachable from the top of it
-		let back = drag_to(&g, hist + lines, shown, lines, full.y, 1.0);
+		let back = center_on(&g, hist + lines, shown, lines, full.y, 1.0);
 		assert_eq!(back, hist as f32);
 	}
 
@@ -1901,7 +1958,7 @@ mod tests {
 			handle.y + handle.h
 		);
 		assert_eq!(
-			drag_to(&g, hist + lines, shown, lines, full.y, 1.0),
+			center_on(&g, hist + lines, shown, lines, full.y, 1.0),
 			hist as f32
 		);
 	}
