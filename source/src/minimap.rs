@@ -136,13 +136,13 @@ fn line_px(track_h: f32, total: usize, scale: f32) -> f32 {
 }
 
 // The marker's height and how far down the track it can travel, in px. The
-// image draws `shown` lines, but the marker stands for the viewport inside the
+// image draws `live` lines, but the marker stands for the viewport inside the
 // whole buffer, so it is measured against `total`. That is what keeps it
 // inside the track when the two differ, and what lets the position and its
 // inverse below be exact: a floor on the height eats into the travel, and
 // both of them read the travel from here.
-fn marker(track_h: f32, total: usize, shown: usize, rows: usize, scale: f32) -> (f32, f32) {
-	let used = line_px(track_h, shown, scale) * shown as f32;
+fn marker(track_h: f32, total: usize, live: usize, rows: usize, scale: f32) -> (f32, f32) {
+	let used = line_px(track_h, live, scale) * live as f32;
 	if total == 0 {
 		return (0.0, 0.0);
 	}
@@ -159,12 +159,12 @@ fn marker(track_h: f32, total: usize, shown: usize, rows: usize, scale: f32) -> 
 fn handle_span(
 	track_h: f32,
 	total: usize,
-	shown: usize,
+	live: usize,
 	rows: usize,
 	pos: f32,
 	scale: f32,
 ) -> (f32, f32) {
-	let (h, travel) = marker(track_h, total, shown, rows, scale);
+	let (h, travel) = marker(track_h, total, live, rows, scale);
 	let back = total.saturating_sub(rows) as f32;
 	let y = if back > 0.0 {
 		(1.0 - pos / back) * travel
@@ -177,8 +177,8 @@ fn handle_span(
 // Inverse of `handle_span`: a marker top back to a scroll position in lines.
 // A grab feeds the drawn top straight back through here, so the two have to
 // agree exactly or a press with no movement scrolls the view by itself.
-fn span_to_pos(track_h: f32, total: usize, shown: usize, rows: usize, y: f32, scale: f32) -> f32 {
-	let (_, travel) = marker(track_h, total, shown, rows, scale);
+fn span_to_pos(track_h: f32, total: usize, live: usize, rows: usize, y: f32, scale: f32) -> f32 {
+	let (_, travel) = marker(track_h, total, live, rows, scale);
 	if travel <= 0.0 {
 		return 0.0;
 	}
@@ -194,7 +194,7 @@ pub fn geom(
 	scale: f32,
 	cfg: &config::Settings,
 	total: usize,
-	shown: usize,
+	live: usize,
 	rows: usize,
 	pos: f32,
 	alt: bool,
@@ -212,7 +212,7 @@ pub fn geom(
 		h,
 	};
 	let handle = (!alt && total > rows).then(|| {
-		let (y, hh) = handle_span(h, total, shown, rows, pos, scale);
+		let (y, hh) = handle_span(h, total, live, rows, pos, scale);
 		Rect {
 			x: preview.x,
 			y: preview.y + y,
@@ -247,19 +247,19 @@ pub fn hit(g: &Geom, x: f32, y: f32) -> Option<Hit> {
 // "put the middle of the marker here", so the ends of the track reach the ends
 // of the buffer even where the marker is shorter than the viewport it stands
 // for.
-pub fn center_on(g: &Geom, total: usize, shown: usize, rows: usize, y: f32, scale: f32) -> f32 {
-	let (h, _) = marker(g.preview.h, total, shown, rows, scale);
+pub fn center_on(g: &Geom, total: usize, live: usize, rows: usize, y: f32, scale: f32) -> f32 {
+	let (h, _) = marker(g.preview.h, total, live, rows, scale);
 	let want = (y - g.preview.y - h * 0.5).max(0.0);
-	span_to_pos(g.preview.h, total, shown, rows, want, scale)
+	span_to_pos(g.preview.h, total, live, rows, want, scale)
 		.clamp(0.0, total.saturating_sub(rows) as f32)
 }
 
 // Drag: put the marker's top where the pointer says, and map back to lines.
-pub fn drag_to(g: &Geom, total: usize, shown: usize, rows: usize, top: f32, scale: f32) -> f32 {
+pub fn drag_to(g: &Geom, total: usize, live: usize, rows: usize, top: f32, scale: f32) -> f32 {
 	span_to_pos(
 		g.preview.h,
 		total,
-		shown,
+		live,
 		rows,
 		(top - g.preview.y).max(0.0),
 		scale,
@@ -279,12 +279,11 @@ pub struct Minimap {
 	rows: VecDeque<Row>,
 	spare: Vec<Row>,
 	hist: usize, // history lines the cache accounts for
-	// Buffer lines the map actually draws: the whole buffer less the lines the
-	// eased text has not reached yet. Under a flood the view sits behind the
-	// newest output, and drawing past it would put lines in the column that
-	// are not on screen. 0 until the first compose, which is what
-	// `shown_lines` falls back on.
-	shown: usize,
+	// Buffer lines the map actually draws: history plus the screen rows down
+	// to the last one with output in it. The blank rows under a short prompt
+	// are not the buffer, so neither the track nor the marker reaches them.
+	// 0 until the first compose, which is what `live_lines` falls back on.
+	live: usize,
 	// The newest `fresh` of those are not rasterized yet. A build only counts
 	// them and the compose does the work, because under a flood most lines
 	// leave history before any compose shows them, and the build holds the
@@ -332,15 +331,13 @@ impl Minimap {
 	}
 
 	// How many buffer lines the column maps, for the callers that place the
-	// marker and turn a click back into a scroll position. It is what the last
-	// compose drew, not what the ease is doing right now, or the marker would
-	// be measured against a picture nobody composed. Before the first compose
-	// there is nothing to ask, so it is the whole buffer.
-	pub fn shown_lines(&self, hist: usize, lines: usize) -> usize {
-		if self.shown == 0 {
+	// marker and turn a click back into a scroll position. Before the first
+	// compose there is nothing rasterized to ask, so it is the whole buffer.
+	pub fn live_lines(&self, hist: usize, lines: usize) -> usize {
+		if self.live == 0 {
 			hist + lines
 		} else {
-			self.shown
+			self.live
 		}
 	}
 
@@ -351,9 +348,7 @@ impl Minimap {
 
 	// Fold this build's grid into the cache and recompose if it is time.
 	// `advanced` is the count of lines that entered history since the last
-	// build - the same number the output ease rides. `lag` is how far behind
-	// the newest output the eased view still sits, in whole lines, which is
-	// where the map has to stop.
+	// build - the same number the output ease rides.
 	#[allow(clippy::too_many_arguments)]
 	pub fn update(
 		&mut self,
@@ -366,7 +361,6 @@ impl Minimap {
 		lines: usize,
 		cols: usize,
 		advanced: usize,
-		lag: usize,
 		cut: bool,
 		now: Instant,
 	) {
@@ -426,14 +420,9 @@ impl Minimap {
 		if due || self.img_h != img_h || self.img_w != width {
 			self.last_compose = Some(now);
 			let began = Instant::now();
-			self.catch_up(grid, colors, cfg, lag);
+			self.catch_up(grid, colors, cfg);
 			self.compose(img_h, scale);
 			self.spent = began.elapsed();
-			// Still short of the bottom, so another compose is owed even if no
-			// more output arrives: the ease drains on its own and the map has
-			// to follow it down. `pending` drives the build gate and the timed
-			// wake, so this is the whole mechanism.
-			self.pending = self.shown < self.hist + self.lines;
 		} else {
 			self.pending = true;
 		}
@@ -464,8 +453,9 @@ impl Minimap {
 
 	// Rasterize the history lines the builds only counted, then the screen.
 	// Bounded by the history's size however much output went by since the
-	// last compose. Also settles how far down the buffer the map draws.
-	fn catch_up(&mut self, grid: &Grid<Cell>, colors: &Colors, cfg: &config::Settings, lag: usize) {
+	// last compose. Also settles how far down the buffer the map draws: the
+	// blank rows under the last thing printed are not part of it.
+	fn catch_up(&mut self, grid: &Grid<Cell>, colors: &Colors, cfg: &config::Settings) {
 		self.fit_spans();
 		let mut readable = palette::Readable::default();
 		for k in (1..=self.fresh).rev() {
@@ -473,14 +463,16 @@ impl Minimap {
 			self.raster(grid, Line(-(k as i32)), colors, cfg, &mut readable, row);
 		}
 		self.fresh = 0;
+		let mut inked = 0;
 		for line in 0..self.lines as i32 {
 			let row = self.take_row();
-			self.raster(grid, Line(line), colors, cfg, &mut readable, row);
+			if self.raster(grid, Line(line), colors, cfg, &mut readable, row) {
+				inked = line as usize + 1;
+			}
 		}
-		// The rows are all rasterized either way, since the ease drains and the
-		// map has to reach them without re-reading the grid. One line is kept
-		// whatever the lag, so the column never disappears mid-flood.
-		self.shown = (self.hist + self.lines).saturating_sub(lag).max(1);
+		// A wholly blank screen still keeps one line, so the map does not
+		// vanish at a fresh prompt or straight after a clear.
+		self.live = self.hist + inked.max(1);
 	}
 
 	// The same for every line, so worked out once per width and column count
@@ -598,7 +590,7 @@ impl Minimap {
 	// blank neighbours; how bright the pixel gets is how much ink fell in it.
 	fn compose(&mut self, img_h: usize, scale: f32) {
 		let width = self.width;
-		let total = self.shown.min(self.rows.len());
+		let total = self.live.min(self.rows.len());
 		self.img_w = width;
 		self.img_h = img_h;
 		self.img.clear();
@@ -1102,7 +1094,7 @@ impl Minimap {
 	// Seed the cache directly, so the compose can be driven without a live grid.
 	fn seed(&mut self, width: usize, rows: Vec<Row>) {
 		self.width = width;
-		self.shown = rows.len();
+		self.live = rows.len();
 		self.rows = rows.into();
 	}
 	fn pixel(&self, x: usize, y: usize) -> [u8; 4] {
@@ -1289,7 +1281,7 @@ mod tests {
 		let track = 900.0;
 		// a full screen, a screen holding only a prompt at two history depths,
 		// and a deep buffer where the height floor eats most of the travel
-		for &(total, shown, rows) in &[
+		for &(total, live, rows) in &[
 			(1000, 1000, 48),
 			(148, 101, 48),
 			(1048, 1001, 48),
@@ -1299,17 +1291,17 @@ mod tests {
 			let back = (total - rows) as f32;
 			for step in 0..=20 {
 				let pos = back * step as f32 / 20.0;
-				let (y, h) = handle_span(track, total, shown, rows, pos, 1.0);
-				let read = span_to_pos(track, total, shown, rows, y, 1.0);
+				let (y, h) = handle_span(track, total, live, rows, pos, 1.0);
+				let read = span_to_pos(track, total, live, rows, y, 1.0);
 				assert!(
 					(read - pos).abs() < 0.5,
-					"{total}/{shown}: drawn at {pos} reads back {read}"
+					"{total}/{live}: drawn at {pos} reads back {read}"
 				);
 				// and it stays inside the map it rides
-				let used = line_px(track, shown, 1.0) * shown as f32;
+				let used = line_px(track, live, 1.0) * live as f32;
 				assert!(
 					y >= 0.0 && y + h <= used + 0.01,
-					"{total}/{shown}: {y}+{h} of {used}"
+					"{total}/{live}: {y}+{h} of {used}"
 				);
 			}
 			// the bottom of the buffer is reachable by clicking the track, not
@@ -1325,18 +1317,18 @@ mod tests {
 				1.0,
 				&cfg(true, 60.0),
 				total,
-				shown,
+				live,
 				rows,
 				0.0,
 				false,
 				true,
 			)
 			.unwrap();
-			let used = line_px(track, shown, 1.0) * shown as f32;
+			let used = line_px(track, live, 1.0) * live as f32;
 			assert_eq!(
-				center_on(&g, total, shown, rows, used, 1.0),
+				center_on(&g, total, live, rows, used, 1.0),
 				0.0,
-				"{total}/{shown}: a click on the last drawn line misses the newest output"
+				"{total}/{live}: a click on the last drawn line misses the newest output"
 			);
 		}
 	}
@@ -1447,7 +1439,6 @@ mod tests {
 				lines,
 				cols,
 				chunk,
-				0,
 				false,
 				now,
 			);
@@ -1506,7 +1497,6 @@ mod tests {
 				lines,
 				cols,
 				1,
-				0,
 				false,
 				now,
 			);
@@ -1544,7 +1534,6 @@ mod tests {
 				lines,
 				cols,
 				1,
-				0,
 				false,
 				now,
 			);
@@ -1731,22 +1720,26 @@ mod tests {
 		assert!(mean > 170, "mean alpha {mean}");
 	}
 
-	// Under a flood the eased view sits behind the newest output. The map stops
-	// where the view has reached, so the column shows nothing the text has not.
-	// With the ease at rest it draws the whole buffer again.
+	// The map draws the buffer, and the blank rows under the last thing
+	// printed are not the buffer. On a screen with three lines on it, the
+	// track and the marker riding it both stop where the output does.
 	#[test]
-	fn the_map_stops_where_the_eased_text_has_reached() {
+	fn the_map_ends_at_the_last_line_with_output() {
 		let settings = config::Settings::default();
 		let (cols, lines) = (40, 48);
 		let (width, img_h) = (16, 300);
-		// Short enough that lines draw at the capped height, so a trim actually
-		// shortens the column rather than just compressing it less.
-		let compose = |lag: usize| {
-			let (mut term, mut parser) = live_term(cols, lines, 1000);
-			parser.advance(&mut term, "x\r\n".repeat(100).as_bytes());
-			parser.advance(&mut term, b"tail");
-			let hist = term.grid().history_size();
+		// `before` lines of output, then a clear, then `text` at the top of a
+		// screen whose other rows stay blank. A clear pushes the screen it
+		// erases into history, so the depth is read back rather than counted.
+		let compose = |text: &str, before: usize| {
+			let (mut term, mut parser) = fresh_term(cols, lines, 1000);
+			if before > 0 {
+				parser.advance(&mut term, "x\r\n".repeat(before).as_bytes());
+				parser.advance(&mut term, b"\x1b[H\x1b[2J");
+			}
+			parser.advance(&mut term, text.as_bytes());
 			let mut map = Minimap::default();
+			let real = term.grid().history_size();
 			map.update(
 				term.grid(),
 				term.colors(),
@@ -1757,38 +1750,27 @@ mod tests {
 				lines,
 				cols,
 				0,
-				lag,
 				true,
 				Instant::now(),
 			);
-			(map, hist)
-		};
-		let ink_ends = |map: &Minimap| {
-			(0..img_h)
-				.rev()
-				.find(|&y| map.pixel(0, y)[3] > 0)
-				.map_or(0, |y| y + 1)
+			(map, real)
 		};
 
-		// at rest the map is the whole buffer, blank screen rows and all
-		let (rest, hist) = compose(0);
-		assert_eq!(rest.shown_lines(hist, lines), hist + lines);
-		let whole = line_px(img_h as f32, hist + lines, 1.0);
-		assert_eq!(whole, MAX_LINE_PX, "the buffer has to be short enough");
-
-		// behind by 12 lines, the map is 12 lines shorter and ends sooner
-		let (eased, hist) = compose(12);
-		let shown = eased.shown_lines(hist, lines);
-		assert_eq!(shown, hist + lines - 12);
+		// nothing in history: the map is the three lines and nothing under them
+		let (map, _) = compose("one\r\ntwo\r\nthree", 0);
+		assert_eq!(map.live_lines(0, lines), 3);
+		let used = (line_px(img_h as f32, 3, 1.0) * 3.0).ceil() as usize;
+		assert!((0..used).any(|y| map.pixel(0, y)[3] > 0), "no ink at all");
 		assert!(
-			ink_ends(&eased) < ink_ends(&rest),
-			"ink ends at {} either way",
-			ink_ends(&eased)
+			(used..img_h).all(|y| map.pixel(0, y)[3] == 0),
+			"ink past the last line with output"
 		);
-		let used = (line_px(img_h as f32, shown, 1.0) * shown as f32).ceil() as usize;
-		assert!(ink_ends(&eased) <= used, "ink past the last drawn line");
 
-		// and the marker still rides the whole buffer inside the shorter track
+		// with history behind it, the marker ends where the ink does rather
+		// than hanging below it over the blank rows
+		let (map, hist) = compose("prompt", 100);
+		let live = map.live_lines(hist, lines);
+		assert_eq!(live, hist + 1);
 		let full = Rect {
 			x: 0.0,
 			y: 0.0,
@@ -1801,7 +1783,7 @@ mod tests {
 			1.0,
 			&cfg(true, 60.0),
 			hist + lines,
-			shown,
+			live,
 			lines,
 			0.0,
 			false,
@@ -1809,48 +1791,15 @@ mod tests {
 		)
 		.unwrap();
 		let handle = g.handle.unwrap();
-		let track = line_px(img_h as f32, shown, 1.0) * shown as f32;
+		let track = line_px(img_h as f32, live, 1.0) * live as f32;
 		assert!(
 			(handle.y + handle.h - track).abs() < 0.01,
 			"marker ends at {}, track at {track}",
 			handle.y + handle.h
 		);
 		// and the whole scrollback is still reachable from the top of it
-		let back = drag_to(&g, hist + lines, shown, lines, full.y, 1.0);
+		let back = drag_to(&g, hist + lines, live, lines, full.y, 1.0);
 		assert_eq!(back, hist as f32);
-	}
-
-	// The ease drains whether or not more output arrives, so a map that came
-	// out short has to ask for another compose or it stays short.
-	#[test]
-	fn a_trimmed_compose_owes_another() {
-		let settings = config::Settings::default();
-		let (cols, lines) = (40, 24);
-		let composed = |lag: usize| {
-			let (mut term, mut parser) = live_term(cols, lines, 500);
-			parser.advance(&mut term, "x\r\n".repeat(60).as_bytes());
-			let mut map = Minimap::default();
-			map.update(
-				term.grid(),
-				term.colors(),
-				&settings,
-				16,
-				300,
-				1.0,
-				lines,
-				cols,
-				0,
-				lag,
-				true,
-				Instant::now(),
-			);
-			map
-		};
-		assert!(composed(6).pending(), "a short map owes a compose");
-		assert!(!composed(0).pending(), "a whole map owes nothing");
-		// a lag past the whole buffer still leaves a line, so the column stays
-		let deep = composed(10_000);
-		assert_eq!(deep.shown_lines(0, lines), 1);
 	}
 
 	#[test]
@@ -1900,7 +1849,6 @@ mod tests {
 				let now = start + Duration::from_millis(ms);
 				let cut = rng.chance(40);
 				let rev = map.rev;
-				let lag = rng.below(lines + 8);
 				let args = (width, img_h, 1.0, lines, cols);
 				map.update(
 					term.grid(),
@@ -1912,7 +1860,6 @@ mod tests {
 					args.3,
 					args.4,
 					pushed,
-					lag,
 					cut,
 					now,
 				);
@@ -1932,7 +1879,6 @@ mod tests {
 					args.3,
 					args.4,
 					0,
-					lag,
 					false,
 					now,
 				);

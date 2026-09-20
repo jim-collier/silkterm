@@ -338,19 +338,6 @@ impl Scroll {
 		self.chase.burst > 0.0 && self.following() && !self.sweep
 	}
 
-	// How far behind the newest output the view sits because the output ease is
-	// holding it there, in lines. Only while the chase owns the motion: a user
-	// gesture aimed at the bottom also reads as following, and there `visual` is
-	// how far the gesture still has to travel rather than a lag, so anything
-	// measuring against the newest line would be measuring the gesture.
-	pub fn output_lag(&self) -> f32 {
-		if self.chasing_output() {
-			self.visual
-		} else {
-			0.0
-		}
-	}
-
 	pub fn advance(&mut self, dt_s: f32) {
 		// one settings() snapshot per call - this runs per pane per frame
 		let cfg = config::settings();
@@ -511,37 +498,6 @@ mod tests {
 		s.nudge_output(3.0, 24.0);
 		s.wheel(-1.0); // the user drives it back down: a sweep, not the chase
 		assert!(!s.chasing_output());
-	}
-
-	// A scroll back to the bottom also reads as following while it eases in, so
-	// the lag has to come off the chase rather than off the position alone.
-	#[test]
-	fn the_output_lag_is_the_chase_only() {
-		let _g = pin();
-		let mut s = Scroll::new();
-		s.set_max(10_000.0);
-		assert_eq!(s.output_lag(), 0.0);
-		s.nudge_output(40.0, 24.0);
-		assert_eq!(s.output_lag(), s.visual_lines());
-		assert!(s.output_lag() > 0.0);
-
-		// the user goes back 500 lines, settles, then jumps to the bottom: the
-		// whole way in is a sweep, and none of it is output the view is behind
-		let mut s = Scroll::new();
-		s.set_max(10_000.0);
-		s.scroll_to(500.0);
-		for _ in 0..2000 {
-			s.advance(0.016);
-		}
-		s.jump_bottom();
-		for _ in 0..200 {
-			s.advance(0.016);
-			assert_eq!(s.output_lag(), 0.0, "at {}", s.visual_lines());
-			if s.visual_lines() == 0.0 {
-				break;
-			}
-		}
-		assert_eq!(s.visual_lines(), 0.0, "the sweep never arrived");
 	}
 
 	#[test]

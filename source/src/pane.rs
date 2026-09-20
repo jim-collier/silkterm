@@ -1261,18 +1261,13 @@ impl Pane {
 		if settings.minimap
 			&& (force_rebuild || !self.text_built || advanced > 0 || self.map.pending())
 		{
-			// Where the map has to stop: the output ease is holding the text
-			// this far behind the newest line, so anything past it is not on
-			// screen yet. `Scroll` owns the rule, since a user gesture aimed at
-			// the bottom reads as following too.
-			let lag = self.scroll.output_lag().round() as usize;
 			if let Some(g) = minimap::geom(
 				self.full,
 				margin,
 				ctx.scale,
 				&settings,
 				history + lines,
-				self.map.shown_lines(history, lines),
+				self.map.live_lines(history, lines),
 				lines,
 				self.scroll.visual_lines(),
 				alt,
@@ -1288,7 +1283,6 @@ impl Pane {
 					lines,
 					cols,
 					advanced,
-					lag,
 					cut,
 					std::time::Instant::now(),
 				);
@@ -2445,14 +2439,14 @@ impl Pane {
 		} else {
 			self.scroll.visual_lines()
 		};
-		let (total, shown) = self.map_span();
+		let (total, live) = self.map_span();
 		minimap::geom(
 			self.full,
 			ctx.margin,
 			ctx.scale,
 			cfg,
 			total,
-			shown,
+			live,
 			rows,
 			pos,
 			self.mode.contains(TermMode::ALT_SCREEN),
@@ -2460,13 +2454,13 @@ impl Pane {
 		)
 	}
 
-	// The whole buffer and the part of it the map draws. The second stops where
-	// the eased text has reached, so under a flood the column does not run on
-	// past the last line on screen.
+	// The whole buffer and the part of it the map draws. The second stops at
+	// the last screen row with output, so the track and the marker end where
+	// the output does rather than at the bottom of a half-empty screen.
 	fn map_span(&self) -> (usize, usize) {
 		let hist = self.scroll.max_lines() as usize;
 		let rows = self.term.lines;
-		(hist + rows, self.map.shown_lines(hist, rows))
+		(hist + rows, self.map.live_lines(hist, rows))
 	}
 
 	// The rasterized buffer and the image composed from it, for the renderer.
@@ -2493,15 +2487,9 @@ impl Pane {
 			return;
 		};
 		let rows = self.term.lines;
-		let (total, shown) = self.map_span();
-		self.scroll.scroll_to(minimap::drag_to(
-			&g,
-			total,
-			shown,
-			rows,
-			y - grab,
-			ctx.scale,
-		));
+		let (total, live) = self.map_span();
+		self.scroll
+			.scroll_to(minimap::drag_to(&g, total, live, rows, y - grab, ctx.scale));
 		self.poke_scrollbar();
 	}
 
@@ -2511,9 +2499,9 @@ impl Pane {
 			return;
 		};
 		let rows = self.term.lines;
-		let (total, shown) = self.map_span();
+		let (total, live) = self.map_span();
 		self.scroll
-			.scroll_to(minimap::center_on(&g, total, shown, rows, y, ctx.scale));
+			.scroll_to(minimap::center_on(&g, total, live, rows, y, ctx.scale));
 		self.poke_scrollbar();
 	}
 
