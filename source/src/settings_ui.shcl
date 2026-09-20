@@ -155,8 +155,9 @@ rows:
 	## ---------------------------------------------------------------------- Silk
 
 	## One setting that governs the two sections below plus rows on the
-	## Background and Cursor tabs. Those rows show the profile's values and take
-	## no input while it is anything but Custom, and their flyover says so.
+	## Background and Cursor tabs. While it is anything but Custom those rows
+	## show the profile's values, and their flyover says so; changing one takes
+	## the profile to Custom with the values that were on screen.
 	Performance:
 		kind: heading
 		label: Performance
@@ -174,7 +175,7 @@ rows:
 		options: "Custom", "Max silk", "High", "Low", "Standard terminal", "Remote (temporary)"
 		indent: 1
 		setting: performance.profile
-		help: "What the look is allowed to cost, from Max silk with every effect at its shipped setting down to Standard terminal with no smooth scrolling at all; Custom uses your own values. Picking one here switches off Choose automatically. Remote (temporary) is the exception: it is Standard terminal for a remote screen and lasts only for this session, so it leaves that switch alone."
+		help: "What the look is allowed to cost, from Max silk with every effect at its shipped setting down to Standard terminal with no smooth scrolling at all; Custom uses your own values. Picking one here switches off Choose automatically, and so does changing any setting a profile governs. Remote (temporary) is the exception: it is Standard terminal for a remote screen and lasts only for this session, so it leaves that switch alone."
 
 	## The label stays short because the widest one on any tab sets the panel's
 	## width, and the flyover carries what it leaves out.
