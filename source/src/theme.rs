@@ -377,6 +377,26 @@ mod tests {
 		}
 	}
 
+	// A flyover tip lifts its box off the menu background, which moves it toward
+	// the menu's own text. The gap is still wide at the shipped colors, but a
+	// theme that overrode the menu pair could land somewhere the lift makes
+	// unreadable, and nothing repaints chrome at run time.
+	#[test]
+	fn tip_text_clears_the_floor_on_its_own_box() {
+		let floor = crate::config::Settings::default().text_min_contrast;
+		for (name, t) in THEMES {
+			for (mode, pal) in [("dark", t.dark), ("light", t.light)] {
+				let bg = crate::config::tip_bg_of(pal.menu_bg);
+				let fg = crate::config::tip_fg_of(pal.menu_fg);
+				assert_eq!(
+					crate::palette::readable(fg, bg, floor),
+					fg,
+					"{name} {mode}: a tip's text would be repainted on its own box"
+				);
+			}
+		}
+	}
+
 	// The block cursor is a plate at CURSOR_ALPHA under the glyph, and the glyph
 	// keeps its own color. So the plate is a second background the text has to
 	// clear the floor on, and a cursor at the fg's own brightness fails it. The

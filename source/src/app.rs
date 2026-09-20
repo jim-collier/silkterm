@@ -5029,24 +5029,28 @@ impl State {
 						..Default::default()
 					});
 				}
-				for (box_rect, _) in tip_layout
+				// Flyover help has its own fill, a warmed lift off the menu color, so a
+				// tip does not read as more of the chrome it hangs off. The banner is
+				// a modal notice rather than a tip, so it keeps the menu's.
+				let boxes = tip_layout
 					.iter()
 					.chain(menu_tip.iter())
-					.chain(bench_banner.iter())
-				{
+					.map(|(rect, _)| (rect, config::tip_border(), config::tip_bg()))
+					.chain(
+						bench_banner
+							.iter()
+							.map(|(rect, _)| (rect, config::menu_border(), config::menu_bg())),
+					);
+				for (box_rect, edge, fill) in boxes {
 					instances.push(rect_inst(
 						box_rect.x - border,
 						box_rect.y - border,
 						box_rect.w + 2.0 * border,
 						box_rect.h + 2.0 * border,
-						config::menu_border(),
+						edge,
 					));
 					instances.push(rect_inst(
-						box_rect.x,
-						box_rect.y,
-						box_rect.w,
-						box_rect.h,
-						config::menu_bg(),
+						box_rect.x, box_rect.y, box_rect.w, box_rect.h, fill,
 					));
 				}
 				(start, instances.len() as u32)
@@ -5490,11 +5494,13 @@ impl State {
 				let mut attrs = crate::text::ui_attrs();
 				let fg = config::menu_fg();
 				attrs.color_opt = Some(GColor::rgb(fg[0], fg[1], fg[2]));
+				let tip_fg = config::tip_fg();
+				let tip_col = Some(GColor::rgb(tip_fg[0], tip_fg[1], tip_fg[2]));
 				// The tip alone shapes in the terminal font: its lines are a table
 				// padded with spaces, which no proportional face can align.
 				if let Some((box_rect, placed)) = &tip_layout {
 					let mut tip_attrs = crate::text::mono_attrs();
-					tip_attrs.color_opt = attrs.color_opt;
+					tip_attrs.color_opt = tip_col;
 					let line_h = self.text.cell_h;
 					for (left, top, line) in placed {
 						let mut buf = self.text.new_buffer(box_rect.w, line_h);
@@ -5510,8 +5516,19 @@ impl State {
 					}
 				}
 				// a menu row's tip and the benchmark banner shape in the interface
-				// font, like the rows and the chrome they sit among
-				for (box_rect, placed) in menu_tip.iter().chain(bench_banner.iter()) {
+				// font, like the rows and the chrome they sit among. The tip takes the
+				// tip's text color with its box; the banner stays with the menu.
+				let ui_lines = menu_tip
+					.iter()
+					.map(|(rect, placed)| (rect, placed, tip_col))
+					.chain(
+						bench_banner
+							.iter()
+							.map(|(rect, placed)| (rect, placed, attrs.color_opt)),
+					);
+				for (box_rect, placed, color) in ui_lines {
+					let mut attrs = attrs.clone();
+					attrs.color_opt = color;
 					for (left, top, line) in placed {
 						let mut buf = self.text.new_ui_buffer(box_rect.w, self.text.ui_line_h);
 						buf.set_text(

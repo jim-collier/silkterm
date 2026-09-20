@@ -101,6 +101,7 @@ There are four of them: a Settings row, a menu item, a link or button in the Abo
 - Only controls whose label does not already say what they do get a tip. The test is the tip itself: if it restates the label in other words, delete it and fix the label. A dialog of rendering settings will legitimately carry one on most of its rows, because a name cannot say what a falloff curve or an easing time does to the picture.
 - A tip that explains a control is prose: one to three complete sentences, each ending in a period. Two is usually enough, and a third has to answer the obvious follow-on question rather than pad.
 - The tab strip's tip is the exception, and it is not prose at all. It reports facts about a tab as an aligned `Key: value` table, in the terminal font, because spaces align nothing in a proportional one.
+- A tip's box stands off whatever it hangs from. In the main window that is a warmed lift off the menu color, since the shipped menu background is the inactive tab's own; in the dialogs it is the button shade against the panel. None of it is separately editable: the tip follows the menu or the panel color it is derived from.
 - Text wraps to the panel, so a longer sentence or a larger interface font cannot push it off an edge.
 - Placement depends on what is being described. A tip for a row goes under the control and flips above it near the bottom edge. A tip for a menu row goes beside the popup, because a box under the row would cover the rows being chosen between.
 - A tip never carries an action, a link, or anything the pointer has to reach.
