@@ -862,6 +862,16 @@ The window title is now assembled in one place, and always starts with the appli
 
 - A `--title` given on the command line is the whole answer, verbatim. It is an explicit request for exactly that string. The one thing it cannot drop is the rights below.
 
+Which of the three parts a tab names is now the user's to choose, and so is whether the window title falls back to the tab at all (2026-09-20). Four switches on the Window tab, all on as shipped.
+
+- A part that is switched off is dropped before the ladder of shortenings is built, not cut out of the finished label. A tab with the directory off therefore has no path rung to give up, and the rungs it does have are measured against what will really be drawn.
+
+- Switching all three off leaves the tab naming its shell. A tab with no text cannot be told from the one beside it, so there is a floor under this and the shell's name is it.
+
+- The tab's flyover still names all three whatever the switches say. That is the point of turning one off: the text is out of the strip, not out of reach.
+
+- Turning the window title's switch off drops both of the tab's answers, the name typed on it and the text it works out for itself, since both are the tab talking. A title the running program asked for still comes through, and a `--title` is untouched.
+
 ### A terminal running with administrator or root rights says so (2026-09-09)
 
 The window title starts with "Administrator: " on Windows and "Root: " elsewhere. Windows already spells its own elevated console title bars that way, so that word is kept rather than invented.

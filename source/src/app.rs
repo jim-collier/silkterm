@@ -2669,6 +2669,11 @@ impl State {
 			cwd.as_deref(),
 			home.as_deref(),
 			crate::tabtitle::Style::native(),
+			crate::tabtitle::Parts {
+				shell: settings.tab_shows_shell,
+				program: settings.tab_shows_program,
+				directory: settings.tab_shows_directory,
+			},
 		)
 	}
 
@@ -3069,6 +3074,7 @@ impl State {
 			typed.as_deref(),
 			program.as_deref(),
 			launched.as_deref(),
+			config::settings().title_shows_tab,
 			|| self.active_tab_title(),
 		)
 	}

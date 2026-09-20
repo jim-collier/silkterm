@@ -123,14 +123,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
-- 🔘 Tab text (options under "Window" tab):
-	- 🔘 Boolean option to show the shell [default true]
-	- 🔘 Boolean option to show the current or last program [default true]
-	- 🔘 Boolean option to show the path [default true]
-
-- 🔘 Window text (options under "Window" tab):
-	- 🔘 Boolean option to include the current tab title [default true]
-
 - 🔘 The minimap looks MUCH better, but shows aliasing or moire artifacts.
 
 - 🔘 New default for text outline: 1px
@@ -1942,6 +1934,18 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Tab text (options under "Window" tab):
+	- ✅ Boolean option to show the shell [default true]
+	- ✅ Boolean option to show the current or last program [default true]
+	- ✅ Boolean option to show the path [default true]
+	- ✅ Window text: boolean option to include the current tab title [default true]. Done with the three above, since all four are title composition and share a Settings tab.
+	- `Note:` the four settings are `window.tab_shows_shell`, `window.tab_shows_program`, `window.tab_shows_directory` and `window.title_shows_tab`, in a "Tab text" group and a "Window title" group on the Window tab. The label says Directory rather than Path, per the interface style guide.
+	- `Decided:` a part that is off is dropped before the ladder of shortenings is built, so a tab with the directory off has no path rung to give up. Switching all three off leaves the tab naming its shell - a tab with no text cannot be told from the one beside it. The tab's flyover still names all three.
+	- `Decided:` the window title's switch drops the name typed on the tab as well as the text the tab works out, since both are the tab talking. A program's own title still comes through and `--title` is untouched. See design.md.
+	- `Pinned by:` `a_tab_says_only_the_parts_that_are_switched_on` and `a_window_title_can_stop_naming_its_tab`, six mutations between them, all red.
+	- `Note:` seen on the rig at each setting. Shell off gives `/usr/share/doc/`, directory off gives `Dash`, all three off gives `Dash`, and the title switch off leaves the title bar reading `SilkTerm` alone. The dialog rows draw on the Window tab with the panel width unchanged.
+	- Opened: 20260920. Closed: 20260920
 
 - ✅ Tab flyover help text: Make a different color than the tabs. Maybe slightly lighter background and sublty different, complimentary shade, and a different font color. Maybe flyover help needs its own theme colors.
 	- Cause: the shipped menu background is the inactive tab's own bytes, and the tip filled with it. Hanging under the strip, it drew as a tab that had grown downward. A menu row's tip had the same fault against the popup beside it.
