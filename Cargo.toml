@@ -37,6 +37,16 @@ resolver = "3"
 [patch.crates-io]
 alacritty_terminal = { git = "https://github.com/jim-collier/alacritty", branch = "scroll-ledger-0.26.0" }
 
+# x11-clipboard 0.9.3 drops the copied text on ANY SelectionClear, without
+# checking when that clear was generated. One left over from an earlier
+# hand-over arrives after the next copy has already taken the selection back,
+# and wipes the text that copy just stored - so the selection stays ours with
+# nothing behind it, and a program asking to paste gets no reply at all. Our
+# branch keeps the value; it is never served while another program owns the
+# selection, and the next copy overwrites it. The branch is the published
+# 0.9.3 plus that one change and a test for it.
+x11-clipboard = { git = "https://github.com/jim-collier/x11-clipboard", branch = "keep-value-on-clear-0.9.3" }
+
 # Clippy gate (cicd lints stage runs -D warnings). pedantic is on; the allows
 # below are deliberate house style, not suppressed problems.
 [workspace.lints.clippy]

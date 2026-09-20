@@ -3696,8 +3696,7 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 [[package]]
 name = "x11-clipboard"
 version = "0.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "662d74b3d77e396b8e5beb00b9cad6a9eccf40b2ef68cc858784b14c41d535a3"
+source = "git+https://github.com/jim-collier/x11-clipboard?branch=keep-value-on-clear-0.9.3#d2cd11f9eb058da486411971049531f79ee4f897"
 dependencies = [
  "libc",
  "x11rb",

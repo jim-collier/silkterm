@@ -70,6 +70,8 @@ Rationale:
 
 - Do not `git fork alacritty` - its renderer is built to snap to cells and maintainers reject smooth scroll by design. Forking = fighting architecture + merge debt. Crate = clean dependency, build only the renderer.
 
+- Two crates are nonetheless patched, through `[patch.crates-io]` in the workspace manifest, and both follow one rule: a branch under `jim-collier` named for the release it sits on, holding that published release plus our change and a test for it. Naming the release is what lets an older lock keep resolving, and starting from the published source rather than the upstream branch keeps the delta to what has actually been read. `alacritty_terminal` carries the scroll ledger and four smaller fixes; `x11-clipboard` keeps the copied text when a stale `SelectionClear` arrives, which was the defect behind copies that silently stopped working (2026-09-20).
+
 - Renderer: `wgpu` (or `glium` as fallback). Glyph atlas + cell draw.
 
 Rejected alternatives:
