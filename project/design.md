@@ -27,6 +27,7 @@
 	- [Font fallback stack](#font-fallback-stack)
 	- [Hyperlinks](#hyperlinks)
 	- [What a double-click grabs (2026-08-26)](#what-a-double-click-grabs-2026-08-26)
+	- [Selecting past the edge of the screen (2026-09-20)](#selecting-past-the-edge-of-the-screen-2026-09-20)
 	- [Measurements and display scaling](#measurements-and-display-scaling)
 	- [Attention colors and dialog chrome](#attention-colors-and-dialog-chrome)
 	- [Groups and sub-groups in the Settings dialog](#groups-and-sub-groups-in-the-settings-dialog)
@@ -442,6 +443,14 @@ The built-in stack is last for a reason. The generic monospace query below it is
 - Where a path ends is two heuristics, both picked for what they refuse. A space is crossed only when a path separator turns up soon after, so a folder name with spaces stays whole while a path followed by a sentence does not swallow it. And the run stops at a file extension, which is what leaves a `:120:5` line number behind.
 
 - A trailing full stop, comma or bracket comes off the same way it does for a link. The two share the trimming idea but not the code, since a path may hold characters a URL may not.
+
+### Selecting past the edge of the screen (2026-09-20)
+
+- A drag held past the top or bottom of its pane scrolls the view that way and keeps selecting, so a selection can run further than what fits on screen. A pointer outside the pane is pulled to the nearest edge cell rather than ignored, which also means a drag that strays into a neighboring pane still belongs to the one it started in.
+
+- The speed is the larger of two answers: how far past the edge the pointer is, and how long it has been held there. Distance alone is the obvious rule and it is the one that feels right, but a maximized window has its top edge against the top of the screen, so there is nowhere left to push the pointer - that window could only ever creep. The hold reaches the same top speed in two seconds.
+
+- It creeps rather than standing still right at the edge, since picking up one more line is the common case and a drag that starts fast overshoots it. The top speed is capped: a pointer flung off the screen should not cross the whole buffer before the button comes up.
 
 ### Measurements and display scaling
 
