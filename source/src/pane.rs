@@ -819,6 +819,19 @@ fn bar_applies_to(cfg: &config::Settings, alt: bool, max_lines: f32) -> bool {
 	cfg.scrollbar && !alt && max_lines > 0.0
 }
 
+// How far behind the newest output the eased view sits, in whole lines, which
+// is where the minimap has to stop drawing. Only while following the bottom:
+// scrolled back, `visual` is where the view is rather than how far it lags, and
+// trimming there would hide output the user scrolled away from. Free fn so the
+// rule is testable without a live PTY.
+fn map_lag(follow: bool, visual: f32) -> usize {
+	if follow {
+		visual.round().max(0.0) as usize
+	} else {
+		0
+	}
+}
+
 // Thumb length and position for a scroll state. Split out from the pane so the
 // mapping (and its inverse, `bar_pos_to_lines`) can be tested directly.
 //
@@ -1261,13 +1274,14 @@ impl Pane {
 		if settings.minimap
 			&& (force_rebuild || !self.text_built || advanced > 0 || self.map.pending())
 		{
+			let lag = map_lag(follow, self.scroll.visual_lines());
 			if let Some(g) = minimap::geom(
 				self.full,
 				margin,
 				ctx.scale,
 				&settings,
 				history + lines,
-				self.map.live_lines(history, lines),
+				self.map.shown_lines(history, lines),
 				lines,
 				self.scroll.visual_lines(),
 				alt,
@@ -1283,6 +1297,7 @@ impl Pane {
 					lines,
 					cols,
 					advanced,
+					lag,
 					cut,
 					std::time::Instant::now(),
 				);
@@ -2439,14 +2454,14 @@ impl Pane {
 		} else {
 			self.scroll.visual_lines()
 		};
-		let (total, live) = self.map_span();
+		let (total, shown) = self.map_span();
 		minimap::geom(
 			self.full,
 			ctx.margin,
 			ctx.scale,
 			cfg,
 			total,
-			live,
+			shown,
 			rows,
 			pos,
 			self.mode.contains(TermMode::ALT_SCREEN),
@@ -2454,13 +2469,13 @@ impl Pane {
 		)
 	}
 
-	// The whole buffer and the part of it the map draws. The second stops at
-	// the last screen row with output, so the track and the marker end where
-	// the output does rather than at the bottom of a half-empty screen.
+	// The whole buffer and the part of it the map draws. The second stops where
+	// the eased text has reached, so under a flood the column does not run on
+	// past the last line on screen.
 	fn map_span(&self) -> (usize, usize) {
 		let hist = self.scroll.max_lines() as usize;
 		let rows = self.term.lines;
-		(hist + rows, self.map.live_lines(hist, rows))
+		(hist + rows, self.map.shown_lines(hist, rows))
 	}
 
 	// The rasterized buffer and the image composed from it, for the renderer.
@@ -2487,9 +2502,15 @@ impl Pane {
 			return;
 		};
 		let rows = self.term.lines;
-		let (total, live) = self.map_span();
-		self.scroll
-			.scroll_to(minimap::drag_to(&g, total, live, rows, y - grab, ctx.scale));
+		let (total, shown) = self.map_span();
+		self.scroll.scroll_to(minimap::drag_to(
+			&g,
+			total,
+			shown,
+			rows,
+			y - grab,
+			ctx.scale,
+		));
 		self.poke_scrollbar();
 	}
 
@@ -2499,9 +2520,9 @@ impl Pane {
 			return;
 		};
 		let rows = self.term.lines;
-		let (total, live) = self.map_span();
+		let (total, shown) = self.map_span();
 		self.scroll
-			.scroll_to(minimap::center_on(&g, total, live, rows, y, ctx.scale));
+			.scroll_to(minimap::center_on(&g, total, shown, rows, y, ctx.scale));
 		self.poke_scrollbar();
 	}
 
@@ -4579,11 +4600,11 @@ mod tests {
 		bracket_reach, capture_grid_text, capture_start, child_areas, cursor_cycle,
 		cursor_slide_step, distinct_pair, divider_at, equalize_dir_run, fingerprint_frame, fnv_row,
 		fnv_row_skel, glide_to_full, has_ink, layout, ledger_makes_room, ledger_step, link_at,
-		logical_line_bounds, move_is_input, next_capture_poll, output_advance, output_band,
-		pair_inside, paste_payload, prompt_strip, pushed_since, render_char, repainted_edge,
-		resume_delay, same_char_pair, scroll_shift_signed, shift_makes_room, shown_cursor_shape,
-		slide_bands, slide_is_visible, snapshot_rows, static_bands, strip_rows, translate_span,
-		vanished_range, weld_region_clip,
+		logical_line_bounds, map_lag, move_is_input, next_capture_poll, output_advance,
+		output_band, pair_inside, paste_payload, prompt_strip, pushed_since, render_char,
+		repainted_edge, resume_delay, same_char_pair, scroll_shift_signed, shift_makes_room,
+		shown_cursor_shape, slide_bands, slide_is_visible, snapshot_rows, static_bands, strip_rows,
+		translate_span, vanished_range, weld_region_clip,
 	};
 	use crate::config;
 	use alacritty_terminal::event::{Event, EventListener};
@@ -7052,5 +7073,16 @@ mod tests {
 				}
 			});
 		}
+	}
+
+	// The map trims to the eased view only while it is following the bottom.
+	// Scrolled back, `visual` is the scroll position, and trimming by it would
+	// cut output off the end of the column for no reason.
+	#[test]
+	fn a_scrolled_back_view_does_not_trim_the_map() {
+		assert_eq!(map_lag(true, 0.0), 0);
+		assert_eq!(map_lag(true, 11.4), 11);
+		assert_eq!(map_lag(true, 11.6), 12);
+		assert_eq!(map_lag(false, 400.0), 0);
 	}
 }
