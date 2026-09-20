@@ -108,10 +108,18 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
-- 🔘 The minimap looks MUCH better, but shows aliasing or moire artifacts.
+- 🛠️ The minimap looks MUCH better, but shows aliasing or moire artifacts.
+	- `Measured:` a page of identical lines composes to a column that is not evenly bright. Per pixel row the ink swings 80 percent of the mean at 1.5 px per line, nothing at exactly 1.0, about 20 percent at 0.9 and 0.8, and nothing again below 0.6.
+	- `Cause:` the gap drawn between lines. At those pitches it beats against the pixel grid. Near 1.0 px the beat is slow - one cycle every 10 to 20 px - so it reads as broad bands rather than as texture, which is the moire. Below 0.6 px the gap is switched off and the column is flat.
+	- `Note:` in a 900 px column that band is roughly 600 to 1500 lines of buffer. A default 10,000-line scrollback is well under it and shows nothing.
+	- `Note:` the horizontal direction was looked at too and the fixture could not answer it. A page of identical lines stacks its characters into perfect vertical stripes whatever the code does, and random text is too noisy to judge.
+	- Waiting on which artifact this is: the broad horizontal banding above, something in the horizontal direction, or the fine line pattern at a shallow buffer, which is deliberate.
 	- Opened: 20260920-103552 by JC.
 
-- 🔘 New default for text outline: 1px
+- ✋ New default for text outline: 1px
+	- `Note:` the shipped default has been 1.0 since 2026-08-04, and the template's commented line says so. So something else is showing 2.
+	- `Note:` the two candidates are a config that already carried an explicit `outline: 2.0`, which is kept on purpose since only a commented default is refreshed, and the Low performance profile, which sets 2.0 for the frames it buys back.
+	- Waiting on which of those was seen.
 	- Opened: 20260919-155433 by JC.
 
 - 🔘 Extension to the idea of "Silk: Allow 'Profile' to be selected even when 'Choose automatically' is enabled:
