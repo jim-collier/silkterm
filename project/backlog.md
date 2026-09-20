@@ -71,11 +71,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
-- 🔘 Minimap: the marker sits above the part of the map the screen is showing, and a click in the column lands off center.
-	- Reproduced: at a prompt with 100 lines of scrollback in a 900 px column, scrolled halfway back, the marker is drawn about 24 px above the lines it stands for on a map 151 px tall. With the default 10,000-line scrollback the gap is about 13 px, ten times the marker's own height. A click halfway down the column puts the clicked line at the top of the new view rather than its middle.
-	- Cause: the marker's travel is measured against the whole buffer while the map draws only as far as the last line with output, so the marker and the image move at different rates. Both were exact before the marker was reworked to read back the position it was drawn at.
-	- Opened: 20260919-164554
-
 - ✋ A save from Settings moves the lines of a commented-out section under the setting above it.
 	- `# rotate:` with `# enabled: true` indented under it, placed after another setting, comes back with `# enabled: true` above `# rotate:` and indented under that setting. Uncommented later, the values read as part of the wrong setting and do nothing.
 	- This is how shcl 2.0.0 writes a file, and shcl's current code does the same.
@@ -264,6 +259,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ Minimap: the marker sits above the part of the map the screen is showing, and a click in the column lands off center.
+	- `Reproduced:` at a prompt with 100 lines of scrollback in a 900 px column, scrolled halfway back, the marker is drawn about 24 px above the lines it stands for on a map 151 px tall. With the default 10,000-line scrollback the gap is about 13 px. A click halfway down the column puts the clicked line at the top of the new view rather than its middle.
+	- `Cause:` the marker's travel was measured against the whole buffer while the map draws only as far as the eased text has reached, so the two moved at different rates. The reported numbers came from an earlier version of that trim, which stopped at the last line with output; the trim it stops at now is the output lag, so the drift shows during and after a flood and while a view parked in the scrollback holds the lag frozen. At rest the two counts are equal and the old mapping was already exact, which is why this never showed at an idle prompt.
+	- `Fixed:` the marker's height and offset are worked out at the map's own pitch, in `handle_span`. Where the height floor makes it taller than the rows it stands for, it grows both ways from their middle. A click maps back through the same pitch, and the bottom of the map means the newest output rather than the last line the trim drew.
+	- `Fixed:` a drag works out from the pointer and the position it grabbed at, not from the marker's drawn top. With a floor on the height that top is a rounded reading of the position, so reading it back moved the view on a press that never moved - which is the fault the old mapping was shaped around.
+	- `Measured:` on the rig at 400 lines in a 40-row window, the map drew 600 px for 400 lines and the marker 60 px for 40 rows, both exactly the 1.5 px cap. A press with no movement left the marker where it was, and a 100 px drag moved it 101 px.
+	- `Pinned by:` `the_marker_sits_over_the_lines_it_stands_for` at three depths, plus the two existing mapping tests, which now read the grab back through the new drag. Four mutations red.
+	- Opened: 20260919-164554. Closed: 20260920
 
 - ✅ A clipboard write can leave SilkTerm owning the selection with nothing behind it.
 	- x11-clipboard drops the stored text whenever another program takes the selection, without checking when that clear was generated. One left over from an earlier hand-over, arriving after the next copy, wipes the text that copy just stored.

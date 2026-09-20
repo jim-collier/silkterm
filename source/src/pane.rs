@@ -1087,9 +1087,10 @@ pub struct Pane {
 	pub bar_drag: Option<f32>,
 	pub bar_animating: bool,
 	// Minimap column: the rasterized buffer and the image composed from it, plus
-	// the grab offset inside the viewport marker while it is being dragged.
+	// where a drag of the viewport marker started - the pointer y and the scroll
+	// position the view sat at then.
 	map: Minimap,
-	pub map_drag: Option<f32>,
+	pub map_drag: Option<(f32, f32)>,
 	// Hyperlink hover: the pointer in window px (None = not over this pane), the
 	// link it hit, and a request to re-scan. The scan needs the grid, so it
 	// runs in build() where the term lock is already held - on the frame the
@@ -2510,10 +2511,12 @@ impl Pane {
 		self.map.wake()
 	}
 
-	// Start a marker drag, remembering where inside it the grab was.
+	// Start a marker drag, remembering the pointer and what the view sat at.
+	// Working from there rather than from the marker's drawn top is what keeps
+	// a press with no movement from scrolling anything.
 	pub fn map_grab(&mut self, y: f32, ctx: &TextCtx, cfg: &config::Settings) {
-		if let Some(handle) = self.minimap(ctx, cfg).and_then(|g| g.handle) {
-			self.map_drag = Some(y - handle.y);
+		if self.minimap(ctx, cfg).and_then(|g| g.handle).is_some() {
+			self.map_drag = Some((y, self.scroll.visual_lines()));
 			self.poke_scrollbar();
 		}
 	}
@@ -2525,14 +2528,8 @@ impl Pane {
 		};
 		let rows = self.term.lines;
 		let (total, shown) = self.map_span();
-		self.scroll.scroll_to(minimap::drag_to(
-			&g,
-			total,
-			shown,
-			rows,
-			y - grab,
-			ctx.scale,
-		));
+		self.scroll
+			.scroll_to(minimap::drag_to(&g, total, shown, rows, grab, y, ctx.scale));
 		self.poke_scrollbar();
 	}
 

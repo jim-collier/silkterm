@@ -271,7 +271,9 @@ The mapping, which is the load-bearing decision:
 
 - With a deep buffer, lines go sub-pixel and blend down, so the map compresses instead of scrolling. At the default 10,000-line scrollback a line is a fraction of a pixel; colored regions still read as bands, which is most of the point.
 
-- The marker carries a floor on its height so a deep buffer still leaves something to grab. The thumb takes the same span, never its own.
+- The marker is measured at the map's own pitch, over the lines the picture draws rather than over the whole buffer. Anything else puts it above or below the text it stands for whenever the two differ, which is every moment the trim above is holding the map short.
+
+- The marker carries a floor on its height so a deep buffer still leaves something to grab. The thumb takes the same span, never its own. Where the floor makes the marker taller than the rows it stands for, it grows both ways from their middle, so it still reads as pointing at them.
 
 What a line looks like:
 
@@ -291,9 +293,9 @@ What a line looks like:
 
 Interaction:
 
-- The marker drags like a thumb and rides the scroll target, so it tracks the pointer exactly.
+- The marker drags like a thumb and rides the scroll target, so it tracks the pointer exactly. A drag works out from where it grabbed rather than from where the marker was last drawn: the height floor means the drawn top is a rounded reading of the position, and reading it back would move the view on a press that never moved.
 
-- A click elsewhere in the column centers the view there, eased the same way a scrollbar drag settles.
+- A click elsewhere in the column centers the view there, eased the same way a scrollbar drag settles. The bottom of the map stands for the lines the trim is holding back as well as the last one it drew, so a click there means the newest output.
 
 - The wheel over the column scrolls the buffer, same as over the text - including under an app that is tracking the mouse, since there is no cell under the pointer to report.
 
