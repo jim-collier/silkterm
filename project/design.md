@@ -581,6 +581,10 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - A menu row gets a tip only when its label does not already say what it does. Copy and New tab explain themselves; Paste Selection, Read-only and Bare window do not. A tip on every row is noise a reader learns to skip past, which costs the ones that matter.
 
+- A tip's box is its own color, derived from the chrome it hangs off rather than taken from it (2026-09-20). The shipped menu background is the inactive tab's own bytes, so a tab tip filled with it drew as a tab that had grown downward, and a menu row's tip had the same fault against the popup beside it. Both now fill with the menu background lifted by the step the strip puts between an inactive and an active tab, then warmed, since every tab color leans faintly blue. The border and the text come off the same two colors. The dialogs already did this with the button shade against their panel.
+	- Not two more colors on the Themes tab, which is what the request suggested. Twelve colors are editable and each has one job, and the chrome already answers this kind of question with derived shades - menu hover, border and separator are all shades of the menu color, so a custom menu color stays coherent. A tip that could be set apart from its own menu would be one more pair to keep readable.
+	- The benchmark banner draws in the same overlay pass and keeps the menu colors. It is a modal notice over a dimmed window, not flyover help.
+
 ### Render Loop Sketch
 
 - Frame: advance lerp -> cross-boundary check -> sync crate offset -> translate render -> draw cells (+overscan rows).

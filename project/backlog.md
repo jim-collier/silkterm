@@ -144,8 +144,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 			- Change 'Profile' to "Custom".
 	- Opened: 20260919-155433 by JC.
 
-- 🔘 Tab flyover help text: Make a different color than the tabs. Maybe slightly lighter background and sublty different, complimentary shade, and a different font color. Maybe flyover help needs its own theme colors.
-
 - 🔘 Themes:
 	- 🔘 A fourth built-in theme. Pastel is the idea: a pleasing light pastel on a dark gray background carrying a subtle tint of the complementary color. Solarized is the other candidate.
 	- Opened: 20260628-083740
@@ -1920,6 +1918,16 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Tab flyover help text: Make a different color than the tabs. Maybe slightly lighter background and sublty different, complimentary shade, and a different font color. Maybe flyover help needs its own theme colors.
+	- Cause: the shipped menu background is the inactive tab's own bytes, and the tip filled with it. Hanging under the strip, it drew as a tab that had grown downward. A menu row's tip had the same fault against the popup beside it.
+	- Fixed: both main-window tips now fill with the menu background lifted by the step the strip puts between an inactive and an active tab, then warmed, since every tab color leans faintly blue. The border and the text come off the same two colors. Shipped, that is a box at `0x605855` with a `0x827a77` edge and `0xf5f0ed` text.
+	- Decided: derived shades, not two more colors on the Themes tab. Twelve colors are editable and each has one job, and the chrome already answers this with shades - hover, border and separator are all taken off the menu color, so a custom menu color stays coherent. The reasoning is in design.md.
+	- Left alone: the Settings and About tips, which already stand off their panel. The benchmark banner, which draws in the same pass but is a modal notice rather than flyover help.
+	- Pinned by: `a_tip_sits_off_every_tab_color`, `a_tip_is_not_painted_in_the_menu_colors`, `a_tip_follows_a_custom_menu_color_either_way` and `tip_text_clears_the_floor_on_its_own_box`. Each watched failing with its own rule taken out.
+	- Note: what the renderer hands to the quads cannot be reached by a test, since nothing constructs a window. Checked on screen instead: the box, its border and its glyphs read back the three colors, against an active tab above them.
+	- Opened: n/a
+	- Closed: 20260920-083000
 
 - ✅ Minimap: stop the map where the eased text has reached, rather than at the live bottom of the buffer.
 	- Under heavy output the text eases in behind the newest line, so the column drew lines that were not on screen yet.
