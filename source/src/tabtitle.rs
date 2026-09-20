@@ -339,6 +339,26 @@ fn is_absolute(path: &str) -> bool {
 		|| matches!(path.as_bytes(), [drive, b':', b'\\' | b'/', ..] if drive.is_ascii_alphabetic())
 }
 
+/// What a program's own title is worth showing, if anything: a console's own
+/// decoration taken off, and a title that only names the program dropped. The
+/// window title and the tab strip both read it here, so they cannot end up
+/// disagreeing about what a program said.
+///
+/// `launched` is the program the pane was started with, which is how a console
+/// marker written in another language is recognized.
+pub fn program_title<'a>(
+	rights: Rights,
+	title: &'a str,
+	launched: Option<&str>,
+) -> Option<&'a str> {
+	let marker = rights.console_marker();
+	let title = match (marker, launched) {
+		(Some(_), Some(launched)) => foreign_marker_off(title, launched),
+		_ => title,
+	};
+	program_says(title, marker)
+}
+
 /// What the window title says after the application name. A title typed on the
 /// tab wins; blanking that one on purpose lets the running program's own title
 /// through, and with neither the tab's own label stands in.
@@ -356,14 +376,7 @@ pub fn window_suffix(
 	show_tab: bool,
 	tab: impl FnOnce() -> String,
 ) -> Option<String> {
-	let marker = rights.console_marker();
-	let program = program.and_then(|title| {
-		let title = match (marker, launched) {
-			(Some(_), Some(launched)) => foreign_marker_off(title, launched),
-			_ => title,
-		};
-		program_says(title, marker)
-	});
+	let program = program.and_then(|title| program_title(rights, title, launched));
 	// With the tab switched off as a source, both of its answers go: the name
 	// typed on it and the text it works out for itself. A program's own title
 	// still comes through, and a `--title` never reached here.
@@ -417,11 +430,15 @@ pub fn with_note(title: String, note: Option<&str>) -> String {
 	}
 }
 
-/// Which of the three parts a tab's text is allowed to name. All three on is
-/// the shipped answer; a tab whose parts are all off falls back to the shell,
-/// since a tab with no text cannot be told from the one beside it.
+/// Which sources a tab's text is allowed to name. All of them on is the shipped
+/// answer; a tab with every source off falls back to the shell, since a tab with
+/// no text cannot be told from the one beside it.
+///
+/// `title` is the title the running program asked for, which is not a part of
+/// the tab's own text but a replacement for it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Parts {
+	pub title: bool,
 	pub shell: bool,
 	pub program: bool,
 	pub directory: bool,
@@ -430,6 +447,7 @@ pub struct Parts {
 impl Default for Parts {
 	fn default() -> Self {
 		Self {
+			title: true,
 			shell: true,
 			program: true,
 			directory: true,
@@ -437,11 +455,16 @@ impl Default for Parts {
 	}
 }
 
-/// The tab's text, longest form first. The caller measures each against the
-/// space it has and takes the first that fits; the last rung is the least that
-/// still names the pane, so there is always something to draw.
+/// The tab's text, most preferred form first. The caller measures each against
+/// the space it has and takes the first that fits; the last rung is the least
+/// that still names the pane, so there is always something to draw.
+///
+/// `program` is the title the running program asked for, already filtered by
+/// `program_title`. It heads the list when there is one. Everything under it is
+/// what the tab works out for itself, and that part does shorten rung by rung.
 pub fn label_forms(
 	friendly: &str,
+	program: Option<&str>,
 	task: Option<Task>,
 	cwd: Option<&str>,
 	home: Option<&str>,
@@ -457,6 +480,12 @@ pub fn label_forms(
 	let friendly = plain(friendly);
 	// A part the user turned off is dropped here rather than at each rung, so
 	// the ladder below is built out of what will actually be drawn.
+	let program = parts
+		.title
+		.then_some(program)
+		.flatten()
+		.map(plain)
+		.filter(|title| !title.is_empty());
 	let task = parts.program.then_some(task).flatten();
 	let cwd = parts.directory.then_some(cwd).flatten();
 	let (running, task_name) = match task {
@@ -519,6 +548,16 @@ pub fn label_forms(
 		// Nothing left to say: either the pane offered nothing, or every part is
 		// switched off. The shell's name is the floor either way.
 		forms.push(friendly.trim().to_string());
+	}
+	// A title the program asked for goes on top, outranked only by a name typed
+	// on the tab - the order the window title already uses. It sits above the
+	// ladder rather than inside it: its length says nothing about how much the
+	// tab can give up, and a tab too narrow for it should still fall through the
+	// forms the tab works out for itself.
+	if let Some(title) = program {
+		if forms.first() != Some(&title) {
+			forms.insert(0, title);
+		}
 	}
 	forms
 }
@@ -908,8 +947,8 @@ pub fn elapsed(secs: u64) -> String {
 mod tests {
 	use super::{
 		Demand, Parts, Rights, Style, Task, clamp_page, elapsed, label_forms, page_for, path_forms,
-		plain, program_says, shell_forms, slot_at_x, slot_x, tabs_that_fit, task_forms, tip_lines,
-		tip_value, widths, window_suffix, window_title, with_note,
+		plain, program_says, program_title, shell_forms, slot_at_x, slot_x, tabs_that_fit,
+		task_forms, tip_lines, tip_value, widths, window_suffix, window_title, with_note,
 	};
 
 	// Most of what follows is the same question either way, so it is asked with
@@ -1137,6 +1176,7 @@ mod tests {
 	fn a_tab_says_the_shell_the_task_and_the_path_and_gives_them_up_in_order() {
 		let forms = label_forms(
 			"PowerShell 7",
+			None,
 			Some(Task::Running("cargo")),
 			Some(r"C:\Users\jim\dev"),
 			None,
@@ -1164,6 +1204,7 @@ mod tests {
 		let idle = label_forms(
 			"PowerShell 7",
 			None,
+			None,
 			Some(r"C:\Users\jim\dev"),
 			None,
 			Style::Windows,
@@ -1173,7 +1214,15 @@ mod tests {
 		assert_eq!(idle.last().map(String::as_str), Some("P7"));
 		// Nothing to say about a directory either: the shell's name stands alone.
 		assert_eq!(
-			label_forms("bash", None, None, None, Style::Posix, Parts::default()),
+			label_forms(
+				"bash",
+				None,
+				None,
+				None,
+				None,
+				Style::Posix,
+				Parts::default()
+			),
 			["bash", "b"]
 		);
 	}
@@ -1185,6 +1234,7 @@ mod tests {
 		let label = |parts: Parts| {
 			label_forms(
 				"PowerShell 7",
+				None,
 				Some(Task::Running("cargo")),
 				Some(r"C:\Users\jim\dev"),
 				None,
@@ -1219,6 +1269,7 @@ mod tests {
 		// Every part off still names the shell. A tab with no text at all cannot
 		// be told from the one beside it.
 		let none = Parts {
+			title: false,
 			shell: false,
 			program: false,
 			directory: false,
@@ -1228,6 +1279,7 @@ mod tests {
 		// label - with the directory off there is no path rung to give up
 		let kept = label_forms(
 			"PowerShell 7",
+			None,
 			Some(Task::Running("cargo")),
 			Some(r"C:\Users\jim\dev"),
 			None,
@@ -1241,6 +1293,79 @@ mod tests {
 			kept.iter().all(|form| !form.contains('\\')),
 			"a rung still names the directory: {kept:?}"
 		);
+	}
+
+	// A program that sets its own title names the tab, and the tab's own ladder
+	// is still under it for when there is no room.
+	#[test]
+	fn a_program_title_heads_the_tabs_forms() {
+		let forms = |parts| {
+			label_forms(
+				"PowerShell 7",
+				Some("build - release"),
+				Some(Task::Running("cargo")),
+				Some(r"C:\Users\jim\dev"),
+				None,
+				Style::Windows,
+				parts,
+			)
+		};
+		let on = forms(Parts::default());
+		assert_eq!(on[0], "build - release");
+		assert_eq!(
+			on[1], r"PowerShell 7 [cargo] C:\Users\jim\dev\",
+			"the tab's own longest form is still there: {on:?}"
+		);
+		assert_eq!(
+			on.last().map(String::as_str),
+			Some("P7"),
+			"and the floor is still the shell: {on:?}"
+		);
+
+		// Switched off, the tab says only what it worked out for itself.
+		let off = forms(Parts {
+			title: false,
+			..Parts::default()
+		});
+		assert_eq!(off[0], r"PowerShell 7 [cargo] C:\Users\jim\dev\");
+		assert!(
+			off.iter().all(|form| form != "build - release"),
+			"the title got through with its switch off: {off:?}"
+		);
+	}
+
+	// The tab reads a program's title through the same filter the window title
+	// does, so a Windows console naming the program it started says nothing on
+	// either of them.
+	#[test]
+	fn a_tab_passes_over_a_title_that_only_names_a_program() {
+		let rights = Rights::default();
+		let console = r"C:\Windows\System32\cmd.exe";
+		assert_eq!(program_title(rights, console, None), None);
+		let forms = label_forms(
+			"Windows Cmd",
+			program_title(rights, console, None),
+			None,
+			Some(r"C:\Users\jim"),
+			None,
+			Style::Windows,
+			Parts::default(),
+		);
+		assert_eq!(forms[0], r"Windows Cmd - C:\Users\jim\");
+
+		// One that says something does get through, control characters off it.
+		let said = program_title(rights, "vim: \u{1b}[31mnotes.md", None);
+		assert_eq!(said, Some("vim: \u{1b}[31mnotes.md"));
+		let forms = label_forms(
+			"Windows Cmd",
+			said,
+			None,
+			Some(r"C:\Users\jim"),
+			None,
+			Style::Windows,
+			Parts::default(),
+		);
+		assert_eq!(forms[0], "vim: [31mnotes.md");
 	}
 
 	// The window title stops naming the tab, and that means both of the tab's
@@ -1294,6 +1419,7 @@ mod tests {
 	fn the_forms_of_a_label_only_ever_get_shorter() {
 		let forms = label_forms(
 			"Bash (MSYS2's full)",
+			None,
 			Some(Task::Last("docker-compose")),
 			Some("/home/jim/data/prs/dev/silkterm"),
 			Some("/home/jim"),
@@ -1997,6 +2123,7 @@ mod tests {
 	fn a_program_name_or_a_directory_cannot_put_control_characters_in_a_label() {
 		let forms = label_forms(
 			"Bash",
+			None,
 			Some(Task::Running("py\u{1b}[2Jx")),
 			Some("/tmp/a\u{1b}[31mb"),
 			Some("/home/u"),
@@ -2090,6 +2217,7 @@ mod tests {
 			// directory all reach a label without passing a title parser.
 			for form in label_forms(
 				&raw,
+				Some(&raw),
 				Some(Task::Running(&raw)),
 				Some(&raw),
 				Some("/home/u"),

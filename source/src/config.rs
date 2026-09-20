@@ -393,7 +393,8 @@ pub struct Settings {
 	pub rows: usize,
 	pub remember_size: bool, // launch at the last window size instead of columns/rows
 	pub hide_single_tab: bool, // hide the tab bar while only one tab is open
-	pub tab_shows_shell: bool, // parts a tab's own text is made of (tabtitle::Parts)
+	pub tab_shows_title: bool, // let a program's own title name the tab (tabtitle::Parts)
+	pub tab_shows_shell: bool, // parts a tab's own text is made of
 	pub tab_shows_program: bool,
 	pub tab_shows_directory: bool,
 	pub title_shows_tab: bool, // let the window title fall back to what the tab says
@@ -561,6 +562,7 @@ impl Default for Settings {
 			hide_single_tab: false,
 			tab_shows_shell: true,
 			tab_shows_program: true,
+			tab_shows_title: true,
 			tab_shows_directory: true,
 			title_shows_tab: true,
 			idle_release: false,
@@ -1796,6 +1798,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.tab_shows_program != orig.tab_shows_program {
 		doc.put_bool("window.tab_shows_program", s.tab_shows_program);
 	}
+	if s.tab_shows_title != orig.tab_shows_title {
+		doc.put_bool("window.tab_shows_title", s.tab_shows_title);
+	}
 	if s.tab_shows_directory != orig.tab_shows_directory {
 		doc.put_bool("window.tab_shows_directory", s.tab_shows_directory);
 	}
@@ -2014,6 +2019,7 @@ struct RawConfig {
 	hide_single_tab: Option<bool>,
 	tab_shows_shell: Option<bool>,
 	tab_shows_program: Option<bool>,
+	tab_shows_title: Option<bool>,
 	tab_shows_directory: Option<bool>,
 	title_shows_tab: Option<bool>,
 	idle_release: Option<bool>,
@@ -2348,6 +2354,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		hide_single_tab: r.b("window.hide_single_tab"),
 		tab_shows_shell: r.b("window.tab_shows_shell"),
 		tab_shows_program: r.b("window.tab_shows_program"),
+		tab_shows_title: r.b("window.tab_shows_title"),
 		tab_shows_directory: r.b("window.tab_shows_directory"),
 		title_shows_tab: r.b("window.title_shows_tab"),
 		idle_release: r.b("window.idle_release"),
@@ -2844,6 +2851,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		hide_single_tab: raw.hide_single_tab.unwrap_or(d.hide_single_tab),
 		tab_shows_shell: raw.tab_shows_shell.unwrap_or(d.tab_shows_shell),
 		tab_shows_program: raw.tab_shows_program.unwrap_or(d.tab_shows_program),
+		tab_shows_title: raw.tab_shows_title.unwrap_or(d.tab_shows_title),
 		tab_shows_directory: raw.tab_shows_directory.unwrap_or(d.tab_shows_directory),
 		title_shows_tab: raw.title_shows_tab.unwrap_or(d.title_shows_tab),
 		idle_release: raw.idle_release.unwrap_or(d.idle_release),
@@ -5502,10 +5510,14 @@ window:
 
 	# hide_single_tab: false  ## Default
 
-	## What a tab's own text is made of, and whether the window title falls
-	## back to it. Turning all three off leaves a tab naming its shell, since
-	## a tab with no text cannot be told from the one beside it. The tab's
-	## flyover always names all three, whatever these say.
+	## What a tab says, and whether the window title falls back to it. The
+	## first line lets a title the running program asked for name the tab,
+	## outranked only by a name typed on the tab itself. The three after it
+	## are what the tab works out on its own; turning them all off leaves a
+	## tab naming its shell, since a tab with no text cannot be told from the
+	## one beside it. The tab's flyover always names the lot, whatever these
+	## say.
+	# tab_shows_title: true  ## Default
 	# tab_shows_shell: true  ## Default
 	# tab_shows_program: true  ## Default
 	# tab_shows_directory: true  ## Default

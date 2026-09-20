@@ -2664,6 +2664,14 @@ impl State {
 		if let Some(title) = &pm.title_override {
 			return vec![title.clone()];
 		}
+		// The focused pane's own title, plus the program the pane was started
+		// with - that is what tells a console's own decoration apart from text
+		// somebody chose.
+		let focused_id = pm.focused;
+		let (said, launched) = pm.panes.get(&focused_id).map_or_else(
+			|| (String::new(), None),
+			|pane| (pane.title.clone(), pane.launched().map(str::to_string)),
+		);
 		let (command, task, cwd) = pm.tab_facts();
 		let settings = config::settings();
 		let command_line = tab_command_line(command.as_deref());
@@ -2677,11 +2685,13 @@ impl State {
 		};
 		crate::tabtitle::label_forms(
 			&friendly,
+			crate::tabtitle::program_title(config::rights(), &said, launched.as_deref()),
 			task,
 			cwd.as_deref(),
 			home.as_deref(),
 			crate::tabtitle::Style::native(),
 			crate::tabtitle::Parts {
+				title: settings.tab_shows_title,
 				shell: settings.tab_shows_shell,
 				program: settings.tab_shows_program,
 				directory: settings.tab_shows_directory,
@@ -2977,6 +2987,11 @@ impl State {
 		};
 		let created = pm.created;
 		let override_title = pm.title_override.clone();
+		let focused_id = pm.focused;
+		let (said, launched) = pm.panes.get(&focused_id).map_or_else(
+			|| (String::new(), None),
+			|pane| (pane.title.clone(), pane.launched().map(str::to_string)),
+		);
 		let (command, task, cwd) = pm.tab_facts();
 		let settings = config::settings();
 		let command_line = tab_command_line(command.as_deref());
@@ -2984,6 +2999,11 @@ impl State {
 		let mut rows: Vec<(&str, String)> = Vec::new();
 		if let Some(title) = override_title {
 			rows.push(("Tab title", quoted(&title)));
+		}
+		if let Some(said) =
+			crate::tabtitle::program_title(config::rights(), &said, launched.as_deref())
+		{
+			rows.push(("Program title", quoted(said)));
 		}
 		rows.push((
 			"Shell name",
@@ -3074,7 +3094,7 @@ impl State {
 	// for the order the three sources come in.
 	fn title_suffix(&mut self) -> Option<String> {
 		let typed = self.tabs.cur().title_override.clone();
-		let program = self.program_title();
+		let program = self.pane_title();
 		let pm = self.tabs.cur();
 		let launched = pm
 			.panes
@@ -3092,7 +3112,7 @@ impl State {
 	}
 
 	// The title the focused pane's program asked for, if it asked for one.
-	fn program_title(&self) -> Option<String> {
+	fn pane_title(&self) -> Option<String> {
 		let pm = self.tabs.cur();
 		let title = &pm.panes.get(&pm.focused)?.title;
 		(!title.trim().is_empty()).then(|| title.clone())
@@ -6925,7 +6945,15 @@ impl ApplicationHandler<UserEvent> for App {
 			UserEvent::Title(id, title) => {
 				if let Some(p) = state.tabs.find_pane_mut(id) {
 					// The one place a program's own title arrives.
-					p.title = crate::tabtitle::plain(&title);
+					let said = crate::tabtitle::plain(&title);
+					// Any tab's label can carry it now, not just the one in front,
+					// so a background pane's title has to reach the strip too. Only
+					// a title that actually moved costs a frame: a shell that sets
+					// the same one on every prompt is common.
+					if p.title != said {
+						p.title = said;
+						state.dirty = true;
+					}
 				}
 				if id == state.tabs.cur().focused {
 					state.update_title();

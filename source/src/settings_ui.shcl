@@ -786,11 +786,17 @@ rows:
 		label: Tab text
 		tab: Window
 
+	TabShowsTitle:
+		label: Program's own title
+		kind: toggle
+		setting: window.tab_shows_title
+		help: "Let a title the running program asked for name the tab. Only a name typed on the tab outranks it, and a narrow tab falls back to the three below."
+
 	TabShowsShell:
 		label: Shell
 		kind: toggle
 		setting: window.tab_shows_shell
-		help: "Name the shell the tab is running. The tab's flyover names all three whatever these say, so turning one off hides it without losing it."
+		help: "Name the shell the tab is running. The tab's flyover names every source whatever these say, so turning one off hides it without losing it."
 
 	TabShowsProgram:
 		label: Program

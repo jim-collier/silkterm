@@ -940,6 +940,18 @@ Which of the three parts a tab names is now the user's to choose, and so is whet
 
 - Turning the window title's switch off drops both of the tab's answers, the name typed on it and the text it works out for itself, since both are the tab talking. A title the running program asked for still comes through, and a `--title` is untouched.
 
+A title the running program asks for can name the tab too (2026-09-20), which is a fifth switch beside the four above, also on as shipped.
+
+- The order is the window title's, one step down: a name typed on the tab wins, then the program's title, then the text the tab works out for itself. The two were already a pair - the window title falls back to the tab - so having them disagree about what a program said would only have been confusing.
+
+- It reads the program's title through exactly the same filter the window title does. A Windows console's own decoration comes off it, and a title that is only the name or path of a program says nothing on either.
+
+- The title sits above the tab's ladder of shortenings rather than inside it. A program's title has no shorter forms of its own, so folding it in would have thrown away every rung longer than whatever the program happened to say, and a narrow tab would jump straight from a full title to the shell's initials. Above the ladder, a tab too narrow for the title falls through the forms it works out for itself, and the floor is still the shell's name.
+
+- Shipped on because the window title already prefers a program's title by default, and a tab that disagreed with the title bar above it would read as a bug. The switch is there for a shell that retitles on every prompt, which turns a strip of useful labels into a row of the same `user@host` text.
+
+- The tab's flyover carries a "Program title" line when there is one, whatever the switch says, the same as the parts above.
+
 ### A terminal running with administrator or root rights says so (2026-09-09)
 
 The window title starts with "Administrator: " on Windows and "Root: " elsewhere. Windows already spells its own elevated console title bars that way, so that word is kept rather than invented.
