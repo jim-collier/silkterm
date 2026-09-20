@@ -1942,7 +1942,8 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- `Measured:` one foreground clears the 45% floor on the whole shipped pack at 10% visibility, on about two thirds at 35%, and on a fifth at 100%. Past that no color exists and the scrim covers it. design.md says so rather than the feature pretending otherwise.
 	- `Pinned by:` twenty tests in `autotheme.rs` plus three for the wiring, eight of them mutation-checked - the dialog baseline, the two gates, the gamut clip, the persist path, the hue weight, the bright-end percentile, the theme floor and the chroma cutoff.
 	- `Measured:` seen on `:98` against the shipped pack, and in the app with the switch on and off. The row's label costs the dialog 10 px of width; the first wording cost 69 and was cut.
-	- Opened: 20260804-134813. Closed: 20260920
+	- Opened: 20260804-134813.
+	- Closed: 20260920
 
 - ✅ Themes: a fourth built-in theme.
 	- `Fixed:` Pastel, dark and light, as the backlog described it - soft cream text on a dark gray carrying a faint blue tint, which is the complement of the text. The light variant turns it round: the same hues deepened, on cream paper.
