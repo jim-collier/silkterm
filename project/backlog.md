@@ -71,6 +71,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
+- 🔘 When releasing the minimap scroll with the mouse, it first springs back some (from the direction it was), then eases in to where you released it.
+	- This appears to be because scrolling in history still follows the "smooth-scroll" rules, and the scroll grab box+scrollbar follow the actual contents, upon release.
+	- Fix: For the specific case of dragging with the mouse (not the mouse wheel), and then "dropping", the grab box+scrollbar should NOT snap to where the content is, then ease-in to where dropped. It should just remain where "dropped", then let the text catch up (as normal with current behavior).
+
+- 🔘 In light mode (on Linux), the same system fonts appear too thin aand harder to read. (Both for proportional dialog fonts, and fixed-width in the terminal (except for bold modified terminal font).
+
 - 🔘 design.md describes the scrim Strength scale wrongly.
 	- It says each 10% doubles the halo's opacity, for ten doublings at 100%. The code divides the percent by 20, so it is five doublings, and the Settings dialog's own comment says 20%.
 	- The same paragraph is otherwise current. Only the two numbers are wrong.
