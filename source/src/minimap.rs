@@ -61,9 +61,33 @@ const COMPOSE_SHARE: u32 = 20;
 // A cache that has fallen behind the grid is rebuilt whole, at most this often.
 const RESYNC_MS: u64 = 400;
 
+// Weights under this are dropped from a cell's span list. The tails of a tent
+// cost as much to walk as its middle and change nothing.
+const SPAN_MIN: f32 = 0.01;
+
 // Rasterized buffer line: one RGBA byte group per preview pixel, straight
 // (not premultiplied) - the shader premultiplies in linear light.
 type Row = Vec<u8>;
+
+// How much of a unit tent centered on `at` falls between x0 and x1. The tent
+// has area 1, so a run of cells that tiles the line hands each pixel a total
+// weight of 1.
+fn tent_over(x0: f32, x1: f32, at: f32) -> f32 {
+	// integral of max(0, 1 - |u|) from -inf to u
+	let upto = |x: f32| {
+		let u = x - at;
+		if u <= -1.0 {
+			0.0
+		} else if u <= 0.0 {
+			(u + 1.0) * (u + 1.0) * 0.5
+		} else if u < 1.0 {
+			0.5 + u - u * u * 0.5
+		} else {
+			1.0
+		}
+	};
+	upto(x1) - upto(x0)
+}
 
 // The column's pieces for one pane, in absolute window px. `handle` is the
 // viewport marker; None on the alt screen, where there is nothing to scroll.
@@ -498,16 +522,27 @@ impl Minimap {
 		self.spans.clear();
 		self.span_at.clear();
 		let per_cell = self.width as f32 / self.cols as f32;
+		let edge = self.width as f32 + 2.0;
 		for c in 0..self.cols {
 			self.span_at.push(self.spans.len());
-			let x0 = c as f32 * per_cell;
-			let x1 = x0 + per_cell;
-			let first = x0.floor() as usize;
-			let last = ((x1.ceil() as usize).max(first + 1)).min(self.width);
+			// A cell spreads over a tent a pixel wide each side, not over the one
+			// pixel it happens to fall in. At the ratios a column runs at, that
+			// pixel alternates between cells as you go along the line, and the
+			// cell grid beats against the pixel grid into a comb that is not in
+			// the text. The end cells reach past the edge so the first and last
+			// pixel are covered as fully as the rest.
+			let x0 = if c == 0 { -2.0 } else { c as f32 * per_cell };
+			let x1 = if c + 1 == self.cols {
+				edge
+			} else {
+				(c + 1) as f32 * per_cell
+			};
+			let first = (x0 - 1.0).max(0.0) as usize;
+			let last = ((x1 + 1.0).ceil() as usize).min(self.width);
 			for px in first..last {
-				let cover = (x1.min(px as f32 + 1.0) - x0.max(px as f32)).max(0.0);
-				if cover > 0.0 {
-					self.spans.push((px, cover));
+				let w = tent_over(x0, x1, px as f32 + 0.5);
+				if w > SPAN_MIN {
+					self.spans.push((px, w));
 				}
 			}
 		}
@@ -622,18 +657,32 @@ impl Minimap {
 		// a solid page as bright as it was, with the gap between lines showing.
 		let (band_top, band_h) = Self::band(lh);
 		let gain = if band_h > 0.0 { lh / band_h } else { 0.0 };
+		// A line is spread over a tent a pixel each side rather than clipped to
+		// the pixel row it falls in. A box leaves the line grid beating against
+		// the pixel grid, and at these pitches the beat is slow enough to draw
+		// broad bands down the column that are not in the text. Under
+		// BAND_FLOOR a pixel row already averages more than a whole line, the
+		// gap between lines is switched off and the column is even anyway, so
+		// the box is kept there - the wider filter would cost three times as
+		// much on the deep buffer where a compose is already the expensive one.
+		let soft = lh >= BAND_FLOOR;
+		let reach = if soft { 1.0 } else { 0.0 };
 		for py in 0..used {
 			let acc = &mut self.acc;
 			acc.reset(width);
 			let y0 = py as f32;
 			let y1 = y0 + 1.0;
-			let first = ((y0 / lh).floor() as usize).min(total.saturating_sub(1));
-			let last = ((y1 / lh).ceil() as usize).clamp(first + 1, total);
+			let first = (((y0 - reach - band_top - band_h) / lh).floor().max(0.0) as usize)
+				.min(total.saturating_sub(1));
+			let last =
+				(((y1 + reach - band_top) / lh).ceil().max(0.0) as usize).clamp(first + 1, total);
 			for i in first..last {
 				let top = i as f32 * lh + band_top;
-				let lo = top.max(y0);
-				let hi = (top + band_h).min(y1);
-				let cover = (hi - lo).max(0.0) * gain;
+				let cover = if soft {
+					tent_over(top, top + band_h, y0 + 0.5) * gain
+				} else {
+					((top + band_h).min(y1) - top.max(y0)).max(0.0) * gain
+				};
 				if cover <= 0.0 {
 					continue;
 				}
@@ -1200,6 +1249,101 @@ mod tests {
 
 	// A full-screen program draws on its own screen, which has no scroll buffer,
 	// so the column steps aside - unless the program is one that was named.
+	// A page of identical lines has to compose to an evenly lit column. The
+	// gap drawn between lines beats against the pixel grid, and at these
+	// pitches the beat is slow enough to read as broad bands running down the
+	// column that are not in the text at all.
+	#[test]
+	fn a_page_of_one_line_composes_evenly() {
+		let settings = config::Settings::default();
+		let (cols, lines) = (80, 40);
+		let (width, img_h) = (60, 900);
+		// 0.85, 1.10 and 1.15 px per line, the pitches where the beat is both
+		// strong and slow
+		for &total in &[1020usize, 780, 744] {
+			let (mut term, mut parser) = live_term(cols, lines, 20_000);
+			for _ in 0..total {
+				parser.advance(&mut term, "#".repeat(cols).as_bytes());
+				parser.advance(&mut term, b"\r\n");
+			}
+			let mut map = Minimap::default();
+			map.update(
+				term.grid(),
+				term.colors(),
+				&settings,
+				width,
+				img_h,
+				1.0,
+				lines,
+				cols,
+				total,
+				0,
+				false,
+				true,
+				Instant::now(),
+			);
+			let lh = line_px(img_h as f32, map.shown, 1.0);
+			// the screen it started on is pushed up ahead of the page, and the
+			// screen it ends on sits below it, so measure between the two
+			let from = (lh * (lines + 1) as f32) as usize;
+			let used = (lh * (map.shown - lines) as f32) as usize;
+			let rows: Vec<f32> = (from..used - 2)
+				.map(|y| (0..width).map(|x| map.pixel(x, y)[3] as f32).sum::<f32>() / width as f32)
+				.collect();
+			let mean = rows.iter().sum::<f32>() / rows.len() as f32;
+			let lo = rows.iter().copied().fold(f32::MAX, f32::min);
+			let hi = rows.iter().copied().fold(0.0f32, f32::max);
+			assert!(
+				(hi - lo) / mean < 0.12,
+				"{total} lines at {lh:.2} px: {lo} to {hi} about {mean}"
+			);
+		}
+	}
+
+	// The same across the column. Cells do not line up with pixels either, and
+	// a filter no wider than one pixel leaves the cell grid beating against
+	// them - a comb down the column that is not in the text.
+	#[test]
+	fn a_repeating_line_composes_without_a_comb() {
+		let cfg = config::Settings::default();
+		let (cols, width) = (100, 90);
+		let (mut term, mut parser) = fresh_term(cols, 4, 10);
+		// every other cell inked, which is the worst case for the beat
+		parser.advance(&mut term, "#\u{a0}".repeat(cols / 2).as_bytes());
+		let mut map = Minimap {
+			width,
+			cols,
+			..Default::default()
+		};
+		map.fit_spans();
+		let row = map.take_row();
+		map.raster(
+			term.grid(),
+			Line(0),
+			term.colors(),
+			&cfg,
+			&mut palette::Readable::default(),
+			row,
+		);
+		let strip = map.rows.pop_back().unwrap();
+		// a five-pixel average holds no cell-scale detail, so what is left in
+		// it is the slow beat
+		let smooth: Vec<f32> = (4..width - 4)
+			.map(|x| {
+				(x - 2..=x + 2)
+					.map(|i| strip[i * 4 + 3] as f32)
+					.sum::<f32>() / 5.0
+			})
+			.collect();
+		let mean = smooth.iter().sum::<f32>() / smooth.len() as f32;
+		let lo = smooth.iter().copied().fold(f32::MAX, f32::min);
+		let hi = smooth.iter().copied().fold(0.0f32, f32::max);
+		assert!(
+			(hi - lo) / mean < 0.15,
+			"{cols} columns into {width} px: {lo} to {hi} about {mean}"
+		);
+	}
+
 	#[test]
 	fn a_full_screen_program_takes_the_column_unless_it_is_named() {
 		let mut s = cfg(true, 100.0);
@@ -1652,14 +1796,20 @@ mod tests {
 				flags: cell.flags & (Flags::INVERSE | Flags::HIDDEN),
 			};
 			let (ink, alpha) = paint(&style, colors, cfg, &mut readable).at(ink_share(cell.c));
-			let x0 = c as f32 * per_cell;
-			let x1 = x0 + per_cell;
-			let first = x0.floor() as usize;
-			let last = ((x1.ceil() as usize).max(first + 1)).min(width);
+			let x0 = if c == 0 { -2.0 } else { c as f32 * per_cell };
+			let x1 = if c + 1 == cols {
+				width as f32 + 2.0
+			} else {
+				(c + 1) as f32 * per_cell
+			};
+			let first = (x0 - 1.0).max(0.0) as usize;
+			let last = ((x1 + 1.0).ceil() as usize).min(width);
 			for px in first..last {
-				let lo = x0.max(px as f32);
-				let hi = x1.min(px as f32 + 1.0);
-				let w = (hi - lo).max(0.0) * alpha;
+				let cover = tent_over(x0, x1, px as f32 + 0.5);
+				if cover <= SPAN_MIN {
+					continue;
+				}
+				let w = cover * alpha;
 				if w <= 0.0 {
 					continue;
 				}

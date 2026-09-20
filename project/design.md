@@ -283,6 +283,10 @@ What a line looks like:
 
 - Across a line, coverage adds up, so a short or indented line reads as one. Down the column, color is averaged over only the lines that have ink, so a lone red line among blanks keeps its color rather than fading into them.
 
+- A cell is spread over a tent a pixel each side, and so is a line, rather than each being clipped to the pixel it happens to fall in. Neither grid lines up with the pixels, and at the ratios a column runs at - about 100 cells into 90 px, about one line per pixel - clipping leaves the two grids beating against each other. That draws a comb across the column and broad bands down it, neither of which is in the text. The wider filter costs about a sixth more per compose and it is what makes a page of repeated output read as the text it came from.
+
+- Under about 0.6 px per line the line filter goes back to clipping. A pixel there already averages more than a whole line, the gap below is switched off and the column is even anyway, while the wider filter would cost three times as much - and that is the deep buffer where a compose is already the expensive one.
+
 - How bright a pixel row gets is how much ink actually fell in it, so a mostly blank stretch reads dimmer than a solid page. That is what makes density legible from a distance. One inked line among many would otherwise almost vanish, so a pixel never falls below a set share of the strongest line in it.
 
 - A line does not fill its own height. The gap above and below is what stops a page of text reading as one block. At the capped height the ink is a band narrower than a pixel, so it falls across two pixel rows at part strength rather than filling one, which is what a page of text looks like from a distance. Below about half a pixel there is no room for a gap and the line is taken whole, with the two ramped between so the map does not change brightness as a growing buffer crosses that point.
