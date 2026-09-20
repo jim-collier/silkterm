@@ -773,6 +773,40 @@ rows:
 		setting: window.idle_release_min
 		help: "How long a window that is only unfocused, with nothing printing, waits. Longer, since it may be on a second screen being read."
 
+	TabText:
+		kind: heading
+		label: Tab text
+		tab: Window
+
+	TabShowsShell:
+		label: Shell
+		kind: toggle
+		setting: window.tab_shows_shell
+		help: "Name the shell the tab is running. The tab's flyover names all three whatever these say, so turning one off hides it without losing it."
+
+	TabShowsProgram:
+		label: Program
+		kind: toggle
+		setting: window.tab_shows_program
+		help: "Name whatever the shell is running, or last ran."
+
+	TabShowsDirectory:
+		label: Directory
+		kind: toggle
+		setting: window.tab_shows_directory
+		help: "Name the directory the shell is sitting in. It shortens from the right as the tab gets narrower."
+
+	WindowTitle:
+		kind: heading
+		label: Window title
+		tab: Window
+
+	TitleShowsTab:
+		label: Show the tab's text
+		kind: toggle
+		setting: window.title_shows_tab
+		help: "Let the title bar fall back to what the active tab says, including a name typed on it. A title the running program asked for still comes through either way."
+
 	Hyperlinks:
 		kind: heading
 		label: Hyperlinks

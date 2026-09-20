@@ -3092,6 +3092,10 @@ impl SettingsDialog {
 			Key::CursorScrim => s.cursor_scrim,
 			Key::CursorOutline => s.cursor_outline,
 			Key::RememberSize => s.remember_size,
+			Key::TabShowsShell => s.tab_shows_shell,
+			Key::TabShowsProgram => s.tab_shows_program,
+			Key::TabShowsDirectory => s.tab_shows_directory,
+			Key::TitleShowsTab => s.title_shows_tab,
 			Key::IdleRelease => s.idle_release,
 			Key::CopyOnSelect => s.copy_on_select,
 			Key::ShellIntegration => s.shell_integration,
@@ -3129,6 +3133,10 @@ impl SettingsDialog {
 			Key::CursorScrim => self.edited.cursor_scrim = on,
 			Key::CursorOutline => self.edited.cursor_outline = on,
 			Key::RememberSize => self.edited.remember_size = on,
+			Key::TabShowsShell => self.edited.tab_shows_shell = on,
+			Key::TabShowsProgram => self.edited.tab_shows_program = on,
+			Key::TabShowsDirectory => self.edited.tab_shows_directory = on,
+			Key::TitleShowsTab => self.edited.title_shows_tab = on,
 			Key::IdleRelease => self.edited.idle_release = on,
 			Key::CopyOnSelect => self.edited.copy_on_select = on,
 			Key::ShellIntegration => self.edited.shell_integration = on,
@@ -3378,6 +3386,10 @@ impl SettingsDialog {
 			Key::SystemFont => edited.use_system_font == defaults.use_system_font,
 			Key::SystemFontSize => edited.use_system_font_size == defaults.use_system_font_size,
 			Key::RememberSize => edited.remember_size == defaults.remember_size,
+			Key::TabShowsShell => edited.tab_shows_shell == defaults.tab_shows_shell,
+			Key::TabShowsProgram => edited.tab_shows_program == defaults.tab_shows_program,
+			Key::TabShowsDirectory => edited.tab_shows_directory == defaults.tab_shows_directory,
+			Key::TitleShowsTab => edited.title_shows_tab == defaults.title_shows_tab,
 			Key::IdleRelease => edited.idle_release == defaults.idle_release,
 			Key::CopyOnSelect => edited.copy_on_select == defaults.copy_on_select,
 			Key::ShellIntegration => edited.shell_integration == defaults.shell_integration,
@@ -3494,6 +3506,10 @@ impl SettingsDialog {
 			| Key::SystemFont
 			| Key::SystemFontSize
 			| Key::RememberSize
+			| Key::TabShowsShell
+			| Key::TabShowsProgram
+			| Key::TabShowsDirectory
+			| Key::TitleShowsTab
 			| Key::IdleRelease
 			| Key::CopyOnSelect
 			| Key::ShellIntegration
@@ -3536,6 +3552,10 @@ impl SettingsDialog {
 					Key::ScrollbarAutoHide => self.defaults.scrollbar_auto_hide,
 					Key::Minimap => self.defaults.minimap,
 					Key::IdleRelease => self.defaults.idle_release,
+					Key::TabShowsShell => self.defaults.tab_shows_shell,
+					Key::TabShowsProgram => self.defaults.tab_shows_program,
+					Key::TabShowsDirectory => self.defaults.tab_shows_directory,
+					Key::TitleShowsTab => self.defaults.title_shows_tab,
 					_ => self.defaults.remember_size,
 				};
 				self.set_toggle(key, default_val);

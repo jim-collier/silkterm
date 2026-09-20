@@ -353,6 +353,7 @@ pub fn window_suffix(
 	typed: Option<&str>,
 	program: Option<&str>,
 	launched: Option<&str>,
+	show_tab: bool,
 	tab: impl FnOnce() -> String,
 ) -> Option<String> {
 	let marker = rights.console_marker();
@@ -363,6 +364,12 @@ pub fn window_suffix(
 		};
 		program_says(title, marker)
 	});
+	// With the tab switched off as a source, both of its answers go: the name
+	// typed on it and the text it works out for itself. A program's own title
+	// still comes through, and a `--title` never reached here.
+	if !show_tab {
+		return program.map(str::to_string);
+	}
 	if let Some(typed) = typed {
 		if !typed.trim().is_empty() {
 			return Some(typed.to_string());
@@ -410,6 +417,26 @@ pub fn with_note(title: String, note: Option<&str>) -> String {
 	}
 }
 
+/// Which of the three parts a tab's text is allowed to name. All three on is
+/// the shipped answer; a tab whose parts are all off falls back to the shell,
+/// since a tab with no text cannot be told from the one beside it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Parts {
+	pub shell: bool,
+	pub program: bool,
+	pub directory: bool,
+}
+
+impl Default for Parts {
+	fn default() -> Self {
+		Self {
+			shell: true,
+			program: true,
+			directory: true,
+		}
+	}
+}
+
 /// The tab's text, longest form first. The caller measures each against the
 /// space it has and takes the first that fits; the last rung is the least that
 /// still names the pane, so there is always something to draw.
@@ -419,6 +446,7 @@ pub fn label_forms(
 	cwd: Option<&str>,
 	home: Option<&str>,
 	style: Style,
+	parts: Parts,
 ) -> Vec<String> {
 	// Every part of a label is a program's own text: a process can rename itself
 	// and a directory name arrives in an archive or a checkout. None of it has
@@ -427,6 +455,10 @@ pub fn label_forms(
 	// title is. Cleaned on the way in rather than on the way out, so the rungs
 	// below are measured against what will actually be drawn.
 	let friendly = plain(friendly);
+	// A part the user turned off is dropped here rather than at each rung, so
+	// the ladder below is built out of what will actually be drawn.
+	let task = parts.program.then_some(task).flatten();
+	let cwd = parts.directory.then_some(cwd).flatten();
 	let (running, task_name) = match task {
 		Some(Task::Running(name)) => (true, Some(plain(name))),
 		Some(Task::Last(name)) => (false, Some(plain(name))),
@@ -441,7 +473,11 @@ pub fn label_forms(
 	});
 	let cwd = cwd.map(plain);
 	let home = home.map(plain);
-	let shells = shell_forms(&friendly);
+	let shells = if parts.shell {
+		shell_forms(&friendly)
+	} else {
+		Vec::new()
+	};
 	let tasks = task_forms(task);
 	let paths = cwd
 		.as_deref()
@@ -480,6 +516,8 @@ pub fn label_forms(
 	}
 	forms.retain(|form| !form.is_empty());
 	if forms.is_empty() {
+		// Nothing left to say: either the pane offered nothing, or every part is
+		// switched off. The shell's name is the floor either way.
 		forms.push(friendly.trim().to_string());
 	}
 	forms
@@ -848,8 +886,8 @@ pub fn elapsed(secs: u64) -> String {
 #[cfg(test)]
 mod tests {
 	use super::{
-		Demand, Rights, Style, Task, clamp_page, elapsed, label_forms, page_for, path_forms, plain,
-		program_says, shell_forms, slot_at_x, slot_x, tabs_that_fit, task_forms, tip_lines,
+		Demand, Parts, Rights, Style, Task, clamp_page, elapsed, label_forms, page_for, path_forms,
+		plain, program_says, shell_forms, slot_at_x, slot_x, tabs_that_fit, task_forms, tip_lines,
 		tip_value, widths, window_suffix, window_title, with_note,
 	};
 
@@ -1068,6 +1106,7 @@ mod tests {
 			Some(r"C:\Users\jim\dev"),
 			None,
 			Style::Windows,
+			Parts::default(),
 		);
 		assert_eq!(
 			forms,
@@ -1093,13 +1132,126 @@ mod tests {
 			Some(r"C:\Users\jim\dev"),
 			None,
 			Style::Windows,
+			Parts::default(),
 		);
 		assert_eq!(idle[0], r"PowerShell 7 - C:\Users\jim\dev\");
 		assert_eq!(idle.last().map(String::as_str), Some("P7"));
 		// Nothing to say about a directory either: the shell's name stands alone.
 		assert_eq!(
-			label_forms("bash", None, None, None, Style::Posix),
+			label_forms("bash", None, None, None, Style::Posix, Parts::default()),
 			["bash", "b"]
+		);
+	}
+
+	// Each of the three parts can be switched off on its own, and the rungs are
+	// built out of what is left rather than shortened out of the full label.
+	#[test]
+	fn a_tab_says_only_the_parts_that_are_switched_on() {
+		let label = |parts: Parts| {
+			label_forms(
+				"PowerShell 7",
+				Some(Task::Running("cargo")),
+				Some(r"C:\Users\jim\dev"),
+				None,
+				Style::Windows,
+				parts,
+			)[0]
+			.clone()
+		};
+		let all = Parts::default();
+		assert_eq!(label(all), r"PowerShell 7 [cargo] C:\Users\jim\dev\");
+		assert_eq!(
+			label(Parts {
+				shell: false,
+				..all
+			}),
+			r"[cargo] C:\Users\jim\dev\"
+		);
+		assert_eq!(
+			label(Parts {
+				program: false,
+				..all
+			}),
+			r"PowerShell 7 - C:\Users\jim\dev\"
+		);
+		assert_eq!(
+			label(Parts {
+				directory: false,
+				..all
+			}),
+			"PowerShell 7 [cargo]"
+		);
+		// Every part off still names the shell. A tab with no text at all cannot
+		// be told from the one beside it.
+		let none = Parts {
+			shell: false,
+			program: false,
+			directory: false,
+		};
+		assert_eq!(label(none), "PowerShell 7");
+		// and the ladder is built from what is left, not cut down from the full
+		// label - with the directory off there is no path rung to give up
+		let kept = label_forms(
+			"PowerShell 7",
+			Some(Task::Running("cargo")),
+			Some(r"C:\Users\jim\dev"),
+			None,
+			Style::Windows,
+			Parts {
+				directory: false,
+				..all
+			},
+		);
+		assert!(
+			kept.iter().all(|form| !form.contains('\\')),
+			"a rung still names the directory: {kept:?}"
+		);
+	}
+
+	// The window title stops naming the tab, and that means both of the tab's
+	// answers: the name typed on it and the text it works out for itself. What
+	// the running program asked for still comes through.
+	#[test]
+	fn a_window_title_can_stop_naming_its_tab() {
+		let rights = Rights::default();
+		let tab = || "Bash - ~/src".to_string();
+		assert_eq!(
+			window_suffix(rights, None, None, None, false, tab),
+			None,
+			"nothing else to say, so nothing is said"
+		);
+		assert_eq!(
+			window_suffix(rights, Some("build box"), None, None, false, tab),
+			None,
+			"a name typed on the tab is the tab talking too"
+		);
+		assert_eq!(
+			window_suffix(
+				rights,
+				Some("build box"),
+				Some("vim README"),
+				None,
+				false,
+				tab
+			),
+			Some("vim README".to_string()),
+			"the program still reaches the title bar"
+		);
+		// and with it on, nothing about the old order moved
+		assert_eq!(
+			window_suffix(rights, None, None, None, true, tab),
+			Some("Bash - ~/src".to_string())
+		);
+		assert_eq!(
+			window_suffix(
+				rights,
+				Some("build box"),
+				Some("vim README"),
+				None,
+				true,
+				tab
+			),
+			Some("build box".to_string())
 		);
 	}
 
@@ -1111,6 +1263,7 @@ mod tests {
 			Some("/home/jim/data/prs/dev/silkterm"),
 			Some("/home/jim"),
 			Style::Posix,
+			Parts::default(),
 		);
 		assert!(forms.len() > 5, "expected a full ladder: {forms:?}");
 		for pair in forms.windows(2) {
@@ -1371,7 +1524,7 @@ mod tests {
 	#[test]
 	fn the_window_title_takes_the_typed_name_then_the_program_then_the_tab() {
 		let suffix = |typed, program| {
-			window_suffix(Rights::default(), typed, program, None, || {
+			window_suffix(Rights::default(), typed, program, None, true, || {
 				"Bash - ~/src".to_string()
 			})
 		};
@@ -1399,7 +1552,7 @@ mod tests {
 	fn the_tab_label_is_only_worked_out_when_it_is_needed() {
 		let asked = std::cell::Cell::new(0);
 		let suffix = |typed, program: Option<&str>| {
-			window_suffix(Rights::default(), typed, program, None, || {
+			window_suffix(Rights::default(), typed, program, None, true, || {
 				asked.set(asked.get() + 1);
 				"Bash - ~/src".to_string()
 			})
@@ -1416,7 +1569,7 @@ mod tests {
 	fn a_program_naming_only_itself_falls_through_to_the_tab() {
 		let exe = Some("C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
 		let suffix = |typed, program| {
-			window_suffix(Rights::default(), typed, program, None, || {
+			window_suffix(Rights::default(), typed, program, None, true, || {
 				"Windows PowerShell".to_string()
 			})
 		};
@@ -1434,7 +1587,9 @@ mod tests {
 			decorated: true,
 		};
 		let suffix = |program, launched| {
-			window_suffix(admin, None, Some(program), launched, || "Cmd".to_string())
+			window_suffix(admin, None, Some(program), launched, true, || {
+				"Cmd".to_string()
+			})
 		};
 		for title in [
 			"Administrador: C:\\Windows\\System32\\cmd.exe",
@@ -1489,7 +1644,8 @@ mod tests {
 			(Rights::default(), Some("cmd")),
 		] {
 			assert_eq!(
-				window_suffix(rights, None, Some(title), launched, || "Cmd".into()).as_deref(),
+				window_suffix(rights, None, Some(title), launched, true, || "Cmd".into())
+					.as_deref(),
 				Some(title),
 				"{launched:?}"
 			);
@@ -1497,7 +1653,9 @@ mod tests {
 		// A word holding a path of its own is not a console's.
 		let copied = "copy a/b C:\\Windows\\System32\\cmd.exe";
 		assert_eq!(
-			window_suffix(admin, None, Some(copied), Some("cmd"), || "Cmd".into()).as_deref(),
+			window_suffix(admin, None, Some(copied), Some("cmd"), true, || "Cmd"
+				.into())
+			.as_deref(),
 			Some(copied)
 		);
 	}
@@ -1619,8 +1777,9 @@ mod tests {
 			decorated: false,
 		};
 		assert_eq!(
-			window_suffix(rights, None, Some("Root: kernel notes"), None, || "Bash"
-				.to_string()),
+			window_suffix(rights, None, Some("Root: kernel notes"), None, true, || {
+				"Bash".to_string()
+			}),
 			Some("Root: kernel notes".to_string())
 		);
 	}
@@ -1733,6 +1892,7 @@ mod tests {
 			Some("/tmp/a\u{1b}[31mb"),
 			Some("/home/u"),
 			Style::Posix,
+			Parts::default(),
 		);
 		assert!(!forms.is_empty());
 		for form in &forms {
@@ -1752,7 +1912,7 @@ mod tests {
 			say: None,
 			decorated: false,
 		};
-		let suffix = window_suffix(rights, None, None, None, || forms[0].clone());
+		let suffix = window_suffix(rights, None, None, None, true, || forms[0].clone());
 		let title = window_title(rights, None, "SilkTerm", suffix.as_deref());
 		assert!(
 			!title.chars().any(char::is_control),
@@ -1765,7 +1925,9 @@ mod tests {
 	// switcher, all of which draw it as text they trust. So whatever a program
 	// asks for has to come out as plain text, and the tab label beside it too.
 	mod fuzz {
-		use super::super::{Rights, Style, Task, label_forms, plain, window_suffix, window_title};
+		use super::super::{
+			Parts, Rights, Style, Task, label_forms, plain, window_suffix, window_title,
+		};
 		use crate::fuzz;
 
 		fn nasty(rng: &mut fuzz::Rng) -> Vec<u8> {
@@ -1810,7 +1972,8 @@ mod tests {
 					decorated: false,
 				},
 			] {
-				let suffix = window_suffix(rights, None, Some(&said), Some("x"), || "bash".into());
+				let suffix =
+					window_suffix(rights, None, Some(&said), Some("x"), true, || "bash".into());
 				let title = window_title(rights, None, "SilkTerm", suffix.as_deref());
 				assert!(tame(&title), "the window title came out {title:?}");
 			}
@@ -1822,6 +1985,7 @@ mod tests {
 				Some(&raw),
 				Some("/home/u"),
 				Style::Posix,
+				Parts::default(),
 			) {
 				assert!(tame(&form), "a tab label came out {form:?}");
 			}

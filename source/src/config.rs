@@ -373,11 +373,15 @@ pub struct Settings {
 	pub rows: usize,
 	pub remember_size: bool, // launch at the last window size instead of columns/rows
 	pub hide_single_tab: bool, // hide the tab bar while only one tab is open
-	pub idle_release: bool,  // let the GPU device go after a long idle (app.rs, release_gpu)
+	pub tab_shows_shell: bool, // parts a tab's own text is made of (tabtitle::Parts)
+	pub tab_shows_program: bool,
+	pub tab_shows_directory: bool,
+	pub title_shows_tab: bool, // let the window title fall back to what the tab says
+	pub idle_release: bool,    // let the GPU device go after a long idle (app.rs, release_gpu)
 	pub idle_release_hidden_min: usize, // ...after this long minimized or covered
 	pub idle_release_min: usize, // ...or this long merely unfocused and quiet
-	pub tab_regular_pct: f32, // a tab's ordinary width, as a % of the window's width
-	pub tab_max_pct: f32,    // widest a tab may be, as a % of the window's width
+	pub tab_regular_pct: f32,  // a tab's ordinary width, as a % of the window's width
+	pub tab_max_pct: f32,      // widest a tab may be, as a % of the window's width
 	pub remembered_columns: usize, // last actual window size (not shown in the dialog)
 	pub remembered_rows: usize,
 	pub word_separators: String, // delimiters for double-click word selection
@@ -525,6 +529,10 @@ impl Default for Settings {
 			rows: 48,
 			remember_size: true,
 			hide_single_tab: false,
+			tab_shows_shell: true,
+			tab_shows_program: true,
+			tab_shows_directory: true,
+			title_shows_tab: true,
 			idle_release: false,
 			idle_release_hidden_min: 30,
 			idle_release_min: 240,
@@ -1734,6 +1742,18 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if s.hide_single_tab != orig.hide_single_tab {
 		doc.put_bool("window.hide_single_tab", s.hide_single_tab);
 	}
+	if s.tab_shows_shell != orig.tab_shows_shell {
+		doc.put_bool("window.tab_shows_shell", s.tab_shows_shell);
+	}
+	if s.tab_shows_program != orig.tab_shows_program {
+		doc.put_bool("window.tab_shows_program", s.tab_shows_program);
+	}
+	if s.tab_shows_directory != orig.tab_shows_directory {
+		doc.put_bool("window.tab_shows_directory", s.tab_shows_directory);
+	}
+	if s.title_shows_tab != orig.title_shows_tab {
+		doc.put_bool("window.title_shows_tab", s.title_shows_tab);
+	}
 	if s.idle_release != orig.idle_release {
 		doc.put_bool("window.idle_release", s.idle_release);
 	}
@@ -1940,6 +1960,10 @@ struct RawConfig {
 	rows: Option<usize>,
 	remember_size: Option<bool>,
 	hide_single_tab: Option<bool>,
+	tab_shows_shell: Option<bool>,
+	tab_shows_program: Option<bool>,
+	tab_shows_directory: Option<bool>,
+	title_shows_tab: Option<bool>,
 	idle_release: Option<bool>,
 	idle_release_hidden_min: Option<usize>,
 	idle_release_min: Option<usize>,
@@ -2268,6 +2292,10 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		rows: r.u("window.rows"),
 		remember_size: r.b("window.remember_size"),
 		hide_single_tab: r.b("window.hide_single_tab"),
+		tab_shows_shell: r.b("window.tab_shows_shell"),
+		tab_shows_program: r.b("window.tab_shows_program"),
+		tab_shows_directory: r.b("window.tab_shows_directory"),
+		title_shows_tab: r.b("window.title_shows_tab"),
 		idle_release: r.b("window.idle_release"),
 		idle_release_hidden_min: r.u("window.idle_release_hidden_min"),
 		idle_release_min: r.u("window.idle_release_min"),
@@ -2755,6 +2783,10 @@ fn resolve(raw: RawConfig) -> Settings {
 		rows: numi(raw.rows, d.rows, limits::GRID),
 		remember_size: raw.remember_size.unwrap_or(d.remember_size),
 		hide_single_tab: raw.hide_single_tab.unwrap_or(d.hide_single_tab),
+		tab_shows_shell: raw.tab_shows_shell.unwrap_or(d.tab_shows_shell),
+		tab_shows_program: raw.tab_shows_program.unwrap_or(d.tab_shows_program),
+		tab_shows_directory: raw.tab_shows_directory.unwrap_or(d.tab_shows_directory),
+		title_shows_tab: raw.title_shows_tab.unwrap_or(d.title_shows_tab),
 		idle_release: raw.idle_release.unwrap_or(d.idle_release),
 		idle_release_hidden_min: numi(
 			raw.idle_release_hidden_min,
@@ -5388,6 +5420,15 @@ window:
 	remembered_rows: 48
 
 	# hide_single_tab: false  ## Default
+
+	## What a tab's own text is made of, and whether the window title falls
+	## back to it. Turning all three off leaves a tab naming its shell, since
+	## a tab with no text cannot be told from the one beside it. The tab's
+	## flyover always names all three, whatever these say.
+	# tab_shows_shell: true  ## Default
+	# tab_shows_program: true  ## Default
+	# tab_shows_directory: true  ## Default
+	# title_shows_tab: true  ## Default
 
 	## Let the graphics card's memory go after the window has sat unused, and
 	## take it back the moment the window is used again. The first wait is for
