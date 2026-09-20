@@ -71,17 +71,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
-- 🔘 When releasing the minimap scroll with the mouse, it first springs back some (from the direction it was), then eases in to where you released it.
-	- This appears to be because scrolling in history still follows the "smooth-scroll" rules, and the scroll grab box+scrollbar follow the actual contents, upon release.
-	- Fix: For the specific case of dragging with the mouse (not the mouse wheel), and then "dropping", the grab box+scrollbar should NOT snap to where the content is, then ease-in to where dropped. It should just remain where "dropped", then let the text catch up (as normal with current behavior).
-
 - 🔘 In light mode (on Linux), the same system fonts appear too thin aand harder to read. (Both for proportional dialog fonts, and fixed-width in the terminal (except for bold modified terminal font).
-
-- 🔘 design.md describes the scrim Strength scale wrongly.
-	- It says each 10% doubles the halo's opacity, for ten doublings at 100%. The code divides the percent by 20, so it is five doublings, and the Settings dialog's own comment says 20%.
-	- The same paragraph is otherwise current. Only the two numbers are wrong.
-	- Solution: More divisions better than fewer on this.
-	- Opened: 20260920
 
 - ✋ A save from Settings moves the lines of a commented-out section under the setting above it.
 	- `# rotate:` with `# enabled: true` indented under it, placed after another setting, comes back with `# enabled: true` above `# rotate:` and indented under that setting. Uncommented later, the values read as part of the wrong setting and do nothing.
@@ -248,6 +238,22 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ When releasing the minimap scroll with the mouse, it first springs back, then eases in to where it was released.
+	- `Reproduced:` on the rig, a marker dragged from row 646 to row 299 of the column and let go mid-ease was drawn back down at 531 on the next frame, then crawled up to 294 over about a second.
+	- `Cause:` a handle rides the scroll target while it is being dragged and the eased position otherwise. Letting go flipped it to the eased position, which at that moment is still travelling toward the drop, so the handle went backward and came in again behind the text.
+	- `Fixed:` a handle that has been let go stays on the target until the text arrives (`handle_pos` and `release_handle` in pane.rs). The hold ends when the two agree, or at once if anything else moves the target, so a wheel or a jump right after a drop behaves as it always did.
+	- `Measured:` same drag against a build with the hold taken out, on the same rig in the same sitting: 531 then twelve frames climbing to 294, against 293 on the first frame after release and never moving. Both end in the same place.
+	- `Pinned by:` `a_dropped_handle_waits_where_it_was_let_go` and `a_drop_hold_ends_when_the_text_arrives_or_the_target_moves`, both watched red with the hold taken out.
+	- Opened: 20260920. Closed: 20260920
+
+- ✅ design.md describes the scrim Strength scale wrongly.
+	- It said each 10% doubles the halo's opacity, for ten doublings at 100%. The code divides the percent by 20, so it is five doublings, and the Settings dialog's own comment says 20%.
+	- `Cause:` the divisor was changed from 10 to 20 on 20260804 and the dialog comment went with it. design.md was missed, and nothing reads it.
+	- `Left alone:` the code. The gentler scale was the deliberate choice in that change, and it is what the dialog and the config comments have said since.
+	- `Fixed:` the two numbers in design.md, and a stale `0..10` range comment in scrim.rs left over from the same change.
+	- `Pinned by:` `the_docs_quote_the_scrim_strength_scale_the_code_uses`, which builds both sentences from `SCRIM_PCT_PER_DOUBLING` and looks for them in design.md and settings_ui.shcl. Watched red against the old wording.
+	- Opened: 20260920. Closed: 20260920
 
 - ✅ design.md's table of contents is missing headings.
 	- `Reproduced:` the block listed 34 of the file's 42 headings. Three under Architecture were absent and every one under Delivery. Two entries had lost the parentheses from their link text.
