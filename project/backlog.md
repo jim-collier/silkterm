@@ -154,11 +154,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
+- 🔘 New default text outline: 1px
+	- Opened: 20260919-155433 by JC.
+
 - 🔘 Extension to the idea of "Silk: Allow 'Profile' to be selected even when 'Choose automatically' is enabled:
 	- Also allow dependent settings to be changed. (A reversal of the design to disable dependent settings.)
 		- But if a dependent setting IS changed by the user:
 			- Deselect "Choose automatically"
 			- Change 'Profile' to "Custom".
+	- Opened: 20260919-155433 by JC.
 
 - 🔘 Make text scrim falloff "Exponential" more agressive. E.g., increase the exponent.
 
