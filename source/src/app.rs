@@ -161,8 +161,7 @@ impl App {
 				self.dialog_dirty = true;
 			}
 			// Dragged to a monitor at another scale, or the desktop's scaling
-			// changed. Settings follows it in place; a Resized event brings the
-			// new physical size straight after.
+			// changed. The dialog follows it in place.
 			WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
 				if let Some(d) = &mut self.dialog {
 					d.set_scale(scale_factor);
@@ -381,6 +380,10 @@ impl App {
 			WindowEvent::CloseRequested => close = true,
 			WindowEvent::Resized(size) => {
 				n.resize(size.width, size.height);
+				self.notice_dirty = true;
+			}
+			WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+				n.set_scale(scale_factor);
 				self.notice_dirty = true;
 			}
 			WindowEvent::RedrawRequested => n.render(),

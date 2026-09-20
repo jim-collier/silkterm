@@ -47,8 +47,19 @@ enum Content {
 		lines: Vec<Line>,
 		links: Vec<AboutLink>,
 		notice: bool,
+		// what the lines were made from, so a scale change can make them again
+		source: AboutSource,
 	},
 	Settings(SettingsDialog),
+}
+
+// Neither box can be resized and both are laid out once at open, so a change of
+// display scale has to run the layout again from scratch.
+enum AboutSource {
+	About(Box<wgpu::AdapterInfo>),
+	// Windows says a notice with MessageBoxW, so it has no dialog window of its own
+	#[cfg(not(target_os = "windows"))]
+	Notice(Vec<String>),
 }
 
 pub enum DialogAction {
@@ -214,6 +225,7 @@ impl DialogWin {
 				lines,
 				links,
 				notice: false,
+				source: AboutSource::About(Box::new(adapter.clone())),
 			},
 			mouse: (0.0, 0.0),
 			last_frame: std::time::Instant::now(),
@@ -254,6 +266,7 @@ impl DialogWin {
 				lines,
 				links,
 				notice: true,
+				source: AboutSource::Notice(paras.to_vec()),
 			},
 			mouse: (0.0, 0.0),
 			last_frame: std::time::Instant::now(),
@@ -669,38 +682,86 @@ impl DialogWin {
 	// DPI/scale changed under an open dialog: dragged to a monitor at another
 	// scale, or the desktop's scaling moved. Only the boundary follows - the text
 	// context rasterizes at the new size and the chrome is measured again - while
-	// every value and unapplied edit stays put. winit keeps the logical size, so
-	// a Resized event follows with the new physical one.
-	//
-	// About and the notice are laid out once at open, into fixed positions, and
-	// cannot be resized, so they are left alone.
+	// every value and unapplied edit stays put.
 	pub fn set_scale(&mut self, scale_factor: f64) {
 		let scale = config::display_scale(scale_factor);
-		if !matches!(self.content, Content::Settings(_)) || (scale - self.text.scale).abs() < 1e-4 {
+		if (scale - self.text.scale).abs() < 1e-4 {
 			return;
 		}
 		self.text = TextCtx::new(&self.gfx.device, &self.gfx.queue, self.gfx.format, scale);
+		match &mut self.content {
+			Content::About { .. } => self.rescale_about(),
+			Content::Settings(_) => self.rescale_settings(scale),
+		}
+		self.window.request_redraw();
+	}
+
+	// About and the notice hold no layout of their own to adjust, so they are
+	// laid out again from what they were built from and the window asked for the
+	// size that comes back. Neither can be resized, so there is nothing else to
+	// keep in step.
+	fn rescale_about(&mut self) {
+		let Content::About { source, .. } = &self.content else {
+			return;
+		};
+		let (lines, links, size) = match source {
+			AboutSource::About(info) => layout_about(&mut self.text, info),
+			#[cfg(not(target_os = "windows"))]
+			AboutSource::Notice(paras) => layout_notice(&mut self.text, paras),
+		};
+		if let Content::About {
+			lines: old_lines,
+			links: old_links,
+			..
+		} = &mut self.content
+		{
+			*old_lines = lines;
+			*old_links = links;
+		}
+		let want = winit::dpi::PhysicalSize::new(size.0.ceil() as u32, size.1.ceil() as u32);
+		if let Some(applied) = self.window.request_inner_size(want) {
+			self.gfx.resize(applied.width, applied.height);
+		}
+	}
+
+	fn rescale_settings(&mut self, scale: f32) {
 		let (label_w, btn_w, row_btn_w, tab_ws) =
 			crate::settings_ui::chrome_widths(&mut self.text, scale);
 		let (max_w, max_h) = Self::settings_caps(&self.window, self.parent, scale);
 		self.caps = (max_w, max_h);
 		let line_h = self.text.ui_line_h;
-		if let Content::Settings(dialog) = &mut self.content {
-			dialog.rescale(
-				line_h, label_w, btn_w, row_btn_w, tab_ws, max_w, max_h, scale,
-			);
-			// the floor is physical, so it was wrong the moment the factor moved
-			let (min_w, min_h) = dialog.min_size();
-			self.window
-				.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(
-					min_w.ceil() as u32,
-					min_h.ceil() as u32,
-				)));
-		}
+		let Content::Settings(dialog) = &mut self.content else {
+			return;
+		};
+		dialog.rescale(
+			line_h, label_w, btn_w, row_btn_w, tab_ws, max_w, max_h, scale,
+		);
+		// the floor is physical, so it was wrong the moment the factor moved
+		let (min_w, min_h) = dialog.min_size();
+		self.window
+			.set_min_inner_size(Some(winit::dpi::PhysicalSize::new(
+				min_w.ceil() as u32,
+				min_h.ceil() as u32,
+			)));
+		// Nothing guarantees a Resized. winit keeps the LOGICAL size, so an
+		// ordinary window gets one with the new physical size - but a maximized or
+		// tiled window keeps its physical size and sends nothing, and the layout
+		// would then be drawn at the new scale inside the old window. Hand the
+		// dialog what the window really measures, then ask for a size the screen
+		// can still hold, since it holds fewer DIP at a higher scale.
+		let now = self.window.inner_size();
+		dialog.set_size(now.width as f32, now.height as f32);
+		let (want_w, want_h) = size_within_caps((now.width, now.height), (max_w, max_h));
+		let want = winit::dpi::PhysicalSize::new(want_w, want_h);
 		// the natural size is a different number of pixels now, so let the snap
-		// have another go at whatever size the Resized event brings
+		// have another go at whatever size we end up with
 		self.snapped = false;
-		self.window.request_redraw();
+		if want != now {
+			// a platform that resizes synchronously answers here and sends no Resized
+			if let Some(applied) = self.window.request_inner_size(want) {
+				self.resize(applied.width, applied.height);
+			}
+		}
 	}
 
 	// Magnetic snap: within a few DIP of the size the content wants, the window
@@ -820,6 +881,7 @@ impl DialogWin {
 				lines,
 				links,
 				notice,
+				..
 			} => {
 				clear = crate::settings_ui::dialog_bg();
 				let (mx, my) = self.mouse;
@@ -1413,6 +1475,22 @@ const ABOUT_BORDER: f32 = 1.0; // 1px rule around the Support button
 
 // Build the About content laid out at the window origin; returns
 // (lines, clickable links, (width, height)) in physical px.
+// The size to ask the window for after a change of display scale: the pixels it
+// has now, held to what the screen can still hold. A screen holds fewer DIP at a
+// higher scale, so a window dragged from a wide monitor to a smaller one at a
+// higher scale comes out taller than the screen with its footer buttons under
+// the taskbar.
+fn size_within_caps(now: (u32, u32), caps: (f32, f32)) -> (u32, u32) {
+	let cap = |px: u32, cap: f32| {
+		if cap.is_finite() && cap >= 1.0 {
+			(px as f32).min(cap).round() as u32
+		} else {
+			px
+		}
+	};
+	(cap(now.0, caps.0), cap(now.1, caps.1))
+}
+
 fn layout_about(
 	text: &mut TextCtx,
 	info: &wgpu::AdapterInfo,
@@ -1824,8 +1902,8 @@ mod tests {
 	use std::time::Instant;
 
 	use super::{
-		DLG_DECOR_HEADROOM, DLG_MAX_H, DLG_SNAP, Rect, caps_from, refusal_notice, snap_to,
-		tip_gate, usable_screen,
+		DLG_DECOR_HEADROOM, DLG_MAX_H, DLG_SNAP, Rect, caps_from, refusal_notice, size_within_caps,
+		snap_to, tip_gate, usable_screen,
 	};
 
 	// What a refused save says: which file, which lines, and what that costs.
@@ -1946,5 +2024,25 @@ mod tests {
 		assert_eq!(snap_to(far, want, DLG_SNAP), far);
 		// already there: the snap is a no-op, which is what stops it looping
 		assert_eq!(snap_to(want, want, DLG_SNAP), want);
+	}
+
+	// A scale change leaves the window at the pixels it already had, and the
+	// screen holds fewer DIP at the higher scale. Nothing else pulls the window
+	// back onto it.
+	#[test]
+	fn a_window_is_held_to_what_the_screen_can_hold_at_the_new_scale() {
+		// inside the caps: left exactly as it is, no resize asked for
+		assert_eq!(size_within_caps((800, 600), (1920.0, 1080.0)), (800, 600));
+		// taller than the screen now holds: pulled back, width untouched
+		assert_eq!(size_within_caps((800, 1400), (1920.0, 1080.0)), (800, 1080));
+		// and both, dragged to a smaller monitor at a higher scale
+		assert_eq!(size_within_caps((2000, 1400), (1280.0, 700.0)), (1280, 700));
+		// About and the notice never measure a cap, so an unset one changes nothing
+		assert_eq!(
+			size_within_caps((800, 600), (f32::MAX, f32::MAX)),
+			(800, 600)
+		);
+		// a screen that measured as nothing is not a reason to shrink to nothing
+		assert_eq!(size_within_caps((800, 600), (0.0, 0.0)), (800, 600));
 	}
 }

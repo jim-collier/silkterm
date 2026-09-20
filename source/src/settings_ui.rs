@@ -5959,6 +5959,42 @@ mod tests {
 		assert_eq!(d.tab, 2, "tab lost");
 	}
 
+	// A maximized or tiled window keeps its physical size through a scale change,
+	// so the window manager sends no resize and nothing else tells the dialog it
+	// is now claiming twice the pixels the window has. Handing it the size the
+	// window really measures is what puts the two back in step.
+	#[test]
+	fn a_window_that_keeps_its_pixels_through_a_scale_change_still_fits_them() {
+		let mut d = mk_dialog_at(900.0, 1.0);
+		d.set_size(700.0, 600.0);
+		d.rescale(
+			18.0 * 2.0,
+			170.0 * 2.0,
+			80.0 * 2.0,
+			90.0 * 2.0,
+			vec![90.0 * 2.0; tab_titles().len()],
+			f32::MAX,
+			900.0 * 2.0,
+			2.0,
+		);
+		// rescale alone keeps the DIP, which is twice the pixels the window has
+		assert!(
+			d.to_px(d.rect.w) > 700.0 + 1.0,
+			"the box would fit the window with no resize, so there is nothing to fix"
+		);
+		d.set_size(700.0, 600.0);
+		assert!(
+			(d.to_px(d.rect.w) - 700.0).abs() < 1.0,
+			"box is {} px wide in a 700 px window",
+			d.to_px(d.rect.w)
+		);
+		assert!(
+			(d.to_px(d.rect.h) - 600.0).abs() < 1.0,
+			"box is {} px tall in a 600 px window",
+			d.to_px(d.rect.h)
+		);
+	}
+
 	// A tab's title is drawn `tab_pad / 2` inside its own box, and the box is only
 	// as wide as the title plus `tab_pad` - so the pad on both sides of that sum has
 	// to be the SAME pad. Mixing a physical measurement with a raw DIP constant
