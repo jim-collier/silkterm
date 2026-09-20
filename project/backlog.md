@@ -115,9 +115,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Text boxes to the right: Red %, Green %, Blue %, Brightness %, Saturation %, and a hex value.
 		- Buttons at the bottom right: "Cancel|OK", with OK the default.
 
-- 🔘 When other settings are changed automatically based on a user action to a different setting (e.g. "Choose automatically" and/or "Profile", visually alert the user to the change:
-	- Use Effect 1 from "Rolling epic 'GPU FX'", around the setting that gets programmatically changed based on a user doing something elsewhere.
-
 - ✋ Save settings by editing only the lines that changed, so a file with a line that cannot be read still takes the window size, menu switches and new shells.
 	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
 	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
@@ -140,6 +137,9 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Config-tunable selection of predefined burst effects.
 		- Default (and so far only): A glowing bright gold pulse that the cursor gives off upon arriving back at the shell prompt, as if a yellow sun that shed an outer layer of blasma in a burst.
 	- Opened: 20260714-091630
+
+- 🔘 When other settings are changed automatically based on a user action to a different setting (e.g. "Choose automatically" and/or "Profile", visually alert the user to the change:
+	- Use Effect 1 from "Rolling epic 'GPU FX'", around the setting that gets programmatically changed based on a user doing something elsewhere.
 
 - 🔘 At startup, offer to copy the wallpaper pack from the repo to the local wallpaper directory.
 	- The README now carries a one-liner for it (Wallpaper pack section), so this item is only about the in-app offer.
