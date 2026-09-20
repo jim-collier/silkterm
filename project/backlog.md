@@ -134,6 +134,16 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
+- 🔘 Tab text (options under "Window" tab):
+	- 🔘 Boolean option to show the shell [default true]
+	- 🔘 Boolean option to show the current or last program [default true]
+	- 🔘 Boolean option to show the path [default true]
+
+- 🔘 Window text (options under "Window" tab):
+	- 🔘 Boolean option to include the current tab title [default true]
+
+- 🔘 The minimap looks MUCH better, but shows aliasing or moire artifacts.
+
 - 🔘 New default for text outline: 1px
 	- Opened: 20260919-155433 by JC.
 
