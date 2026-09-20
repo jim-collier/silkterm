@@ -22,6 +22,7 @@
 	- [Minimap](#minimap)
 	- [Text readability scrim](#text-readability-scrim)
 	- [Minimum contrast (2026-08-30)](#minimum-contrast-2026-08-30)
+	- [Dark text on a light background (2026-09-20)](#dark-text-on-a-light-background-2026-09-20)
 	- [Text colors from the wallpaper (2026-09-20)](#text-colors-from-the-wallpaper-2026-09-20)
 	- [Performance profiles (2026-09-03)](#performance-profiles-2026-09-03)
 	- [Font fallback stack](#font-fallback-stack)
@@ -375,6 +376,16 @@ The default floor is 45%, which puts previously invisible text at roughly 2.8:1 
 Every built-in theme's own foreground clears the floor on its own, which is checked at build time. A theme whose body text needed lifting would mean the floor was repainting the thing it is measured against.
 
 The block cursor is a second background. It is drawn as a plate at 55% under the glyph, and the glyph keeps its own color, so the text on it has to clear the same floor against the plate as blended over the theme's background. That is checked for every built-in theme and mode the same way. A cursor at the text's own brightness fails it outright, which is what the monochrome themes shipped with. In a light theme the rule also sets how dark the text has to be: the plate sits between the text and the background, and a paler foreground leaves no room for one that both shows as a block and carries the text.
+
+### Dark text on a light background (2026-09-20)
+
+The color pipeline works in linear light, and glyph coverage is blended there too. A pixel the rasterizer says is half covered comes out at about three quarters brightness either way round. On a dark background that is a strong edge. On a light one it is barely a quarter of the ink the eye expects, so the thin parts of every stroke fade and a light theme reads a weight lighter than the same font in a dark one. Bold survives because most of its pixels are fully covered.
+
+The fix raises coverage by an exponent before it becomes alpha, in glyphon's own fragment shader, through a value carried in the padding its params uniform already had. At 1.0 the shader takes exactly the path it took before. `text.dark_on_light_gamma` sets it, defaulting to 0.65, and it is applied only where the text is darker than the background behind it: light on dark is already heavy enough, and correcting it as well would just make it muddy. The comparison is Oklab lightness, the same measure minimum contrast uses.
+
+Blending in gamma space instead would have fixed it at the source, and was rejected: the surface takes one sRGB encode per frame and it belongs to the graphics module, so a second encode inside the text pass is the bug class the color pipeline contract exists to stop.
+
+The value is decided once per render pass, not per glyph, because one pass draws the whole window and a uniform is what the shader can read. The main window's pass carries the terminal's own pair, so in a light theme the menu and tab labels - which stay on dark chrome in both modes - are thickened slightly along with everything else. That is accepted: it is a small strip, the direction is mild, and giving the chrome its own pass would cost a second renderer and a second atlas to fix a few hundred pixels. The Settings dialog is a separate context and decides on its own panel colors.
 
 ### Text colors from the wallpaper (2026-09-20)
 

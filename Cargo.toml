@@ -3,7 +3,7 @@
 [workspace]
 members = ["source"]
 # Crates that live here but are not part of the build. `forks/` holds working
-# clones of the two patched dependencies, and the clipboard reproducer is run by
+# clones of the patched dependencies, and the clipboard reproducer is run by
 # hand. Without this, cargo takes any package under this directory for a member
 # it was not told about and refuses to build it on its own.
 exclude = ["forks", "cicd/tests/clipboard-race"]
@@ -51,6 +51,16 @@ alacritty_terminal = { git = "https://github.com/jim-collier/alacritty", branch 
 # selection, and the next copy overwrites it. The branch is the published
 # 0.9.3 plus that one change and a test for it.
 x11-clipboard = { git = "https://github.com/jim-collier/x11-clipboard", branch = "keep-value-on-clear-0.9.3" }
+
+# glyphon blends glyph coverage into whatever the target is, and ours is linear
+# light. A half covered pixel then reads at about three quarters brightness
+# either way, which is strong on a dark background and nearly nothing on a light
+# one - so light themes lose the thin parts of every letter and read thin. Our
+# branch adds a coverage gamma to the params uniform, in the padding the struct
+# already carried, and raises coverage by it before it becomes alpha. At 1.0 the
+# shader takes the old path exactly. The branch is the published 0.11.0 plus
+# that one change and two tests for it.
+glyphon = { git = "https://github.com/jim-collier/glyphon", branch = "coverage-gamma-0.11.0" }
 
 # Clippy gate (cicd lints stage runs -D warnings). pedantic is on; the allows
 # below are deliberate house style, not suppressed problems.

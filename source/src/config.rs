@@ -177,6 +177,9 @@ pub const PANE_GAP_PX: f32 = 1.0;
 pub const DIVIDER_GRAB_PX: f32 = 5.0; // mouse tolerance for grabbing a pane divider
 pub const FOCUS_RING_PX: f32 = 2.0;
 pub const SETTLE_EPS: f32 = 0.002; // a settle threshold, not a measurement - never scaled
+// Floor on text.dark_on_light_gamma. Below this the correction stops reading as
+// weight and starts filling the counters of small letters.
+pub const GAMMA_FLOOR: f32 = 0.4;
 
 pub const DIVIDER: [u8; 3] = [0x2c, 0x2c, 0x36];
 
@@ -371,6 +374,7 @@ pub struct Settings {
 	pub text_scrim_softness: f32, // 0 = hard/solid scrim, 1 = soft/faint (maps to the intensity boost)
 	pub text_scrim_strength: f32, // 0..100% -> 0..5 doublings of the halo alpha (0 = as built)
 	pub text_outline: f32, // antialiased outline around glyphs, px (0 = none; scrim color rules)
+	pub text_dark_on_light_gamma: f32, // coverage exponent where text is darker than its background (1 = off)
 	pub text_scrim_ramp: String, // halo falloff curve: "sigmoid" | "half_normal" | "linear" | "log" | "exp"
 	pub text_scrim_function: String, // halo build: "dilate" | "sdf" | "dt" | "gaussian" (legacy blur)
 	pub text_scrim_regular_weight: bool, // blur bold text at regular weight (uniform halo; crisp text keeps its weight)
@@ -536,6 +540,7 @@ impl Default for Settings {
 			text_scrim_softness: 0.5,
 			text_scrim_strength: 20.0,
 			text_outline: 1.0,
+			text_dark_on_light_gamma: 0.65,
 			text_scrim_ramp: "exp".to_string(),
 			text_scrim_function: "sdf".to_string(),
 			text_scrim_regular_weight: true,
@@ -1731,6 +1736,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if !same_f32(s.text_outline, orig.text_outline) {
 		doc.put_float("text.outline", r(s.text_outline));
 	}
+	if !same_f32(s.text_dark_on_light_gamma, orig.text_dark_on_light_gamma) {
+		doc.put_float("text.dark_on_light_gamma", r(s.text_dark_on_light_gamma));
+	}
 	if s.text_scrim_ramp != orig.text_scrim_ramp {
 		doc.put_string("text.scrim.ramp", &s.text_scrim_ramp);
 	}
@@ -1985,6 +1993,7 @@ struct RawConfig {
 	text_scrim_softness: Option<f32>,
 	text_scrim_strength: Option<f32>,
 	text_outline: Option<f32>,
+	text_dark_on_light_gamma: Option<f32>,
 	text_scrim_ramp: Option<String>,
 	text_scrim_function: Option<String>,
 	text_scrim_regular_weight: Option<bool>,
@@ -2318,6 +2327,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		text_scrim_softness: r.f("text.scrim.softness"),
 		text_scrim_strength: r.f("text.scrim.strength"),
 		text_outline: r.f("text.outline"),
+		text_dark_on_light_gamma: r.f("text.dark_on_light_gamma"),
 		text_scrim_ramp: r.s("text.scrim.ramp"),
 		text_scrim_function: r.s("text.scrim.function"),
 		text_scrim_regular_weight: r.b("text.scrim.regular_weight"),
@@ -2765,6 +2775,10 @@ fn resolve(raw: RawConfig) -> Settings {
 			.unwrap_or(d.text_scrim_strength)
 			.clamp(0.0, 100.0),
 		text_outline: raw.text_outline.unwrap_or(d.text_outline).clamp(0.0, 8.0),
+		text_dark_on_light_gamma: raw
+			.text_dark_on_light_gamma
+			.unwrap_or(d.text_dark_on_light_gamma)
+			.clamp(GAMMA_FLOOR, 1.0),
 		// the older spellings still parse: "s" was renamed to "sigmoid" (which is
 		// what a smoothstep is), and the falloff's "gaussian" to "half_normal" so
 		// it stops reading like the gaussian BLUR the function list also offers.
@@ -3374,6 +3388,7 @@ const LEGACY_KEYS: &[(&str, &str)] = &[
 	("text_scrim_ramp", "text.scrim.ramp"),
 	("text_scrim_regular_weight", "text.scrim.regular_weight"),
 	("text_outline", "text.outline"),
+	("text_dark_on_light_gamma", "text.dark_on_light_gamma"),
 	("color_emoji", "text.color_emoji"),
 	("embolden_inverse", "text.embolden_inverse"),
 	("cursor_scrim", "cursor.scrim"),
@@ -5360,6 +5375,14 @@ text:
 		# regular_weight: true  ## Default
 
 	# outline: 1.0  ## Default
+
+	## How much to thicken text that is darker than the background behind it.
+	## Partly covered pixels are blended in linear light, which costs dark text
+	## on a light background most of the ink at the edge of every stroke, so a
+	## light theme reads thin. 1.0 leaves the letters as they were drawn; lower
+	## is bolder. Light themes only - nothing here touches light-on-dark text.
+	## Range: 0.4 to 1.0
+	# dark_on_light_gamma: 0.65  ## Default
 
 	## Brighten or darken text that is too close to its background color to
 	## read. 0 is off.

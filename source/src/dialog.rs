@@ -860,6 +860,12 @@ impl DialogWin {
 		let view = self.gfx.frame_view(&frame);
 		let (w, h) = (self.gfx.config.width, self.gfx.config.height);
 		self.text.update_viewport(&self.gfx.queue, w, h);
+		// The panel's own colors decide it here, not the terminal's.
+		let cfg = config::settings();
+		self.text.set_coverage_gamma(
+			&self.gfx.queue,
+			crate::text::coverage_gamma(cfg.dialog_fg, cfg.dialog_bg, cfg.text_dark_on_light_gamma),
+		);
 
 		// gather rects (About button + flyover, or the Settings controls) + text
 		let mut rect_inst: Vec<RectInstance> = Vec::new();

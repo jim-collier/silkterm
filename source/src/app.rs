@@ -5301,6 +5301,10 @@ impl State {
 		let (frame_w, frame_h) = (gpu.gfx.config.width as f32, gpu.gfx.config.height as f32);
 		self.text
 			.update_viewport(&gpu.gfx.queue, gpu.gfx.config.width, gpu.gfx.config.height);
+		self.text.set_coverage_gamma(
+			&gpu.gfx.queue,
+			crate::text::coverage_gamma(cfg.fg, cfg.bg, cfg.text_dark_on_light_gamma),
+		);
 		gpu.rects.set_resolution(&gpu.gfx.queue, frame_w, frame_h);
 		if let Some(img) = &gpu.wallpaper_img {
 			img.set_resolution(&gpu.gfx.queue, frame_w, frame_h);

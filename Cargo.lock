@@ -1034,8 +1034,7 @@ dependencies = [
 [[package]]
 name = "glyphon"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68dde9640ec6f986f59a265b4c0a5177f61e87e3ba71983b2195dab119cda0fa"
+source = "git+https://github.com/jim-collier/glyphon?branch=coverage-gamma-0.11.0#7d515a8e1f4d30e3c2a759684714dae820e82833"
 dependencies = [
  "cosmic-text",
  "etagere",
