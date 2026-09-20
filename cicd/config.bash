@@ -246,12 +246,25 @@ GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
 ## descends to test each entry. private/source is bulk working material that
 ## never ships, same treatment.
 ##
+## forks/ holds working clones of the two patched dependencies. Each has its own
+## remote, so the archive would otherwise carry 50 MB of a copy of something
+## already kept elsewhere, and more as either one gets built. What that costs is
+## work committed in a clone and not pushed, which is not in the backup either -
+## already true of this repo, whose .git is excluded the same way.
+##
+## target/mmap-bench is the minimap rig's scratch: a 32 MiB flood file it makes
+## on demand, plus one log per run.
+##
 ## One rar pattern per line, no '-x' prefix and no shell quoting: the publish
 ## script adds the flag and passes each line through as one argument.
 export GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES='*/cicd/artifacts
 */cicd/artifacts/*
 */private/source
-*/private/source/*'
+*/private/source/*
+*/forks
+*/forks/*
+*/target/mmap-bench
+*/target/mmap-bench/*'
 
 ## Set a non-empty commit message to publish hands-off (suppresses the script's
 ## prompt and supplies the message so `git commit` won't open an editor). Left
