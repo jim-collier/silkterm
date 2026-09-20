@@ -115,9 +115,13 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 			- Change 'Profile' to "Custom".
 	- Opened: 20260919-155433 by JC.
 
+- 🔘 Tab text: Use 'nemo-anywhere's recent formula for shortening the path for active and inactive tabs if necessary.
+
 - 🔘 Themes:
 	- 🔘 A fourth built-in theme. Pastel is the idea: a pleasing light pastel on a dark gray background carrying a subtle tint of the complementary color. Solarized is the other candidate.
 	- Opened: 20260628-083740
+
+- 🔘 Include uptime for the current silkterm session, in the Help|About dialog.
 
 - 🔘 Settings dialog:
 	- 🔘 A color picker. The colored boxes on the Colors tab should be clickable, and open a picker of the familiar sort:
@@ -137,6 +141,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
 	- Opened: 20260918
 
+- 🔘 Option: Dynamic text theme based on wallpaper
+	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
+	- A boolean checkmark under themes, that disables only those specific color settings.
+	- A nontrivial problem. Need to search the web for color theory research, probably. Starting point idea: Average entire image into a single hex color.
+	- Opened: 20260804-134813
+
 - NOTE: Stop here to work on releasing RC1.
 
 - 🔘 Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
@@ -154,12 +164,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Config-tunable selection of predefined burst effects.
 		- Default (and so far only): A glowing bright gold pulse that the cursor gives off upon arriving back at the shell prompt, as if a yellow sun that shed an outer layer of blasma in a burst.
 	- Opened: 20260714-091630
-
-- 🔘 Option: Dynamic theme based on wallpaper
-	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
-	- A boolean checkmark under themes, that disables only those specific color settings.
-	- A nontrivial problem. Need to search the web for color theory research, probably. Starting point idea: Average entire image into a single hex color.
-	- Opened: 20260804-134813
 
 - 🔘 At startup, offer to copy the wallpaper pack from the repo to the local wallpaper directory.
 	- The README now carries a one-liner for it (Wallpaper pack section), so this item is only about the in-app offer.
