@@ -624,6 +624,13 @@ if [[ -x "${root}/cicd/tests/gates/run.bash" ]]; then
 	"${root}/cicd/tests/gates/run.bash" >/dev/null || fDie "startup gate test failed"
 	fEcho "OK: startup gates"
 fi
+## Every table of contents, which no markdown linter regenerates. design.md had
+## been missing eight of its headings.
+if [[ -x "${root}/cicd/tests/toc/run.py" ]]; then
+	fEcho_Clean "tables of contents ..."
+	"${root}/cicd/tests/toc/run.py" >/dev/null || fDie "a table of contents is out of date - run cicd/tests/toc/run.py --fix"
+	fEcho "OK: tables of contents"
+fi
 ## The Windows scenario harness, which once tested whatever the box last built
 ## and stopped every SilkTerm on a shared box.
 if [[ -x "${root}/cicd/tests/wingui/harness-test.bash" ]]; then

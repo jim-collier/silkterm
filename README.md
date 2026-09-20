@@ -81,6 +81,7 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 	- [Setting up a development environment](#setting-up-a-development-environment)
 	- [Configuration](#configuration)
 	- [Shell integration](#shell-integration)
+- [Renaming the project](#renaming-the-project)
 - [Contributing](#contributing)
 - [Support SilkTerm](#support-silkterm)
 - [Legal stuff](#legal-stuff)
