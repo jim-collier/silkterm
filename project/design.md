@@ -12,13 +12,12 @@
 <!-- TOC -->
 
 - [Goal](#goal)
-
 - [Architecture](#architecture)
 	- [Language / Stack Decision](#language--stack-decision)
 	- [Logical code organization](#logical-code-organization)
-	- [API alacritty_terminal](#api-alacritty_terminal)
+	- [API (alacritty_terminal)](#api-alacritty_terminal)
 	- [Smooth-Scroll](#smooth-scroll)
-	- [Output easing new text](#output-easing-new-text)
+	- [Output easing (new text)](#output-easing-new-text)
 	- [Smooth-scroll inside full-screen apps](#smooth-scroll-inside-full-screen-apps)
 	- [Minimap](#minimap)
 	- [Text readability scrim](#text-readability-scrim)
@@ -39,6 +38,9 @@
 	- [Render Loop Sketch](#render-loop-sketch)
 	- [Output notices under a flood](#output-notices-under-a-flood)
 	- [The About box says how long the session has been up (2026-09-20)](#the-about-box-says-how-long-the-session-has-been-up-2026-09-20)
+	- [A character handed to the window is typing (2026-09-09)](#a-character-handed-to-the-window-is-typing-2026-09-09)
+	- [What untrusted input may not do (2026-09-09)](#what-untrusted-input-may-not-do-2026-09-09)
+	- [The fuzzer (2026-09-09)](#the-fuzzer-2026-09-09)
 	- [Environment](#environment)
 	- [Startup and slow external resources](#startup-and-slow-external-resources)
 	- [Letting the GPU go on a long idle (2026-09-17)](#letting-the-gpu-go-on-a-long-idle-2026-09-17)
@@ -46,6 +48,11 @@
 	- [Variables in a setting (2026-08-30)](#variables-in-a-setting-2026-08-30)
 	- [Command-line options](#command-line-options)
 - [Delivery (CI/CD, branches, releases)](#delivery-cicd-branches-releases)
+	- [A tab can be named by hand, and the window title follows the tab (2026-08-30)](#a-tab-can-be-named-by-hand-and-the-window-title-follows-the-tab-2026-08-30)
+	- [A terminal running with administrator or root rights says so (2026-09-09)](#a-terminal-running-with-administrator-or-root-rights-says-so-2026-09-09)
+	- [Tabs report what they are running, and where (2026-08-21)](#tabs-report-what-they-are-running-and-where-2026-08-21)
+	- [A tab is as wide as its own label needs (2026-08-23)](#a-tab-is-as-wide-as-its-own-label-needs-2026-08-23)
+	- [PowerShell gets the same prompt bash does (2026-08-21, reworked 2026-08-30)](#powershell-gets-the-same-prompt-bash-does-2026-08-21-reworked-2026-08-30)
 
 <!-- /TOC -->
 
