@@ -116,18 +116,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Recorded in working notes since 20260905 and filed 20260919.
 	- Opened: 20260919
 
-- 🔘 The About box and the notice box do not follow a change of display scale.
-	- Same hole the Settings dialog had. They are laid out once when they open, into fixed positions, so a monitor at another scale leaves every measurement wrong.
-	- Neither can be resized, and neither keeps what it would need to lay itself out again - About does not hold the adapter it names, and the notice does not hold its paragraphs.
-	- Opened: 20260919
-
-- 🔘 The Settings dialog can be left at the wrong size after a change of display scale.
-	- The layout moves to the new scale, but nothing asks the window for a size to match it, so the two only agree because the toolkit asks for one straight after. Where the window manager declines, such as a maximized or tiled window, the dialog draws at the new scale inside a window that kept its old size, and clicks no longer land where they look. Another change at the same scale does nothing, so the only way out is to close it.
-	- The screen caps are measured again at the same time but nothing is held to them, so a window dragged from a wide screen to a smaller one at a higher scale can come out taller than the screen, with the footer buttons under the taskbar.
-	- Found by reading, not reproduced.
-	- To confirm: two monitors at different scales, with the dialog maximized.
-	- Opened: 20260919
-
 - 🔘 Minimap: the marker sits above the part of the map the screen is showing, and a click in the column lands off center.
 	- Reproduced: at a prompt with 100 lines of scrollback in a 900 px column, scrolled halfway back, the marker is drawn about 24 px above the lines it stands for on a map 151 px tall. With the default 10,000-line scrollback the gap is about 13 px, ten times the marker's own height. A click halfway down the column puts the clicked line at the top of the new view rather than its middle.
 	- Cause: the marker's travel is measured against the whole buffer while the map draws only as far as the last line with output, so the marker and the image move at different rates. Both were exact before the marker was reworked to read back the position it was drawn at.
@@ -293,6 +281,22 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- 🔬 The About box and the notice box do not follow a change of display scale.
+	- Same hole the Settings dialog had. They are laid out once when they open, into fixed positions, so a monitor at another scale leaves every measurement wrong.
+	- `Fixed:` each box keeps what it was built from (`AboutSource`), so a scale change lays it out again from scratch and asks the window for the size that comes back. The notice window had no scale arm at all, so it got one.
+	- `Note:` Windows says a notice with MessageBoxW and has no notice window, so that half of the source is Linux-only.
+	- `To confirm:` two monitors at different scales. There is no test - laying either box out needs a real text context, and no test in the tree builds one.
+	- Opened: 20260919. Closed: 20260920
+
+- 🔬 The Settings dialog can be left at the wrong size after a change of display scale.
+	- The layout moves to the new scale, but nothing asks the window for a size to match it, so the two only agree because the toolkit asks for one straight after. Where the window manager declines, such as a maximized or tiled window, the dialog draws at the new scale inside a window that kept its old size, and clicks no longer land where they look.
+	- The screen caps are measured again at the same time but nothing is held to them, so a window dragged from a wide screen to a smaller one at a higher scale can come out taller than the screen, with the footer buttons under the taskbar.
+	- `Fixed:` the dialog is handed the size the window really measures, and the window is asked for that size held to the new caps. Both halves now happen whether or not a resize follows.
+	- `Pinned by:` `a_window_is_held_to_what_the_screen_can_hold_at_the_new_scale` and `a_window_that_keeps_its_pixels_through_a_scale_change_still_fits_them`, both mutation-checked.
+	- `Left alone:` the early return when the factor has not moved. It was never the fault - the size was, and it is put right the first time now.
+	- `To confirm:` two monitors at different scales, with the dialog maximized. A scale change cannot be driven on the headless rig - see the note under the scroll harness in memory.
+	- Opened: 20260919. Closed: 20260920
 
 - ✅ Selecting text all the way to the bottom of the screen - or all the way to the top - no longer auto-scrolls to reveal more to keep selecting. (It worked at some point in the past, possibly weeks ago.)
 	- `Note:` not a regression. Searched the whole history: no pane ever had this. The only edge autoscroll in the tree is the Settings dialog's, for text fields.
