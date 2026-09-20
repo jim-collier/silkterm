@@ -71,6 +71,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
+- 🔘 design.md describes the scrim Strength scale wrongly.
+	- It says each 10% doubles the halo's opacity, for ten doublings at 100%. The code divides the percent by 20, so it is five doublings, and the Settings dialog's own comment says 20%.
+	- The same paragraph is otherwise current. Only the two numbers are wrong.
+	- Opened: 20260920
+
 - ✋ A save from Settings moves the lines of a commented-out section under the setting above it.
 	- `# rotate:` with `# enabled: true` indented under it, placed after another setting, comes back with `# enabled: true` above `# rotate:` and indented under that setting. Uncommented later, the values read as part of the wrong setting and do nothing.
 	- This is how shcl 2.0.0 writes a file, and shcl's current code does the same.
@@ -108,10 +113,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
-- 🔘 Themes:
-	- 🔘 A fourth built-in theme. Pastel is the idea: a pleasing light pastel on a dark gray background carrying a subtle tint of the complementary color. Solarized is the other candidate.
-	- Opened: 20260628-083740
-
 - 🔘 Option: Dynamic text theme based on wallpaper
 	- 🔘 Change text and cursor color to be most visible against - and complimentary to - wallpaper (after all modifications applied).
 	- A boolean checkmark under themes, that disables only those specific color settings.
@@ -124,15 +125,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- A narrow rainbow strip beside it, with a vertical slider for hue.
 		- Text boxes to the right: Red %, Green %, Blue %, Brightness %, Saturation %, and a hex value.
 		- Buttons at the bottom right: "Cancel|OK", with OK the default.
-	- 🔘 A hex field should select its contents when it takes focus rather than emptying itself, which is what a text box normally does.
-
-- 🔘 The "active" grabbable window on the minimap, should be locked solidly with the scrollbar, when either one is dragged. Currently, the one not being dragged, lags the other.
-
-- 🔘 Text outline shouldn't be more than 1, for any predefined profile.
-
-- 🔘 After increasing the exponent for "Exponential" falloff, make these adjustments for default:
-	- Max silk: Strength %: 20. Scrim radius px: 8.
-	- Others: Maintain approximate visual proportion. (Unless completely off.)
 
 - 🔘 Allow programs to change the tab title.
 
@@ -1946,6 +1938,34 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Themes: a fourth built-in theme.
+	- `Fixed:` Pastel, dark and light, as the backlog described it - soft cream text on a dark gray carrying a faint blue tint, which is the complement of the text. The light variant turns it round: the same hues deepened, on cream paper.
+	- `Decided:` Pastel over Solarized. The entry named it first and described what it wanted; Solarized was listed as the other candidate.
+	- `Decided:` every ANSI color at the same low saturation, with the bright row a step lighter rather than a step more vivid, so no one color jumps out of the set.
+	- `Pinned by:` the six existing theme tests, which is what the palette structure was built for: shared chrome, a recessed gutter, the two attention colors 120 apart, the foreground clearing the contrast floor, ANSI black not clearing it, and the cursor plate carrying its text. The cursor and the light foreground were both picked against that last one rather than by eye.
+	- `Measured:` seen on `:98`, both variants, against colored `ls` output and the two ANSI rows.
+	- Opened: 20260628-083740. Closed: 20260920
+
+- ✅ Settings dialog: a hex field should select its contents when it takes focus.
+	- `Note:` no code. Keyboard focus landing on a Text, Color or Slider row has opened the field with the value selected since 20260917, and a click on the swatch has always done it. Nothing in the dialog ever empties a field.
+	- `Pinned by:` a hex case added to `keyboard_focus_opens_a_text_field_with_the_value_selected`, which had covered the text and slider fields only. Watched red with the color arm opening unselected.
+	- Opened: 20260628-083740. Closed: 20260920
+
+- ✅ The minimap marker and the scrollbar thumb should be locked together while either is dragged.
+	- `Cause:` each handle rode the exact position only while it was the one being dragged, and the eased position otherwise. So dragging one pinned it to the pointer and left the other chasing the ease the whole way down.
+	- `Fixed:` one rule for both, in `Pane::handle_lines`. Either drag puts both on the exact position; off a drag both ease.
+	- `Pinned by:` `dragging_either_handle_pins_both_to_the_pointer`.
+	- Opened: 20260920. Closed: 20260920
+
+- ✅ Retune the scrim defaults for the steeper exponential falloff, and cap the outline at one pixel in every profile.
+	- `Fixed:` the shipped radius is 8 px and the shipped strength 20%, as asked. Both went up because the falloff now drops away twice as fast, so the halo has to start further out and heavier to finish in about the same place.
+	- `Fixed:` the cheaper profiles keep the same share of the radius they always had, 5 px against the shipped 8, so they still look like the same halo built with fewer taps. Standard terminal and Remote have no halo at all and are left alone.
+	- `Fixed:` Low drew a two-pixel outline. It draws one now, which is the shipped value, so no built-in profile is above it.
+	- `Note:` the two outgoing defaults are in `SUPERSEDED_DEFAULTS`, so an existing config's commented lines are refreshed and a hand-set value is left alone. 20% comes off that list, since it is current again.
+	- `Pinned by:` `changed_defaults` for the two values, and a new loop in the profile ladder test that walks every profile and refuses an outline over a pixel.
+	- `Measured:` seen on `:98` over the shipped wallpaper - text readable at the new values.
+	- Opened: 20260920. Closed: 20260920
 
 - ✅ Include uptime for the current silkterm session, in the Help|About dialog.
 	- `Fixed:` an `Uptime:` line at the end of the Info block, formatted by `tabtitle::elapsed` the way the tab flyover's "Open" line is. `config::mark_launch` at the top of main sets the clock and `config::uptime` reads it.

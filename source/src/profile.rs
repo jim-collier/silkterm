@@ -249,7 +249,7 @@ fn values(profile: Profile, s: &mut Settings) {
 			quicker(s);
 			s.cursor_animation = "none".to_string();
 			s.text_scrim = false;
-			s.text_outline = 2.0;
+			s.text_outline = 1.0;
 		}
 		Profile::Standard | Profile::Remote => {
 			s.scroll_smooth = false;
@@ -271,7 +271,9 @@ fn quicker(s: &mut Settings) {
 	s.scroll_ease_out_ms /= 2.0;
 	s.scroll_single_screen_tau_ms /= 2.0;
 	s.text_scrim_function = "dilate".to_string();
-	s.text_scrim_radius = 3.0;
+	// the same share of the shipped radius it has always been, so a cheaper
+	// profile still looks like the same halo
+	s.text_scrim_radius = 5.0;
 }
 
 // Names the adapter closely enough that a new card or a switch to software
@@ -916,7 +918,16 @@ mod tests {
 		assert_eq!(s.cursor_animation, "none");
 		assert!(s.wallpaper_enabled, "Low keeps the wallpaper");
 		assert!(!s.text_scrim, "Low drops the halo");
-		assert_eq!(s.text_outline, 2.0, "and leans on the outline");
+		// was: assert_eq!(s.text_outline, 2.0, ...) - no built-in profile draws an
+		// outline over a pixel wide any more, so Low leans on the shipped one
+		assert_eq!(s.text_outline, 1.0, "and leans on the outline");
+		for name in ["max", "high", "low", "standard", "remote"] {
+			s.performance_profile = name.to_string();
+			apply(&mut s);
+			assert!(s.text_outline <= 1.0, "{name} draws a fat outline");
+		}
+		s.performance_profile = "low".to_string();
+		apply(&mut s);
 		for flat in ["standard", "remote"] {
 			s.performance_profile = flat.to_string();
 			apply(&mut s);

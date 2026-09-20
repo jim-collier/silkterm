@@ -188,7 +188,7 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 - **Overlay scrollbar**. Thick enough to grab, fades out when you're at the bottom, and takes no columns away from the text.
 
-- **Settings dialog with themes**. Every setting has a control, a flyover explaining it, and a revert arrow back to its default. Three color themes ship, each with a dark and a light variant - edit any color and save the result as a theme of your own.
+- **Settings dialog with themes**. Every setting has a control, a flyover explaining it, and a revert arrow back to its default. Four color themes ship, each with a dark and a light variant - edit any color and save the result as a theme of your own.
 
 - **Simple and sane configuration**. No pages of nested tabs representing multiple settings metaphors. (E.g. no separate "Profiles" and "Layouts".) If you want to get fancy with multiple sets of wildly different options - that's easy with alternate config files, and/or scripted launch-time arguments.
 

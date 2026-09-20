@@ -337,6 +337,8 @@ How it is built:
 
 - Memory is about 5 MB per pane at the default scrollback and a 120 px column, freed while the map is off.
 
+- The marker and the scrollbar thumb say the same thing, so dragging either one pins both to the pointer. Off a drag they both ride the eased position and move with the content. Letting only the dragged one ride the pointer left the other trailing the ease the whole way down, which read as the second one lagging.
+
 ### Text readability scrim
 
 A bg-colored backing behind glyphs so text stays legible over a busy background image or a near-transparent terminal. The scene's text is rendered to a coverage texture, turned into a halo, and composited under the crisp text, colored per-pixel so each glyph's backing takes its own cell's bg color. The outline is drawn in the same composite from the crisp coverage, so it works with the halo off, and the halo's blur is skipped then. The cursor is a separate coverage texture so it can join the halo and the outline as independent toggles.
@@ -353,7 +355,9 @@ The halo shape is selectable ("Scrim function"), because a plain Gaussian blur i
 
 The distance functions share one engine: a separable, exactly-Euclidean distance transform bounded to the halo radius. It takes a per-column 1D distance, then a row combine. That is cheap - two passes, no jump-flood - and reads either metric off the same field. Independently, a "Scrim falloff" curve shapes how the backing fades with distance: Sigmoid, Half-normal, Linear, Logarithmic, or Exponential. It applies both as the blur kernel weight and as the distance-path transfer. Falloff and function are orthogonal: the function decides the halo's shape, the falloff its fade. The falloff is named for the curve it draws rather than for a blur, since the same word otherwise names both a shape and a fade. A bell curve's outer half is a half-normal, and a smoothstep is a sigmoid. Every curve is normalized to reach zero at the halo's outer edge, so a halo ends where its radius says it does.
 
-A third knob, "Strength", decides how bold the finished halo is: each 10% doubles its opacity, up to ten doublings at 100%. Because the doubled value is clamped, the halo's core saturates first and the solid part grows outward along the falloff. So the backing thickens into a plate rather than merely brightening, and it still stops at the radius. At 0 the halo is exactly as the function and falloff built it, which is what ships.
+A third knob, "Strength", decides how bold the finished halo is: each 10% doubles its opacity, up to ten doublings at 100%. Because the doubled value is clamped, the halo's core saturates first and the solid part grows outward along the falloff. So the backing thickens into a plate rather than merely brightening, and it still stops at the radius. At 0 the halo is exactly as the function and falloff built it.
+
+The shipped values are a radius of 8 px and a strength of 20%. Both were raised when the exponential falloff was made twice as steep, since a curve that drops away sooner has to start further out and heavier to finish in about the same place. The cheaper profiles keep the same share of the radius they always had, so they still look like the same halo built with fewer taps.
 
 ### Minimum contrast (2026-08-30)
 
@@ -373,7 +377,7 @@ The block cursor is a second background. It is drawn as a plate at 55% under the
 
 One setting decides how much the look may cost, so a slow machine is a choice on one tab rather than a dozen switches on four.
 
-- Five profiles, in the order they cost: Custom, Max silk, High, Low, Standard terminal. Max silk is every effect at its shipped setting. High shortens the ease-in, ease-out and single-screen stretches of a scroll and gives the text halo a cheaper shape with a shorter reach. Low also drops the halo and the cursor animation, and leans on a two-pixel outline instead; it keeps the wallpaper, which is decoded once and costs nothing per frame, and smooth scrolling. Standard terminal is a plain terminal: no smooth scrolling, no wallpaper, no halo, no outline, no animation.
+- Five profiles, in the order they cost: Custom, Max silk, High, Low, Standard terminal. Max silk is every effect at its shipped setting. High shortens the ease-in, ease-out and single-screen stretches of a scroll and gives the text halo a cheaper shape with a shorter reach. Low also drops the halo and the cursor animation, and leans on the outline instead; it keeps the wallpaper, which is decoded once and costs nothing per frame, and smooth scrolling. Standard terminal is a plain terminal: no smooth scrolling, no wallpaper, no halo, no outline, no animation. No profile draws an outline over a pixel wide; Low once used two, which read as a heavy stroke rather than as the thin edge the outline is for.
 
 - A sixth, Remote (temporary), is Standard terminal under another name and is never written to the file. It is put on for a remote screen at launch and taken off again at the next launch unless that one is remote too. It can also be switched by hand, from the Profile dropdown or from "Temporary remote display mode" on the View menu, and either way it lasts the session. The stored profile waits underneath it.
 

@@ -871,6 +871,13 @@ fn bar_thumb_span(track_h: f32, thickness: f32, rows: f32, max: f32, pos_lines: 
 	(y, thumb_h)
 }
 
+// Either handle being dragged pins both. The two show the same position, so one
+// riding the pointer while the other chased the ease left it trailing the whole
+// way down.
+fn handle_is_dragged(bar: bool, map: bool) -> bool {
+	bar || map
+}
+
 // Inverse of `bar_thumb_span`: a thumb-top offset down the track, back to a
 // scroll position in lines. Used while dragging.
 fn bar_pos_to_lines(track_h: f32, thumb_h: f32, max: f32, thumb_y: f32) -> f32 {
@@ -2372,13 +2379,7 @@ impl Pane {
 		if track.h <= 0.0 || track.w <= 0.0 {
 			return None;
 		}
-		// A dragged thumb rides `target` so the handle tracks the pointer exactly;
-		// otherwise it rides `visual` so it moves with the content it describes.
-		let pos_lines = if self.bar_drag.is_some() {
-			self.scroll.target_lines()
-		} else {
-			self.scroll.visual_lines()
-		};
+		let pos_lines = self.handle_lines();
 		let (thumb_y, thumb_h) = bar_thumb_span(
 			track.h,
 			thickness,
@@ -2466,17 +2467,22 @@ impl Pane {
 		self.poke_scrollbar();
 	}
 
-	// The minimap's pieces for this frame, or None when the column is off. The
-	// marker rides `target` while dragged so it tracks the pointer exactly, and
-	// `visual` otherwise so it moves with the content it describes - the same
-	// rule the scrollbar follows.
-	pub fn minimap(&self, ctx: &TextCtx, cfg: &config::Settings) -> Option<minimap::Geom> {
-		let rows = self.term.lines;
-		let pos = if self.map_drag.is_some() {
+	// Where the scrollbar thumb and the minimap marker both sit this frame. While
+	// either one is being dragged they ride `target`, so the one under the pointer
+	// tracks it exactly and the other stays level with it. Off a drag they ride
+	// `visual`, so they move with the content they describe.
+	fn handle_lines(&self) -> f32 {
+		if handle_is_dragged(self.bar_drag.is_some(), self.map_drag.is_some()) {
 			self.scroll.target_lines()
 		} else {
 			self.scroll.visual_lines()
-		};
+		}
+	}
+
+	// The minimap's pieces for this frame, or None when the column is off.
+	pub fn minimap(&self, ctx: &TextCtx, cfg: &config::Settings) -> Option<minimap::Geom> {
+		let rows = self.term.lines;
+		let pos = self.handle_lines();
 		let (total, shown) = self.map_span();
 		minimap::geom(
 			self.full,
@@ -4627,8 +4633,8 @@ mod tests {
 		band_row_line, bar_applies_to, bar_pos_to_lines, bar_thumb_span, bell_brighten,
 		bracket_reach, capture_grid_text, capture_start, child_areas, cursor_cycle,
 		cursor_slide_step, distinct_pair, divider_at, edge_scroll_rate, equalize_dir_run,
-		fingerprint_frame, fnv_row, fnv_row_skel, glide_to_full, has_ink, layout,
-		ledger_makes_room, ledger_step, link_at, logical_line_bounds, move_is_input,
+		fingerprint_frame, fnv_row, fnv_row_skel, glide_to_full, handle_is_dragged, has_ink,
+		layout, ledger_makes_room, ledger_step, link_at, logical_line_bounds, move_is_input,
 		next_capture_poll, output_advance, output_band, pair_inside, paste_payload, prompt_strip,
 		pushed_since, render_char, repainted_edge, resume_delay, same_char_pair,
 		scroll_shift_signed, shift_makes_room, shown_cursor_shape, slide_bands, slide_is_visible,
@@ -4718,6 +4724,17 @@ mod tests {
 		let (top, _) = bar_thumb_span(track_h, thickness, rows, max, max);
 		assert!(top < bottom, "the oldest line sits at the top of the track");
 		assert_eq!(top, 0.0);
+	}
+
+	// Dragging either handle has to pin the other to it. The thumb and the marker
+	// say the same thing, so one riding the pointer while the other chased the
+	// ease read as the second one lagging.
+	#[test]
+	fn dragging_either_handle_pins_both_to_the_pointer() {
+		assert!(handle_is_dragged(true, false), "bar drag pins the marker");
+		assert!(handle_is_dragged(false, true), "marker drag pins the thumb");
+		assert!(handle_is_dragged(true, true));
+		assert!(!handle_is_dragged(false, false), "off a drag both ease");
 	}
 
 	// A huge scrollback would grind the thumb down to an ungrabbable sliver.
