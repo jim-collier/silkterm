@@ -154,7 +154,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
-- 🔘 New default text outline: 1px
+- 🔘 New default for text outline: 1px
 	- Opened: 20260919-155433 by JC.
 
 - 🔘 Extension to the idea of "Silk: Allow 'Profile' to be selected even when 'Choose automatically' is enabled:
