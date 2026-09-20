@@ -237,6 +237,8 @@ A crisp one-to-four pixel outline drawn hard against the glyphs, on top of the s
 
 A theme is a pair of palettes, one dark and one light. The mode picks which of the pair is in use: Dark, Light, or System, which follows the desktop.
 
+Four themes ship: SilkTerm, Matrix, Retro Amber and Pastel.
+
 ## Wallpaper
 
 A background image drawn behind the terminal text, dimmed and blurred to taste. A folder can be given instead of a file, in which case a different image is chosen each time.

@@ -9071,6 +9071,29 @@ mod tests {
 			Some(shown.as_str()),
 			"the box still shows the old number"
 		);
+
+		// a hex field the same: it shows its own color, selected, rather than
+		// clearing itself the way a plain text box would
+		let mut d = mk_dialog(2000.0);
+		let i = d.specs.iter().position(|s| s.key == Key::ColFg).unwrap();
+		let want = {
+			let c = d.get_col(Key::ColFg);
+			format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+		};
+		d.tab = d.specs[i].tab;
+		d.focus = None;
+		for _ in 0..200 {
+			d.key_tab();
+			if d.focus == Some(Focus::Row(i, 0)) {
+				break;
+			}
+		}
+		assert_eq!(
+			d.focus,
+			Some(Focus::Row(i, 0)),
+			"never reached the hex field"
+		);
+		assert_eq!(d.selected_text().as_deref(), Some(want.as_str()));
 	}
 
 	// Esc from inside a field is the dialog's Cancel, not "shut the field".

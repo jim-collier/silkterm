@@ -523,9 +523,9 @@ impl Default for Settings {
 			wallpaper_contrast_mask_strength: 0.5,
 			wallpaper_contrast_mask_auto: 0.5,
 			text_scrim: true,
-			text_scrim_radius: 5.0,
+			text_scrim_radius: 8.0,
 			text_scrim_softness: 0.5,
-			text_scrim_strength: 15.0,
+			text_scrim_strength: 20.0,
 			text_outline: 1.0,
 			text_scrim_ramp: "exp".to_string(),
 			text_scrim_function: "sdf".to_string(),
@@ -3236,11 +3236,14 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	// and the shipped curve moved on again to the exponential
 	("text.scrim.ramp", "\"gaussian\"  ## Default"),
 	("text.scrim.ramp", "\"half_normal\"  ## Default"),
-	// the halo used to ship exactly as built, before the scale halved, and the
-	// first tuned value on the new scale was a shade heavier
+	// the halo used to ship exactly as built, before the scale halved. 20 is the
+	// current value and so is not listed, though it did ship once before.
 	("text.scrim.strength", "0  ## Default"),
 	("text.scrim.strength", "30  ## Default"),
-	("text.scrim.strength", "20  ## Default"),
+	("text.scrim.strength", "15  ## Default"),
+	// the exponential falloff got twice as steep, so the halo reaches further to
+	// finish in about the same place
+	("text.scrim.radius", "5.0  ## Default"),
 	// the outline shipped at two pixels before the halo carried more of the work
 	("text.outline", "2.0  ## Default"),
 	// these two never tracked the theme they document - they carried a gray and a
@@ -5308,8 +5311,8 @@ text:
 	## readable over a wallpaper.
 	scrim:
 		# enabled: true  ## Default
-		# strength: 15  ## Default
-		# radius: 5.0  ## Default
+		# strength: 20  ## Default
+		# radius: 8.0  ## Default
 		# softness: 0.5  ## Default
 		## The patch's shape. "sdf" is rounded and soft. "dt" is the same but
 		## solid, with hard edges. "dilate" is square. "gaussian" is the old
@@ -7959,7 +7962,7 @@ mod tests {
 		);
 		// back to how the template ships it, at the file's own indentation
 		assert!(
-			out.contains("\t\t# strength: 15  ## Default"),
+			out.contains("\t\t# strength: 20  ## Default"),
 			"the template line went back: {out:?}"
 		);
 		// and a second revert of the same key has nothing left to do
@@ -8316,10 +8319,12 @@ mod tests {
 	fn changed_defaults() {
 		let d = Settings::default();
 		assert!(d.text_scrim, "text_scrim should default on");
-		assert_eq!(d.text_scrim_radius, 5.0);
+		// both were tuned up when the exponential falloff got twice as steep: a
+		// halo that drops away sooner needs to start further out and heavier
+		assert_eq!(d.text_scrim_radius, 8.0);
 		assert_eq!(d.text_scrim_softness, 0.5);
-		// 15% on the 20%-per-doubling scale, so a shade under one doubling
-		assert_eq!(d.text_scrim_strength, 15.0);
+		// 20% on the 20%-per-doubling scale, so exactly one doubling
+		assert_eq!(d.text_scrim_strength, 20.0);
 		assert_eq!(d.text_outline, 1.0);
 		assert_eq!(d.text_scrim_ramp, "exp");
 		assert_eq!(d.text_scrim_function, "sdf");
