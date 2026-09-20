@@ -74,6 +74,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 - 🔘 design.md describes the scrim Strength scale wrongly.
 	- It says each 10% doubles the halo's opacity, for ten doublings at 100%. The code divides the percent by 20, so it is five doublings, and the Settings dialog's own comment says 20%.
 	- The same paragraph is otherwise current. Only the two numbers are wrong.
+	- Solution: More divisions better than fewer on this.
 	- Opened: 20260920
 
 - ✋ A save from Settings moves the lines of a commented-out section under the setting above it.
