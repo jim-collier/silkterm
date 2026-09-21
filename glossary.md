@@ -249,6 +249,8 @@ A theme is a pair of palettes, one dark and one light. The mode picks which of t
 
 Four themes ship: SilkTerm, Matrix, Retro Amber and Pastel.
 
+Change a color and the Theme dropdown reads `[unsaved]`, since what is on screen is no longer the theme it was. Save folds the change into the theme and the name comes back. Picking the theme again instead puts its own colors back.
+
 ## Wallpaper
 
 A background image drawn behind the terminal text, dimmed and blurred to taste. A folder can be given instead of a file, in which case a different image is chosen each time.
