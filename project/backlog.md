@@ -108,8 +108,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
-- 🔘 Text needs to be darker and thicker in light mode.
-
 - ✋ Save settings by editing only the lines that changed, so a file with a line that cannot be read still takes the window size, menu switches and new shells.
 	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
 	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
@@ -225,6 +223,16 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 #### Done - Bugs
 
+- ✅ Text needs to be darker and thicker in light mode.
+	- `Cause:` the correction shipped on 20260920 was a coverage exponent, and an exponent is the wrong curve rather than the wrong number. Matching what an sRGB blend of the pair would have drawn needs about 0.53 at a quarter coverage, 0.35 at a half and 0.18 at three quarters, so no single value fits: the one that filled the stems smudged the faint edge pixels, and the one that left the edges alone left the stems pale.
+	- `Fixed:` the shader is handed the text color, its background and an amount, and bends coverage so the finished pixel comes out where an sRGB blend would have put it. Fork branch `text-srgb-blend-0.11.0` at 916d2c2, taken over from `coverage-gamma-0.11.0`, which is left standing. `text.dark_on_light` replaces `text.dark_on_light_gamma`, and the old key is retired rather than renamed - its number means nothing as an amount.
+	- `Decided:` the setting runs to 2.0, not 1.0. Everything up to 1.0 is a correction and 1.0 is the whole of it; the headroom is there because how heavy text should look is partly the display and the font. At 2.0 the counters of small letters start closing up, which the config comment says.
+	- `Measured:` on the rig, light theme, 12 lines of text on flat paper. Ink on partly covered pixels 40.3% with no correction, 47.6% on the exponent, 51.5% now. Whole block 9.7%, 11.1%, 11.8%. Pixels reaching full ink 6756, 6756, 7524 - an exponent can never carry one to solid, which is the half of the complaint it could not answer. At 1.5 and 2.0 the whole block goes 13.2% and 14.5%. With a wallpaper and the scrim on, 28% of the pixels around the text moved, 3.2 levels darker on average and 19.9 at most. Dark mode is untouched, and that is proven rather than argued: the same scene against a build from before the change, 0 of 1,205,130 pixels different.
+	- `Note:` over a wallpaper the scrim draws a pale plate at the letter's edge in light mode, and that is the scrim doing its job rather than a fault. Nothing draws there without a wallpaper, so the numbers above are the text on its own. If it still reads light, that plate is the next lever, not this one.
+	- `Pinned by:` `only_text_darker_than_its_background_is_corrected` and `the_pair_reaches_the_shader_as_grays_of_its_own_brightness` in text.rs, `an_existing_config_loses_the_coverage_exponent` in config.rs, and four in the fork - the curve against an sRGB blend, the two gates, the headroom clamp, and the shader's own text against the Rust mirror of it. Seven mutations, each red.
+	- `Left alone:` the light themes' own foregrounds. They are already near-black and the weight was the problem.
+	- Opened: 20260921. Closed: 20260921
+
 - ✅ In light mode the same system fonts read too thin, in the terminal and in the dialogs alike, with bold terminal text the exception.
 	- `Cause:` the color pipeline blends in linear light, glyph coverage included. A half covered pixel comes out near three quarters brightness whichever way round the colors are, which is a strong edge on a dark background and almost no ink on a light one. Bold escapes it because most of its pixels are fully covered.
 	- `Decided:` correct the coverage rather than blend text in gamma space. A second sRGB encode inside the text pass is the thing the color pipeline contract exists to stop.
@@ -233,6 +241,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- `Note:` one pass draws the whole main window, so a light theme thickens the menu and tab labels a little too. They sit on dark chrome in both modes, so that is the wrong direction, but it is a small strip and mild. design.md says why it is left there.
 	- `Pinned by:` `only_text_darker_than_its_background_is_thickened` in text.rs, and two tests in the fork holding the uniform's layout and the shader's own text. Both watched red.
 	- `Left alone:` the Settings dialog has no row for it. It is a config line.
+	- `Note:` the exponent was replaced on 20260921 by a correction that matches an sRGB blend. See the item at the top of this section for why an exponent could not finish the job.
 	- Opened: 20260920. Closed: 20260920
 
 - ✅ When releasing the minimap scroll with the mouse, it first springs back, then eases in to where it was released.

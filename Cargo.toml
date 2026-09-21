@@ -55,12 +55,18 @@ x11-clipboard = { git = "https://github.com/jim-collier/x11-clipboard", branch =
 # glyphon blends glyph coverage into whatever the target is, and ours is linear
 # light. A half covered pixel then reads at about three quarters brightness
 # either way, which is strong on a dark background and nearly nothing on a light
-# one - so light themes lose the thin parts of every letter and read thin. Our
-# branch adds a coverage gamma to the params uniform, in the padding the struct
-# already carried, and raises coverage by it before it becomes alpha. At 1.0 the
-# shader takes the old path exactly. The branch is the published 0.11.0 plus
-# that one change and two tests for it.
-glyphon = { git = "https://github.com/jim-collier/glyphon", branch = "coverage-gamma-0.11.0" }
+# one - so light themes lose the thin parts of every letter and read thin and
+# pale. Our branch carries the text color, its background and a blend amount in
+# the params uniform, and bends coverage so the finished pixel lands where an
+# sRGB blend of that pair would have put it. That is the weight the font was
+# drawn for and what almost every other program paints; the output stays linear,
+# so the target is still encoded once. A blend of 0 leaves coverage alone. The
+# branch is the published 0.11.0 plus that change and its tests.
+#
+# `coverage-gamma-0.11.0` is the same work as an exponent, which was the wrong
+# curve: it smudged the faintest pixels and still left the stems pale. Left
+# standing so an older lock resolves.
+glyphon = { git = "https://github.com/jim-collier/glyphon", branch = "text-srgb-blend-0.11.0" }
 
 # Clippy gate (cicd lints stage runs -D warnings). pedantic is on; the allows
 # below are deliberate house style, not suppressed problems.
