@@ -644,6 +644,12 @@ pub fn is_dark() -> bool {
 	}
 }
 
+// The OS bit on its own, for the callers that answer from a settings copy rather
+// than from the live store.
+pub fn os_dark() -> bool {
+	OS_DARK.load(Ordering::Relaxed)
+}
+
 // On an OS dark/light change (System mode only): recompute the theme palette and
 // swap it in (no file write). Returns true if anything changed (caller redraws).
 pub fn reapply_for_os(dark: bool) -> bool {
@@ -1925,7 +1931,12 @@ pub fn to_linear(b: u8) -> f32 {
 }
 
 fn linear_of(b: u8) -> f32 {
-	let c = f32::from(b) / 255.0;
+	to_linear_f32(f32::from(b) / 255.0)
+}
+
+// sRGB -> linear on a 0..1 value rather than a byte.
+pub fn to_linear_f32(c: f32) -> f32 {
+	let c = c.clamp(0.0, 1.0);
 	if c <= 0.04045 {
 		c / 12.92
 	} else {
@@ -1933,16 +1944,26 @@ fn linear_of(b: u8) -> f32 {
 	}
 }
 
-// Inverse of to_linear: encode a linear value back to an sRGB byte. The one
-// Rust-side copy - the WGSL lin2srgb in gfx.rs/scrim.rs is necessarily separate.
-pub fn from_linear_u8(c: f32) -> u8 {
+// Inverse of to_linear_f32. The one Rust-side copy - the WGSL lin2srgb in
+// gfx.rs/scrim.rs is necessarily separate.
+pub fn from_linear(c: f32) -> f32 {
 	let c = c.clamp(0.0, 1.0);
-	let s = if c <= 0.003_130_8 {
+	if c <= 0.003_130_8 {
 		c * 12.92
 	} else {
 		1.055 * c.powf(1.0 / 2.4) - 0.055
-	};
-	(s * 255.0 + 0.5) as u8
+	}
+}
+
+// Encode a linear value back to an sRGB byte.
+pub fn from_linear_u8(c: f32) -> u8 {
+	(from_linear(c) * 255.0 + 0.5) as u8
+}
+
+// Rec.709 luma of an sRGB color, in linear light. Matches contrast.rs and the
+// per-pixel weights in autotheme.rs.
+pub fn luma(c: [u8; 3]) -> f32 {
+	0.2126 * to_linear(c[0]) + 0.7152 * to_linear(c[1]) + 0.0722 * to_linear(c[2])
 }
 
 // config file loading
@@ -5329,6 +5350,10 @@ wallpaper:
 		# interval_s: 0.0  ## Default
 		# random: true  ## Default
 
+	## How much of the picture shows through the background color. Light mode
+	## mixes in more of it to reach the same visible result, so the number means
+	## the same thing in either mode - at 10% a picture is plainly there over a
+	## dark background and all but gone over a light one.
 	# opacity: 0.10  ## Default
 
 	## "stretch" fills the window even if that distorts the image. "zoom" keeps
@@ -5370,6 +5395,9 @@ text:
 	## readable over a wallpaper.
 	scrim:
 		# enabled: true  ## Default
+		## Light mode quietens the patch by about a doubling and a half: a pale
+		## patch on a darkened background shows more than a dark one does on a
+		## lightened background.
 		# strength: 20  ## Default
 		# radius: 8.0  ## Default
 		# softness: 0.5  ## Default

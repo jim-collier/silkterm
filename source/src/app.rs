@@ -5327,7 +5327,12 @@ impl State {
 		);
 		gpu.rects.set_resolution(&gpu.gfx.queue, frame_w, frame_h);
 		if let Some(img) = &gpu.wallpaper_img {
-			img.set_resolution(&gpu.gfx.queue, frame_w, frame_h);
+			// Light mode draws the picture at a higher alpha than the slider reads,
+			// so the same setting shows the same amount of picture either way
+			// (lightmode.rs). Re-read per frame: the mode can flip under a running
+			// window and nothing reloads the wallpaper for it.
+			let alpha = crate::lightmode::wallpaper_alpha(&cfg, img.opacity());
+			img.set_look(&gpu.gfx.queue, frame_w, frame_h, alpha);
 		}
 		gpu.rects
 			.upload(&gpu.gfx.device, &gpu.gfx.queue, &instances);
@@ -5731,8 +5736,16 @@ impl State {
 			_ => 0.0, // "sigmoid"
 		};
 		// "Strength" 0..100% -> doublings of the finished halo alpha (0 = as built),
-		// so the top of the slider is x32
-		let scrim_strength = cfg.text_scrim_strength.clamp(0.0, 100.0) / SCRIM_PCT_PER_DOUBLING;
+		// so the top of the slider is x32. In light mode the halo is a pale plate
+		// on whatever the picture darkened, which reads harder than dark mode's
+		// does at the same alpha, so it gives back a fraction of a doubling
+		// (lightmode.rs). The gain is 1 in dark mode and with no picture up.
+		let shown_wallpaper = gpu
+			.wallpaper_img
+			.as_ref()
+			.map_or(0.0, ImageRenderer::opacity);
+		let scrim_strength = cfg.text_scrim_strength.clamp(0.0, 100.0) / SCRIM_PCT_PER_DOUBLING
+			+ crate::lightmode::halo_gain(&cfg, shown_wallpaper).log2();
 		// build function index: 0 dilate, 1 sdf, 2 dt, 3 gaussian (legacy blur)
 		let scrim_function = match cfg.text_scrim_function.as_str() {
 			"dilate" => 0.0,

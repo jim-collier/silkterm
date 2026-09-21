@@ -28,6 +28,7 @@ mod fuzz;
 mod gfx;
 mod input;
 mod integration;
+mod lightmode;
 mod links;
 mod minimap;
 mod palette;

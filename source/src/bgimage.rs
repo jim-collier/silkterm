@@ -40,7 +40,7 @@ pub struct ImageRenderer {
 	fit: f32,
 	anchor: [f32; 2],
 	// last resolution written to the uniform (skip the per-frame re-write)
-	last_res: std::cell::Cell<(f32, f32)>,
+	last: std::cell::Cell<(f32, f32, f32)>,
 	// VT-switch loss probe: this texture is a REAL casualty of a VRAM purge
 	// (it is sampled every frame, so it lives hot in video memory - unlike a
 	// synthetic sentinel, which the driver can keep restorable elsewhere). A
@@ -232,21 +232,27 @@ impl ImageRenderer {
 			probe_ref,
 			probe_buf,
 			probe_inflight: None,
-			last_res: std::cell::Cell::new((0.0, 0.0)),
+			last: std::cell::Cell::new((0.0, 0.0, -1.0)),
 		}
 	}
 
-	pub fn set_resolution(&self, queue: &wgpu::Queue, w: f32, h: f32) {
-		// called per frame; opacity/fit/anchor are fixed at construction, so the
-		// uniform only changes on resize
-		if self.last_res.get() == (w, h) {
+	// What the slider (or the image's own tag) asked for, which is not always
+	// what gets drawn - see `set_look`.
+	pub fn opacity(&self) -> f32 {
+		self.opacity
+	}
+
+	// Called per frame. fit/anchor are fixed at construction, so the uniform only
+	// changes on a resize or when light mode re-reads the visibility.
+	pub fn set_look(&self, queue: &wgpu::Queue, w: f32, h: f32, opacity: f32) {
+		if self.last.get() == (w, h, opacity) {
 			return;
 		}
-		self.last_res.set((w, h));
+		self.last.set((w, h, opacity));
 		let uniform_data = Uniform {
 			resolution: [w, h],
 			image_size: self.image_size,
-			opacity: self.opacity,
+			opacity,
 			fit: self.fit,
 			anchor: self.anchor,
 		};
