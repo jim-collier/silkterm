@@ -108,6 +108,14 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
+- 🔘 Make auto text color default to "On".
+
+- 🔘 When theme colors are changed by the user, change the theme in the dropdown to "[unsaved]".
+
+- 🔘 Dark mode is just about perfect, so don't make ANY changes that affect dark mode. But light mode is badly miscalibrated. Various settings may need to work differently in light mode. (Either different defaults, and/or different ways of calculating them depending on dark or light mode.) For example:
+	- Wallpaper is practically invisible at the dark mode's visibility %.
+	- When wallpaper is more visible (and thus often provining a dark background), text scrim is WAY too overpowering it light mode.
+
 - ✋ Save settings by editing only the lines that changed, so a file with a line that cannot be read still takes the window size, menu switches and new shells.
 	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
 	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
