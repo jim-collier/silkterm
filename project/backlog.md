@@ -83,23 +83,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- ✋ Held with that item.
 	- Opened: 20260910-230211
 
-- ✋ CTRL+shift+C is not working consistently, nor is auto-copy selected text, nor is the auto-copy of a program running in a pane. Right-click then copy does work when CTRL+shift+C doesn't. This is a regression.
-	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
-	- Changed: copy-on-select no longer waits on the window-focus flag. The drag is proof enough that this is the window in use.
-	- Not reproduced so far: plain use, a key replayed through another program's grab, and a program repainting its own lines all copy correctly.
-	- To find the rest, run with `SILK_KEYDBG=1`. It prints each key with the focus flag and modifiers, every focus change, and every clipboard write with its result, so a failed copy shows which stage dropped it.
-	- Still suspect: the gate that drops keys while the window reads as unfocused (from the bare-arrow fix, never run on this desktop), and CopyQ taking the clipboard back right after a copy.
-	- ✋ 20260905-184500: With the change in, copy-on-select and the hotkey have both worked so far. Leaving open until it has held for a while, since it was intermittent.
-	- Opened: 20260905-175000
-
-- ✋ When switching virtual desktops (on regular non-VM GPU-acellerated Linux), Silkterm sometimes won't repaint.
-	- It's hard to reproduce. Sometimes it will partially repaint in blocks, sometime not at all.
-	- Notes:
-		- There's some chance it was a problem with my XFCE window compositor, which I reset. (But no other windows had the problem, and all silkterm windows did.)
-		- It might also have been due to a stuck UnrealEngine process holding 3.7 GB of RAM.
-		- If it's a real bug, it's new, not a regression.
-	- ✋ Update: It was probably due to running out of GPU memory. Keep an eye on it.
-
 - ✋ A config written as single dotted lines grows on every launch, with settings added under the wrong sections.
 	- From nine lines such as `window.columns: 100`, one launch put the scroll settings under `performance` and `margin` under the wallpaper's `rotate` block.
 	- The next launch added them again in the right places, so the file keeps growing.
@@ -222,6 +205,27 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ When switching virtual desktops (on regular non-VM GPU-acellerated Linux), Silkterm sometimes won't repaint.
+	- It's hard to reproduce. Sometimes it will partially repaint in blocks, sometime not at all.
+	- Notes:
+		- There's some chance it was a problem with my XFCE window compositor, which I reset. (But no other windows had the problem, and all silkterm windows did.)
+		- It might also have been due to a stuck UnrealEngine process holding 3.7 GB of RAM.
+		- If it's a real bug, it's new, not a regression.
+	- ✋ Update: It was probably due to running out of GPU memory. Keep an eye on it.
+	- UAT accepted.
+	- Opened: n/a. Closed: 20260921
+
+- ✅ CTRL+shift+C is not working consistently, nor is auto-copy selected text, nor is the auto-copy of a program running in a pane. Right-click then copy does work when CTRL+shift+C doesn't. This is a regression.
+	- All three routes read the same selection and write the clipboard the same way. The two that fail also wait on the window-focus flag; the one that works does not.
+	- Changed: copy-on-select no longer waits on the window-focus flag. The drag is proof enough that this is the window in use.
+	- Not reproduced so far: plain use, a key replayed through another program's grab, and a program repainting its own lines all copy correctly.
+	- To find the rest, run with `SILK_KEYDBG=1`. It prints each key with the focus flag and modifiers, every focus change, and every clipboard write with its result, so a failed copy shows which stage dropped it.
+	- Still suspect: the gate that drops keys while the window reads as unfocused (from the bare-arrow fix, never run on this desktop), and CopyQ taking the clipboard back right after a copy.
+	- ✋ 20260905-184500: With the change in, copy-on-select and the hotkey have both worked so far. Leaving open until it has held for a while, since it was intermittent.
+	- Opened: 20260905-175000
+	- UAT accepted.
+	- Closed: 20260921
 
 - ✅ Text needs to be darker and thicker in light mode.
 	- `Cause:` the correction shipped on 20260920 was a coverage exponent, and an exponent is the wrong curve rather than the wrong number. Matching what an sRGB blend of the pair would have drawn needs about 0.53 at a quarter coverage, 0.35 at a half and 0.18 at three quarters, so no single value fits: the one that filled the stems smudged the faint edge pixels, and the one that left the edges alone left the stems pale.
