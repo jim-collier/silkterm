@@ -1,11 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
-
 #![cfg_attr(
 	all(target_os = "windows", not(debug_assertions)),
 	windows_subsystem = "windows"
 )]
-
 mod app;
 mod autotheme;
 mod bgimage;
@@ -28,7 +26,6 @@ mod fuzz;
 mod gfx;
 mod input;
 mod integration;
-mod lightmode;
 mod links;
 mod minimap;
 mod palette;
@@ -48,14 +45,12 @@ mod text;
 mod theme;
 mod tip;
 mod ui_spec;
+mod visibility;
 mod wallpaper;
 mod xmp;
-
-use winit::event_loop::{ControlFlow, EventLoop};
-
 use crate::app::App;
 use crate::term::UserEvent;
-
+use winit::event_loop::{ControlFlow, EventLoop};
 // Make stdout/stderr reach the terminal we were launched from.
 //
 // A Windows release build is GUI-subsystem (see the attribute at the top of this
@@ -77,21 +72,17 @@ fn open_console() {
 		);
 	}
 }
-
 fn cli_only(cli: &cli::Cli) -> bool {
 	cli.help || cli.syntax || cli.about || cli.donate || cli.version
 }
-
 fn control(cli: &cli::Cli) -> bool {
 	cli.reload || cli.wallpaper.is_some()
 }
-
 // Every path that prints and exits needs the console, the control commands
 // included - on Windows their errors went nowhere.
 fn prints_and_exits(cli: &cli::Cli) -> bool {
 	cli_only(cli) || control(cli)
 }
-
 fn main() -> anyhow::Result<()> {
 	config::mark_launch();
 	env_logger::init();
@@ -102,7 +93,6 @@ fn main() -> anyhow::Result<()> {
 	term::sanitize_shell_env();
 	config::take_handed_down_dir();
 	app::tune_heap();
-
 	let mut cli = match cli::parse(std::env::args().skip(1)) {
 		Ok(parsed) => parsed,
 		Err(e) => {
@@ -167,15 +157,12 @@ fn main() -> anyhow::Result<()> {
 		}
 		return Ok(());
 	}
-
 	// Read what the machine is on a worker: the profile needs it, nothing before
 	// the first frame does, and a /proc read has no business on that path.
 	profile::probe_machine();
-
 	if let Some(path) = &cli.config {
 		config::set_config_override(path.clone());
 	}
-
 	// Start over from the shipped defaults: move the current config aside before
 	// anything reads it, so the load below writes a fresh one. Runs after --config
 	// so the two combine (reset THAT file).
@@ -189,7 +176,6 @@ fn main() -> anyhow::Result<()> {
 			None => println!("{}: no config to reset", config::APP_NAME),
 		}
 	}
-
 	// Launched with no layout arguments? Fall back to a config-defined command
 	// line (real CLI arguments override it entirely). A bare --config still takes
 	// the fallback - it picks WHICH config, so that config's command_line applies.
@@ -202,15 +188,12 @@ fn main() -> anyhow::Result<()> {
 			}
 		}
 	}
-
 	let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
 	event_loop.set_control_flow(ControlFlow::Wait);
-
 	let proxy = event_loop.create_proxy();
 	// control socket up before any PTY spawns, so shells inherit SILKTERM_SOCKET
 	let _ctl = ctl::serve(proxy.clone());
 	let mut app = App::new(proxy, cli);
-
 	// cicd profiler stage: SILK_PROFILE_OUT set -> sample this run and write a
 	// flamegraph SVG when the app exits (App exits itself after SILK_PROFILE_SECS).
 	#[cfg(feature = "profiling")]
@@ -221,9 +204,7 @@ fn main() -> anyhow::Result<()> {
 			.build()
 			.expect("pprof: failed to start profiler")
 	});
-
 	event_loop.run_app(&mut app)?;
-
 	#[cfg(feature = "profiling")]
 	if let Some(guard) = profile_guard {
 		let out = std::env::var("SILK_PROFILE_OUT").unwrap();
@@ -237,18 +218,14 @@ fn main() -> anyhow::Result<()> {
 			.expect("pprof: failed to write flamegraph");
 		eprintln!("{}: wrote flamegraph -> {out}", config::APP_NAME);
 	}
-
 	Ok(())
 }
-
 #[cfg(test)]
 mod tests {
 	use super::*;
-
 	fn parsed(args: &[&str]) -> cli::Cli {
 		cli::parse(args.iter().map(ToString::to_string)).unwrap()
 	}
-
 	// A Windows release build owns no console, so a control command that failed
 	// said nothing at all.
 	#[test]

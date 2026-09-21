@@ -45,7 +45,7 @@ pub struct ImageRenderer {
 	fit: f32,
 	anchor: [f32; 2],
 	// last resolution written to the uniform (skip the per-frame re-write)
-	last: std::cell::Cell<(f32, f32, crate::lightmode::Mix, [f32; 4])>,
+	last: std::cell::Cell<(f32, f32, crate::visibility::Mix, [f32; 4])>,
 	// VT-switch loss probe: this texture is a REAL casualty of a VRAM purge
 	// (it is sampled every frame, so it lives hot in video memory - unlike a
 	// synthetic sentinel, which the driver can keep restorable elsewhere). A
@@ -240,7 +240,7 @@ impl ImageRenderer {
 			last: std::cell::Cell::new((
 				0.0,
 				0.0,
-				crate::lightmode::Mix {
+				crate::visibility::Mix {
 					amount: -1.0,
 					perceptual: false,
 				},
@@ -262,7 +262,7 @@ impl ImageRenderer {
 		queue: &wgpu::Queue,
 		w: f32,
 		h: f32,
-		mix: crate::lightmode::Mix,
+		mix: crate::visibility::Mix,
 		bg: [f32; 4],
 	) {
 		let now = (w, h, mix, bg);

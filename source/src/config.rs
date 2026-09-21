@@ -361,8 +361,9 @@ pub struct Settings {
 	pub wallpaper_rotate_random: bool,     // rotate randomly instead of in filename order
 	pub wallpaper_rotate_interval_s: f32,  // seconds between rotations (0 = pick one at startup only)
 	pub wallpaper_opacity: f32,            // image visibility 0..1
-	pub wallpaper_default_fit: Fit,        // used unless the image's own tags say otherwise
-	pub wallpaper_honor_xmp: bool,         // let a wallpaper's own Fit/Anchor tags win
+	pub wallpaper_even: f32, // hold every picture to the same visibility whatever its own brightness, 0..1
+	pub wallpaper_default_fit: Fit, // used unless the image's own tags say otherwise
+	pub wallpaper_honor_xmp: bool, // let a wallpaper's own Fit/Anchor tags win
 	pub wallpaper_honor_xmp_look: bool, // and its Opacity/Blur tags, which replace the two settings below
 	pub wallpaper_blur: f32,            // Gaussian blur sigma applied to the image (0 = none)
 	pub wallpaper_contrast_mask: bool,  // flatten the image's contrast so it stops competing with text
@@ -528,6 +529,7 @@ impl Default for Settings {
 			wallpaper_rotate_random: true,
 			wallpaper_rotate_interval_s: 0.0,
 			wallpaper_opacity: 0.10, // image visibility relative to bg color
+			wallpaper_even: 1.0,
 			wallpaper_default_fit: Fit::Stretch,
 			wallpaper_honor_xmp: true,
 			wallpaper_honor_xmp_look: true,
@@ -1675,6 +1677,9 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if !same_f32(s.wallpaper_opacity, orig.wallpaper_opacity) {
 		doc.put_float("wallpaper.opacity", r(s.wallpaper_opacity));
 	}
+	if !same_f32(s.wallpaper_even, orig.wallpaper_even) {
+		doc.put_float("wallpaper.even_visibility", r(s.wallpaper_even));
+	}
 	if s.wallpaper_enabled != orig.wallpaper_enabled {
 		doc.put_bool("wallpaper.enabled", s.wallpaper_enabled);
 	}
@@ -2004,6 +2009,7 @@ struct RawConfig {
 	wallpaper_rotate_random: Option<bool>,
 	wallpaper_rotate_interval_s: Option<f32>,
 	wallpaper_opacity: Option<f32>,
+	wallpaper_even: Option<f32>,
 	wallpaper_default_fit: Option<String>,
 	wallpaper_honor_xmp: Option<bool>,
 	wallpaper_honor_xmp_look: Option<bool>,
@@ -2334,6 +2340,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		wallpaper_rotate_random: r.b("wallpaper.rotate.random"),
 		wallpaper_rotate_interval_s: r.f("wallpaper.rotate.interval_s"),
 		wallpaper_opacity: r.f("wallpaper.opacity"),
+		wallpaper_even: r.f("wallpaper.even_visibility"),
 		wallpaper_default_fit: r.s("wallpaper.default_fit"),
 		wallpaper_honor_xmp: r.b("wallpaper.honor_xmp"),
 		wallpaper_honor_xmp_look: r.b("wallpaper.honor_xmp_look"),
@@ -2769,6 +2776,10 @@ fn resolve(raw: RawConfig) -> Settings {
 		wallpaper_opacity: raw
 			.wallpaper_opacity
 			.unwrap_or(d.wallpaper_opacity)
+			.clamp(0.0, 1.0),
+		wallpaper_even: raw
+			.wallpaper_even
+			.unwrap_or(d.wallpaper_even)
 			.clamp(0.0, 1.0),
 		wallpaper_blur: raw
 			.wallpaper_blur
@@ -5351,10 +5362,17 @@ wallpaper:
 		# random: true  ## Default
 
 	## How much of the picture shows through the background color. Light mode
-	## mixes in more of it to reach the same visible result, so the number means
+	## mixes it differently to reach the same visible result, so the number means
 	## the same thing in either mode - at 10% a picture is plainly there over a
 	## dark background and all but gone over a light one.
 	# opacity: 0.10  ## Default
+
+	## Hold every picture to the visibility above, whatever its own brightness,
+	## so a bright photo does not glare where a dark one is barely there. A
+	## picture further from the background color than usual is drawn at less than
+	## the number says, and one closer at more. 0 turns it off. At 100%
+	## visibility the picture is always drawn as it is.
+	# even_visibility: 1.0  ## Default
 
 	## "stretch" fills the window even if that distorts the image. "zoom" keeps
 	## the proportions and crops the edges.
@@ -6065,6 +6083,7 @@ mod tests {
 		stored.wallpaper_summary = Some(crate::autotheme::Summary {
 			luma_hi: 0.3,
 			luma_lo: 0.02,
+			luma_mean: 0.13,
 			alpha: 1.0,
 			hue: 250.0,
 			chroma: 0.08,

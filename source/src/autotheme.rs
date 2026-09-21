@@ -69,6 +69,9 @@ pub struct Summary {
 	// Per-cell linear luma at the bright and dark ends, alpha premultiplied.
 	pub luma_hi: f32,
 	pub luma_lo: f32,
+	// And the mean of the same grid. Only the visibility ramp reads it, which
+	// wants how bright the picture is overall rather than where its ends are.
+	pub luma_mean: f32,
 	// Mean alpha, so the share of a cell the image does not cover can be given
 	// back to the background color. 1.0 for every ordinary photo.
 	pub alpha: f32,
@@ -92,6 +95,7 @@ pub fn summarize(img: &image::RgbaImage, opacity: f32) -> Summary {
 		return Summary {
 			luma_hi: 0.0,
 			luma_lo: 0.0,
+			luma_mean: 0.0,
 			alpha: 1.0,
 			hue: 0.0,
 			chroma: 0.0,
@@ -140,6 +144,7 @@ pub fn summarize(img: &image::RgbaImage, opacity: f32) -> Summary {
 		return Summary {
 			luma_hi: 0.0,
 			luma_lo: 0.0,
+			luma_mean: 0.0,
 			alpha: 1.0,
 			hue: 0.0,
 			chroma: 0.0,
@@ -148,9 +153,15 @@ pub fn summarize(img: &image::RgbaImage, opacity: f32) -> Summary {
 	}
 	lumas.sort_by(f32::total_cmp);
 	let cells = a_n.max(1) as f64;
+	let mean = if lumas.is_empty() {
+		0.0
+	} else {
+		(lumas.iter().map(|&x| f64::from(x)).sum::<f64>() / lumas.len() as f64) as f32
+	};
 	Summary {
 		luma_hi: pct(&lumas, HI_PCT),
 		luma_lo: pct(&lumas, LO_PCT),
+		luma_mean: mean,
 		alpha: (a_sum / cells) as f32,
 		hue: dominant_hue(&hist),
 		chroma: (chroma_sum / cells) as f32,
@@ -246,10 +257,10 @@ fn hue_chroma(c: [u8; 3]) -> (f32, f32) {
 
 // What the background behind a glyph really is, as a linear luma - the wallpaper
 // pass's own blend, with the image's luma standing in for its color. Light mode
-// mixes differently from dark, so `mix` carries which one (lightmode.rs). Where
+// mixes differently from dark, so `mix` carries which one (visibility.rs). Where
 // the image does not cover its pixel the background shows through first, so the
 // picture is filled with it before the two are mixed.
-fn field_luma(sum: &Summary, image_luma: f32, bg: [u8; 3], mix: crate::lightmode::Mix) -> f32 {
+fn field_luma(sum: &Summary, image_luma: f32, bg: [u8; 3], mix: crate::visibility::Mix) -> f32 {
 	let bg = config::luma(bg);
 	let filled = image_luma + bg * (1.0 - sum.alpha.clamp(0.0, 1.0));
 	mix.field(filled, bg)
@@ -287,6 +298,14 @@ fn cursor_for(plate_target: f32, behind_luma: f32, hue: f32, chroma: f32) -> [u8
 	at_lightness(0.5 * (lo + hi), hue, chroma)
 }
 
+impl Summary {
+	// How bright the picture is, for the visibility ramp: its overall level and
+	// its bright end, which is where glare comes from.
+	pub fn picture(&self) -> (f32, f32) {
+		(self.luma_mean, self.luma_hi)
+	}
+}
+
 // The derived pair. `None` for either means the theme's own color stands.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Derived {
@@ -299,7 +318,7 @@ pub struct Derived {
 pub fn derive(sum: &Summary, s: &Settings) -> Derived {
 	let floor = s.text_min_contrast.clamp(0.0, 1.0);
 	let (bg, fg, cursor) = (s.bg, s.fg, s.cursor);
-	let mix = crate::lightmode::wallpaper_mix(s, sum.opacity);
+	let mix = crate::visibility::wallpaper_mix(s, sum.opacity, Some(sum.picture()));
 	let hi = gray_lightness(field_luma(sum, sum.luma_hi, bg, mix));
 	let lo = gray_lightness(field_luma(sum, sum.luma_lo, bg, mix));
 
@@ -408,7 +427,7 @@ mod tests {
 			colors_from_wallpaper: true,
 			wallpaper_enabled: true,
 			// A light background means light mode, which draws the picture at a
-			// higher alpha than the slider reads (lightmode.rs). Without this the
+			// higher alpha than the slider reads (visibility.rs). Without this the
 			// light cases here are placed against a field nobody will ever see.
 			theme_mode: if lightness(bg) > 0.5 { "light" } else { "dark" }.to_string(),
 			..Settings::default()
@@ -608,8 +627,10 @@ mod tests {
 		);
 	}
 
-	fn mix(s: &Settings, slider: f32) -> crate::lightmode::Mix {
-		crate::lightmode::wallpaper_mix(s, slider)
+	// What `derive` will place its colors against, so the test models the field the
+	// code really uses rather than one of its own.
+	fn mix(s: &Settings, sum: &Summary) -> crate::visibility::Mix {
+		crate::visibility::wallpaper_mix(s, sum.opacity, Some(sum.picture()))
 	}
 
 	// The plate the block cursor draws, over a field taken as a neutral at
@@ -636,10 +657,8 @@ mod tests {
 				for op in [0.1f32, 0.35, 1.0] {
 					let sum = summarize(&plain(rgb, 32, 32), op);
 					let out = derive(&sum, &s);
-					let plate = plate_over(
-						out.cursor,
-						field_luma(&sum, sum.luma_hi, bg, mix(&s, sum.opacity)),
-					);
+					let plate =
+						plate_over(out.cursor, field_luma(&sum, sum.luma_hi, bg, mix(&s, &sum)));
 					let gap = (lightness(out.fg) - plate).abs();
 					// Short only where the field is already past the target and the
 					// search bottoms out, which is the case the scrim covers.

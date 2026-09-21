@@ -1,32 +1,34 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
-//! What light mode has to do differently to read the way dark mode does.
+//! How much of the wallpaper, and how much of the text scrim's halo, actually
+//! gets drawn. Both are authored amounts - a person moved a slider - and neither
+//! survives being handed straight to the renderer.
 //!
-//! Both settings here are linear-light alphas, and linear light is not what the
-//! eye reads. sRGB's curve is steep at the bottom and flat at the top, so the
-//! same alpha covers a lot of visible ground against a near-black background and
-//! almost none against a near-white one. Dark mode is the reference and is never
-//! touched: every function here returns the value it was handed when the active
-//! mode is dark.
+//! Two things get in the way, and both are the same shape: the number a person
+//! picks is perceptual, and what the renderer wants is not.
 //!
-//! - **Wallpaper visibility.** The slider means one thing: how much of the
-//!   picture's own contrast reaches the screen. A linear-light blend delivers
-//!   that over a near-black background and almost none of it over a light one,
-//!   so light mode mixes the background and the picture in a power curve
-//!   instead, at the amount dark mode's blend would have delivered. Nothing is
-//!   calibrated by eye and nothing is solved: both halves are closed form.
-//! - **Text scrim.** The halo is the background color laid over whatever the
-//!   picture put there, so in light mode it is a pale plate on a darkened
-//!   field, which is the same move in the direction the eye notices most. That
-//!   composite blends against the destination through the pipeline's blend
-//!   state and cannot read it, so the halo is still a calibration: its alpha is
-//!   scaled down until it covers the same ground dark mode's does.
+//! - **The mode.** A linear-light blend is what the program has always drawn,
+//!   and sRGB's curve is steep at the bottom and flat at the top, so the same
+//!   alpha covers a lot of visible ground over a near-black background and
+//!   almost none over a light one. Dark mode is the reference and is never
+//!   touched. Light mode mixes the background and the picture in a power curve
+//!   instead, at the amount dark mode's blend would have delivered. Both halves
+//!   are closed form - nothing is calibrated by eye and nothing is solved.
+//! - **The picture.** At one setting a bright photo glares where a dark one is
+//!   barely there, because the slider says how much of the picture to mix in
+//!   rather than how far to move the background. `even_visibility` holds every
+//!   picture to the same displacement, fading out toward 100% where the picture
+//!   has to be drawn as it is.
 //!
-//! The measure throughout is the sRGB transfer curve taken on Rec.709 luma. Luma
+//! The scrim's halo is the one thing still calibrated rather than derived. That
+//! composite blends against the destination through the pipeline's blend state
+//! and cannot read it, so there is nothing to solve against: its alpha is scaled
+//! down until it covers the same ground dark mode's does.
+//!
+//! The measure throughout is a transfer curve taken on Rec.709 luma. Luma
 //! because it is affine under the alpha composite, so one number stands in for a
-//! whole blend; the transfer curve because it tracks CIE L* closely enough here
-//! and it is already the program's color language.
+//! whole blend; a curve because linear light is not what the eye reads.
 
 use crate::config::{self, Settings};
 
@@ -41,6 +43,12 @@ const WALLPAPER_LUMA: f32 = 0.13;
 // power curve makes the mix exactly the linear blend it replaces, and sRGB's
 // would lift the black by eight levels.
 const MIX_GAMMA: f32 = 2.4;
+
+// The picture the visibility ramp measures against: the shipped pack's median
+// overall brightness and median bright end, as linear luma. A picture matching
+// these is drawn at exactly what the slider says.
+const REF_MEAN: f32 = 0.124;
+const REF_HI: f32 = 0.337;
 
 // Where the two halos are compared. The gain cannot be right across the whole
 // falloff - the curves meet at both ends whatever it is - so it is matched at
@@ -104,6 +112,47 @@ fn encoded_scale(alpha: f32, bg: f32) -> f32 {
 	alpha * slope(alpha * WALLPAPER_LUMA + (1.0 - alpha) * bg) / slope(WALLPAPER_LUMA)
 }
 
+// The mix curve, on a linear value.
+fn curve(x: f32) -> f32 {
+	x.max(0.0).powf(1.0 / MIX_GAMMA)
+}
+
+// How bright a picture reads, from its overall level and its bright end. The
+// bright end is half the answer because glare comes from there, not from the
+// average - a photo that is mostly night sky with a sun in it is not a dark
+// picture to look at.
+fn brightness(mean: f32, hi: f32) -> f32 {
+	0.5 * (curve(mean) + curve(hi))
+}
+
+// How far this picture sits from the background, against how far the reference
+// picture sits from it. 1 is an ordinary picture, above 1 is one that would
+// glare, below 1 is one that would barely show.
+fn standout(picture: (f32, f32), bg: f32) -> f32 {
+	let reference = (brightness(REF_MEAN, REF_HI) - curve(bg)).abs();
+	if reference < 1e-4 {
+		return 1.0;
+	}
+	((brightness(picture.0, picture.1) - curve(bg)).abs() / reference).max(1e-3)
+}
+
+// The slider's amount, evened out for how bright this picture is. A picture
+// further from the background than usual is drawn at less than the number says
+// and one closer at more, so the setting means the same thing whatever is
+// rotated in next.
+//
+// The correction fades out as the slider rises and is gone at 100%, because
+// there the picture has to be drawn as it is - that is what 100% means, and it
+// is the one reading a ramp must not disturb.
+fn evened(amount: f32, slider: f32, picture: (f32, f32), bg: f32, strength: f32) -> f32 {
+	let strength = strength.clamp(0.0, 1.0);
+	if strength <= 0.0 {
+		return amount;
+	}
+	let fade = strength * (1.0 - slider.clamp(0.0, 1.0));
+	(amount * standout(picture, bg).powf(-fade)).clamp(0.0, 1.0)
+}
+
 // What the wallpaper pass does this frame.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Mix {
@@ -130,16 +179,23 @@ impl Mix {
 	}
 }
 
-// How the wallpaper is drawn, for a slider reading `slider`.
-pub fn wallpaper_mix(s: &Settings, slider: f32) -> Mix {
+// How the wallpaper is drawn, for a slider reading `slider`. `picture` is how
+// bright it is - its overall level and its bright end - and None leaves the
+// ramp out, for a caller with no picture summarized yet.
+pub fn wallpaper_mix(s: &Settings, slider: f32, picture: Option<(f32, f32)>) -> Mix {
+	let bg = config::luma(s.bg);
+	let even = |amount: f32| match picture {
+		Some(p) => evened(amount, slider, p, bg, s.wallpaper_even),
+		None => amount,
+	};
 	if dark(s) {
 		return Mix {
-			amount: slider,
+			amount: even(slider),
 			perceptual: false,
 		};
 	}
 	Mix {
-		amount: encoded_scale(slider, paired_dark_luma(s)).clamp(0.0, 1.0),
+		amount: even(encoded_scale(slider, paired_dark_luma(s)).clamp(0.0, 1.0)),
 		perceptual: true,
 	}
 }
@@ -175,8 +231,8 @@ fn gain_for(slider: f32, light: f32, dark: f32) -> f32 {
 #[cfg(test)]
 mod tests {
 	use super::{
-		HALO_REF, MIN_HALO_GAIN, MIX_GAMMA, Mix, WALLPAPER_LUMA, encoded_scale, gain_for,
-		halo_gain, shift, wallpaper_mix,
+		HALO_REF, MIN_HALO_GAIN, MIX_GAMMA, Mix, REF_HI, REF_MEAN, WALLPAPER_LUMA, encoded_scale,
+		gain_for, halo_gain, shift, standout, wallpaper_mix,
 	};
 	use crate::config::{self, Settings};
 
@@ -201,17 +257,30 @@ mod tests {
 	const LO: f32 = 0.02;
 	const HI: f32 = 0.45;
 
+	// Dark mode never takes the other blend, whatever the picture. The visibility
+	// ramp does reach it - that is the point of the ramp - so the exact identity
+	// only holds with the ramp off, which is what the second half checks.
 	#[test]
-	fn dark_mode_gets_back_exactly_what_it_handed_over() {
+	fn dark_mode_still_draws_the_blend_it_always_has() {
 		for name in crate::theme::names() {
 			// "system" resolves through the OS bit, which the tests leave dark
 			for mode in ["dark", "system"] {
-				let s = themed(name, mode);
+				let mut s = themed(name, mode);
 				for v in SLIDERS {
-					let mix = wallpaper_mix(&s, v);
-					assert_eq!(mix.amount, v, "{name} {mode} {v}");
-					assert!(!mix.perceptual, "{name} {mode} {v}");
+					for picture in [None, Some(DIM), Some(ORDINARY), Some(BRIGHT)] {
+						assert!(
+							!wallpaper_mix(&s, v, picture).perceptual,
+							"{name} {mode} {v}"
+						);
+					}
 					assert_eq!(halo_gain(&s, v), 1.0, "{name} {mode} {v}");
+				}
+				s.wallpaper_even = 0.0;
+				for v in SLIDERS {
+					for picture in [None, Some(DIM), Some(BRIGHT)] {
+						let mix = wallpaper_mix(&s, v, picture);
+						assert_eq!(mix.amount, v, "{name} {mode} {v} {picture:?}");
+					}
 				}
 			}
 		}
@@ -256,7 +325,8 @@ mod tests {
 					},
 					dark,
 				);
-				let in_light = contrast_on_screen(wallpaper_mix(&themed(name, "light"), v), light);
+				let in_light =
+					contrast_on_screen(wallpaper_mix(&themed(name, "light"), v, None), light);
 				// the stand-in picture is one luma and a real one is a spread, so
 				// this is close rather than exact
 				assert!(
@@ -270,7 +340,7 @@ mod tests {
 	#[test]
 	fn the_shipped_default_asks_for_the_scale_black_would_have_given() {
 		let s = themed("SilkTerm", "light");
-		let mix = wallpaper_mix(&s, 0.10);
+		let mix = wallpaper_mix(&s, 0.10, None);
 		assert!(mix.perceptual);
 		// SilkTerm's dark background is black, so the closed form is exact
 		assert!(
@@ -283,8 +353,8 @@ mod tests {
 	// its light mode shows less too. Self-consistent rather than uniform.
 	#[test]
 	fn a_theme_with_a_lifted_dark_background_asks_for_less() {
-		let silk = wallpaper_mix(&themed("SilkTerm", "light"), 0.10).amount;
-		let pastel = wallpaper_mix(&themed("Pastel", "light"), 0.10).amount;
+		let silk = wallpaper_mix(&themed("SilkTerm", "light"), 0.10, None).amount;
+		let pastel = wallpaper_mix(&themed("Pastel", "light"), 0.10, None).amount;
 		assert!(bg_luma("Pastel", "dark") > bg_luma("SilkTerm", "dark"));
 		assert!(pastel < silk - 0.05, "silk {silk}, pastel {pastel}");
 	}
@@ -324,13 +394,145 @@ mod tests {
 				perceptual: false,
 			}
 			.field(WALLPAPER_LUMA, dark);
-			let field_light = wallpaper_mix(&themed(name, "light"), v).field(WALLPAPER_LUMA, light);
+			let field_light =
+				wallpaper_mix(&themed(name, "light"), v, None).field(WALLPAPER_LUMA, light);
 			let want = shift(field_dark, dark, HALO_REF).abs();
 			let got = shift(field_light, light, HALO_REF * gain).abs();
 			assert!(
 				(got - want).abs() < 0.01 || gain <= MIN_HALO_GAIN,
 				"{v}: wanted {want}, got {got}"
 			);
+		}
+	}
+
+	// The visibility ramp. A picture further from the background than the pack's
+	// median is drawn at less than the slider says, and one closer at more.
+	const DIM: (f32, f32) = (0.01, 0.04);
+	const BRIGHT: (f32, f32) = (0.45, 0.80);
+	const ORDINARY: (f32, f32) = (REF_MEAN, REF_HI);
+
+	#[test]
+	fn an_ordinary_picture_is_drawn_at_what_the_slider_says() {
+		for name in crate::theme::names() {
+			for mode in ["dark", "light"] {
+				let s = themed(name, mode);
+				for v in SLIDERS {
+					let plain = wallpaper_mix(&s, v, None).amount;
+					let evened = wallpaper_mix(&s, v, Some(ORDINARY)).amount;
+					assert!(
+						(plain - evened).abs() < 0.02,
+						"{name} {mode} {v}: {plain} {evened}"
+					);
+				}
+			}
+		}
+	}
+
+	#[test]
+	fn a_glaring_picture_is_held_back_and_a_faint_one_lifted() {
+		let s = themed("SilkTerm", "dark");
+		for v in [0.05f32, 0.1, 0.35, 0.6] {
+			let plain = wallpaper_mix(&s, v, None).amount;
+			assert!(
+				wallpaper_mix(&s, v, Some(BRIGHT)).amount < plain,
+				"bright at {v}"
+			);
+			assert!(wallpaper_mix(&s, v, Some(DIM)).amount > plain, "dim at {v}");
+		}
+	}
+
+	// The same rule read from the other side, which is what the backlog asked
+	// for: over a light background it is the DARK picture that stands out.
+	#[test]
+	fn light_mode_holds_back_the_picture_that_stands_out_there_instead() {
+		let s = themed("SilkTerm", "light");
+		for v in [0.05f32, 0.1, 0.35, 0.6] {
+			let plain = wallpaper_mix(&s, v, None).amount;
+			assert!(wallpaper_mix(&s, v, Some(DIM)).amount < plain, "dim at {v}");
+			assert!(
+				wallpaper_mix(&s, v, Some(BRIGHT)).amount > plain,
+				"bright at {v}"
+			);
+		}
+		// and the two modes disagree about which picture that is
+		assert!(
+			standout(
+				BRIGHT,
+				config::luma(crate::theme::resolve("SilkTerm", "dark", true).bg)
+			) > 1.0
+		);
+		assert!(
+			standout(
+				BRIGHT,
+				config::luma(crate::theme::resolve("SilkTerm", "light", true).bg)
+			) < 1.0
+		);
+	}
+
+	// Glare comes from a picture's bright end, not from its average. A night sky
+	// with a sun in it has the same overall level as a flat dark picture and is
+	// nothing like it to look at, so the ramp has to tell them apart.
+	#[test]
+	fn a_dark_picture_with_a_bright_area_is_not_a_dark_picture() {
+		let s = themed("SilkTerm", "dark");
+		let flat = (0.05f32, 0.08f32);
+		let with_a_sun = (0.05f32, 0.60f32);
+		for v in [0.05f32, 0.1, 0.35] {
+			let a = wallpaper_mix(&s, v, Some(flat)).amount;
+			let b = wallpaper_mix(&s, v, Some(with_a_sun)).amount;
+			assert!(b < a - 0.01, "{v}: flat {a}, with a bright area {b}");
+		}
+	}
+
+	#[test]
+	fn a_full_slider_always_draws_the_picture_as_it_is() {
+		for name in crate::theme::names() {
+			for mode in ["dark", "light"] {
+				for picture in [DIM, ORDINARY, BRIGHT] {
+					let mut s = themed(name, mode);
+					for strength in [0.0f32, 0.5, 1.0] {
+						s.wallpaper_even = strength;
+						let mix = wallpaper_mix(&s, 1.0, Some(picture));
+						assert!(
+							(mix.amount - 1.0).abs() < 1e-5,
+							"{name} {mode} {strength}: {mix:?}"
+						);
+					}
+				}
+			}
+		}
+	}
+
+	#[test]
+	fn the_strength_setting_turns_the_ramp_off() {
+		let mut s = themed("SilkTerm", "dark");
+		s.wallpaper_even = 0.0;
+		for v in SLIDERS {
+			for picture in [DIM, ORDINARY, BRIGHT] {
+				assert_eq!(
+					wallpaper_mix(&s, v, Some(picture)).amount,
+					v,
+					"{v} {picture:?}"
+				);
+			}
+		}
+	}
+
+	#[test]
+	fn the_ramp_never_takes_the_slider_backwards() {
+		for mode in ["dark", "light"] {
+			let s = themed("SilkTerm", mode);
+			for picture in [DIM, ORDINARY, BRIGHT] {
+				let mut last = 0.0;
+				for i in 0..=100 {
+					let a = wallpaper_mix(&s, i as f32 / 100.0, Some(picture)).amount;
+					assert!(
+						a >= last - 1e-5,
+						"{mode} {picture:?} at {i}: {a} after {last}"
+					);
+					last = a;
+				}
+			}
 		}
 	}
 

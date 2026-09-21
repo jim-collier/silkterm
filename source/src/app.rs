@@ -5331,12 +5331,15 @@ impl State {
 		);
 		gpu.rects.set_resolution(&gpu.gfx.queue, frame_w, frame_h);
 		// How the picture is mixed with the background. Light mode needs a different
-		// blend, not a different number (lightmode.rs). Re-read per frame: the mode
+		// blend, not a different number (visibility.rs). Re-read per frame: the mode
 		// can flip under a running window and nothing reloads a wallpaper for it.
-		let wp_mix = gpu
-			.wallpaper_img
-			.as_ref()
-			.map(|img| crate::lightmode::wallpaper_mix(&cfg, img.opacity()));
+		let wp_mix = gpu.wallpaper_img.as_ref().map(|img| {
+			crate::visibility::wallpaper_mix(
+				&cfg,
+				img.opacity(),
+				cfg.wallpaper_summary.map(|s| s.picture()),
+			)
+		});
 		let wp_writes_fill = wp_mix.is_some_and(|m| m.perceptual);
 		if let (Some(img), Some(mix)) = (&gpu.wallpaper_img, wp_mix) {
 			img.set_look(&gpu.gfx.queue, frame_w, frame_h, mix, pane_bg);
@@ -5746,13 +5749,13 @@ impl State {
 		// so the top of the slider is x32. In light mode the halo is a pale plate
 		// on whatever the picture darkened, which reads harder than dark mode's
 		// does at the same alpha, so it gives back a fraction of a doubling
-		// (lightmode.rs). The gain is 1 in dark mode and with no picture up.
+		// (visibility.rs). The gain is 1 in dark mode and with no picture up.
 		let shown_wallpaper = gpu
 			.wallpaper_img
 			.as_ref()
 			.map_or(0.0, ImageRenderer::opacity);
 		let scrim_strength = cfg.text_scrim_strength.clamp(0.0, 100.0) / SCRIM_PCT_PER_DOUBLING
-			+ crate::lightmode::halo_gain(&cfg, shown_wallpaper).log2();
+			+ crate::visibility::halo_gain(&cfg, shown_wallpaper).log2();
 		// build function index: 0 dilate, 1 sdf, 2 dt, 3 gaussian (legacy blur)
 		let scrim_function = match cfg.text_scrim_function.as_str() {
 			"dilate" => 0.0,
