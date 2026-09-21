@@ -646,6 +646,20 @@ mod tests {
 		assert!(worst < 0.04, "the neutral field costs {worst} Oklab L");
 	}
 
+	// The shipped config turns this on, and the wallpaper is on too, so a fresh
+	// install re-colors its text without anyone visiting the Themes tab.
+	#[test]
+	fn the_shipped_defaults_take_the_text_color_from_the_wallpaper() {
+		let mut s = Settings::default();
+		assert!(s.colors_from_wallpaper, "shipped off");
+		assert!(s.wallpaper_enabled, "no wallpaper to read");
+		let plain_fg = s.fg;
+		s.wallpaper_summary = Some(summarize(&plain([90, 110, 160], 32, 32), 0.35));
+		apply(&mut s);
+		assert_ne!(s.fg, plain_fg);
+		assert!(s.wallpaper_colors.is_some());
+	}
+
 	#[test]
 	fn apply_is_off_unless_the_switch_and_the_wallpaper_are_both_on() {
 		let sum = summarize(&plain([90, 110, 160], 32, 32), 0.35);

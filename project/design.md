@@ -390,7 +390,7 @@ The value is decided once per render pass, not per glyph, because one pass draws
 
 ### Text colors from the wallpaper (2026-09-20)
 
-A switch on the Themes tab that takes the text and cursor colors from the picture behind them instead of from the theme. Off by default. While it is on, the Foreground and Cursor rows gray out, and nothing derived this way is written to the file - a rotation would otherwise rewrite the config every few minutes, and the colors would outlive the picture they came from.
+A switch on the Themes tab that takes the text and cursor colors from the picture behind them instead of from the theme. On by default, since the wallpaper is on by default too and the derived text is never dimmer than the theme's own - so it can only help, and with no picture up it does nothing at all. While it is on, the Foreground and Cursor rows gray out, and nothing derived this way is written to the file - a rotation would otherwise rewrite the config every few minutes, and the colors would outlive the picture they came from.
 
 Two halves, decided separately. Harmony and legibility are unrelated problems, and one number cannot answer both: a complement at the same lightness as its ground is the least readable pairing there is, which is where the shimmer at the edge of vivid opposites comes from.
 
