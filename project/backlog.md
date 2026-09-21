@@ -108,10 +108,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
-- 🔘 Make auto text color default to "On".
-
-- 🔘 When theme colors are changed by the user, change the theme in the dropdown to "[unsaved]".
-
 - 🔘 Dark mode is just about perfect, so don't make ANY changes that affect dark mode. But light mode is badly miscalibrated. Various settings may need to work differently in light mode. (Either different defaults, and/or different ways of calculating them depending on dark or light mode.) For example:
 	- Wallpaper is practically invisible at the dark mode's visibility %.
 	- When wallpaper is more visible (and thus often provining a dark background), text scrim is WAY too overpowering it light mode.
@@ -1952,6 +1948,21 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ When theme colors are changed by the user, change the theme in the dropdown to "[unsaved]".
+	- `Fixed:` the collapsed Theme box says `[unsaved]` while any palette color disagrees with the theme. `dd_closed_label` in settings_ui.rs is the one place that decides, so no other dropdown is affected.
+	- `Decided:` display only. The Save button already answers the same question from the colors themselves, and storing a second copy of it would be the flag the design deliberately does not keep.
+	- `Decided:` `[unsaved]` on its own rather than the theme's name beside it. The list is unchanged and still highlights the theme the edits started from, so one click shows what they started from - and picking it again is how to discard them.
+	- `Pinned by:` `an_edited_theme_reads_as_unsaved_in_the_box` in settings_ui.rs. Two mutations watched red: never saying it, and saying it on every dropdown.
+	- `Measured:` seen on `:98`. With a background override in the file the box reads `[unsaved]` and Save is live; the open list highlights SilkTerm with its check mark, and Mode still reads Dark.
+	- Opened: 20260920. Closed: 20260920
+
+- ✅ Make auto text color default to "On".
+	- `Fixed:` `colors.from_wallpaper` ships on. The three places a default change touches are all updated, so an existing config's commented line is refreshed and a hand-set value stays.
+	- `Decided:` on rather than off. The wallpaper is on by default too, and the derived text is never dimmer than the theme's own, so it can only help. With no picture up it does nothing at all.
+	- `Pinned by:` `the_shipped_defaults_take_the_text_color_from_the_wallpaper` in autotheme.rs, and `an_existing_config_learns_that_wallpaper_text_colors_ship_on` in config.rs. The second one names the path, since nothing else can catch a table entry that was never added. Three mutations watched red.
+	- `Measured:` on `:98` against a control build with the switch off. Control ink is `#88eecc`, the theme's own; shipped ink is `(169, 226, 237)`, lifted and cooled against a warm wallpaper.
+	- Opened: 20260920. Closed: 20260920
 
 - ✅ Settings dialog: a color picker. The colored boxes on the Colors tab should be clickable, and open a picker of the familiar sort: a square carrying saturation and brightness, a narrow rainbow strip beside it with a vertical slider for hue, text boxes to the right for Red %, Green %, Blue %, Brightness %, Saturation % and a hex value, and "Cancel|OK" at the bottom right with OK the default.
 	- `Fixed:` all of it, as a box over the panel that takes every click and key while it is up, the way the theme name box does. The box is titled with the row's own label.

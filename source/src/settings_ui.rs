@@ -216,6 +216,9 @@ const GOVERNED: &[Key] = &[
 const PROFILE_TIP: &str =
 	"Showing the performance profile's value. Changing it switches the profile to Custom.";
 
+// What the Theme dropdown says once a color has moved off the theme's own.
+const UNSAVED_THEME: &str = "[unsaved]";
+
 // A slider's handle, centered on the value, so it overhangs the track's ends.
 const SLIDER_HANDLE_W: f32 = 10.0;
 
@@ -1455,6 +1458,19 @@ impl SettingsDialog {
 			_ => Vec::new(),
 		}
 	}
+	// What the collapsed box says. Same as the highlighted option, except that a
+	// theme carrying edits is no longer that theme, so it says so instead of
+	// naming a palette the colors below have moved away from. Display only - the
+	// dirty state is still derived from the colors themselves (nothing is stored),
+	// and the popup still highlights the theme the edits started from.
+	fn dd_closed_label(&self, i: usize) -> String {
+		if self.specs[i].key == Key::Theme && self.theme_dirty() {
+			return UNSAVED_THEME.to_string();
+		}
+		let sel = self.get_radio(self.specs[i].key);
+		self.dd_options(i).get(sel).cloned().unwrap_or_default()
+	}
+
 	// Open row `i`'s popup with the current value highlighted.
 	fn dd_open(&mut self, i: usize) {
 		self.commit_edit();
@@ -5818,9 +5834,7 @@ impl SettingsDialog {
 					let off = self.disabled(self.specs[i].key);
 					let color = if off { dlg().dim } else { dlg().text };
 					let box_r = self.dd_box(i);
-					let sel = self.get_radio(self.specs[i].key);
-					let options = self.dd_options(i);
-					let label = options.get(sel).cloned().unwrap_or_default();
+					let label = self.dd_closed_label(i);
 					out.push(TextItem {
 						color,
 						clip: Some(intersect(box_r)),
@@ -9028,6 +9042,43 @@ mod tests {
 		d.delete_theme();
 		assert_eq!(d.edited.theme, "Matrix");
 		assert_eq!(d.get_col(Key::ColFg), builtin_fg);
+	}
+
+	// The colors on screen are no longer the theme the box names, so the box stops
+	// naming it. The popup still highlights the theme the edits started from, and
+	// picking it back adopts its colors and the box says its name again.
+	#[test]
+	fn an_edited_theme_reads_as_unsaved_in_the_box() {
+		let mut d = on_theme("Matrix");
+		let row = d
+			.specs
+			.iter()
+			.position(|s| s.key == Key::Theme)
+			.expect("the theme row");
+		assert_eq!(d.dd_closed_label(row), "Matrix");
+
+		let mode = d
+			.specs
+			.iter()
+			.position(|s| s.key == Key::ThemeMode)
+			.expect("the mode row");
+
+		d.set_col(Key::ColFg, [1, 2, 3]);
+		assert_eq!(d.dd_closed_label(row), super::UNSAVED_THEME);
+		// only this one box: every other dropdown still says what it is on
+		assert_eq!(d.dd_closed_label(mode), "Dark");
+		// the list itself is untouched, and the highlight still finds Matrix
+		let names = d.dd_options(row);
+		assert!(!names.iter().any(|n| n == super::UNSAVED_THEME));
+		assert_eq!(names[d.get_radio(Key::Theme)], "Matrix");
+
+		d.set_radio(Key::Theme, d.get_radio(Key::Theme));
+		assert_eq!(d.dd_closed_label(row), "Matrix", "re-picking discards");
+
+		// saving under a new name makes the edits that theme's own
+		d.set_col(Key::ColFg, [1, 2, 3]);
+		d.save_theme_as("Mine");
+		assert_eq!(d.dd_closed_label(row), "Mine");
 	}
 
 	// Picking a theme takes on its colors. Keeping the old theme's tweaks would

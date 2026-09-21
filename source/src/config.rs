@@ -590,7 +590,7 @@ impl Default for Settings {
 			bg: [0x00, 0x00, 0x00],
 			fg: [0x88, 0xee, 0xcc],
 			cursor: [0x8a, 0x3f, 0xa4],
-			colors_from_wallpaper: false,
+			colors_from_wallpaper: true,
 			highlight: [0xc8, 0xa0, 0x5a],
 			focus: [0x40, 0x86, 0xff],
 			menu_bg: crate::theme::MENU_BG_DEF,
@@ -3328,6 +3328,8 @@ const SUPERSEDED_DEFAULTS: &[(&str, &str)] = &[
 	// the minimap shipped off until the column stepped aside for full-screen
 	// programs on its own
 	("scroll.minimap.enabled", "false  ## Default"),
+	// wallpaper text colors shipped off while the measurements were being made
+	("colors.from_wallpaper", "false  ## Default"),
 	// Seven lines named an example rather than the default they were marked
 	// with, so uncommenting one changed what loaded. The values below are the
 	// examples they used to carry.
@@ -5479,7 +5481,7 @@ colors:
 	## placed as far as it can get from the picture's brightest areas, in a hue
 	## complementary to the picture's own. The two rows for them gray out in
 	## Settings while this is on, and nothing about the derived colors is saved.
-	# from_wallpaper: false  ## Default
+	# from_wallpaper: true  ## Default
 	# background: "#000000"  ## Default
 	# foreground: "#88eecc"  ## Default
 	# cursor: "#8a3fa4"  ## Default
@@ -9841,6 +9843,18 @@ mod tests {
 			let noted = nest(path, &format!("# {leaf}: {stale}  ## mine"));
 			assert!(migrate_config_text(&noted).is_none(), "{path}");
 		}
+	}
+
+	// The table above is kept by hand, so nothing can catch an entry that was
+	// simply never added. This names the one default that changed most recently.
+	#[test]
+	fn an_existing_config_learns_that_wallpaper_text_colors_ship_on() {
+		let out = migrate_config_text("colors:\n\t# from_wallpaper: false  ## Default\n")
+			.expect("the outgoing default should be refreshed");
+		assert!(
+			out.contains("# from_wallpaper: true  ## Default"),
+			"{out:?}"
+		);
 	}
 
 	// The walker is what gives every line its full nested path - the whole

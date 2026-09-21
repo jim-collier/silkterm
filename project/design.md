@@ -390,7 +390,7 @@ The value is decided once per render pass, not per glyph, because one pass draws
 
 ### Text colors from the wallpaper (2026-09-20)
 
-A switch on the Themes tab that takes the text and cursor colors from the picture behind them instead of from the theme. Off by default. While it is on, the Foreground and Cursor rows gray out, and nothing derived this way is written to the file - a rotation would otherwise rewrite the config every few minutes, and the colors would outlive the picture they came from.
+A switch on the Themes tab that takes the text and cursor colors from the picture behind them instead of from the theme. On by default, since the wallpaper is on by default too and the derived text is never dimmer than the theme's own - so it can only help, and with no picture up it does nothing at all. While it is on, the Foreground and Cursor rows gray out, and nothing derived this way is written to the file - a rotation would otherwise rewrite the config every few minutes, and the colors would outlive the picture they came from.
 
 Two halves, decided separately. Harmony and legibility are unrelated problems, and one number cannot answer both: a complement at the same lightness as its ground is the least readable pairing there is, which is where the shimmer at the edge of vivid opposites comes from.
 
@@ -588,6 +588,8 @@ The built-in stack is last for a reason. The generic monospace query below it is
 - What identifies a saved theme in the file is a slug that never changes, with the display name stored beside it. A rename therefore rewrites one line instead of moving a subtree, and the `theme` setting keeps holding a name a person would recognize.
 
 - **Nothing records "this theme has unsaved changes".** A per-color override that disagrees with the theme is that record, and it already lives in the config file. So the Save button is right after a restart, with no flag to keep in step. Saving folds the overrides into the theme and drops them, which is also what makes the button go quiet again.
+
+- While an override is in place the Theme dropdown says `[unsaved]` rather than naming a palette the colors have moved away from. It is display only, derived from the same test the Save button uses, so nothing extra is stored. The list underneath is unchanged and still highlights the theme the edits started from, which is both how to see what they started from and how to discard them: pick it again and its colors come back.
 
 - A saved theme may take a built-in's name and stand in for it. That gives "customize a built-in" an obvious home, and deleting the saved copy puts the built-in back rather than leaving the name pointing at nothing. Built-ins themselves cannot be renamed or deleted.
 
