@@ -107,6 +107,16 @@ layout:
 	                           ## padding - the Shell tab's last column does.
 	scrollbar_thumb_min: 24
 
+	## Color picker (the box a color chip opens). Every one of these is a floor:
+	## the square gives way first on a narrow panel, since it is the one piece
+	## with no text in it.
+	pick_gap: 12               ## between the square, the strip and the value column
+	pick_strip: 22             ## width of the hue strip
+	pick_label_width: 96       ## the "Saturation %" column
+	pick_field_width: 58       ## the value boxes
+	pick_min_square: 80
+	pick_marker: 13            ## the ring on the square
+
 ## Flyover help for the footer buttons. Every other tip is the `help:` line on
 ## the row it belongs to.
 help:

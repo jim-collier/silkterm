@@ -76,10 +76,20 @@ The dialog is declared in `settings_ui.shcl`, which is the file to edit when add
 - Two rows may share a line where neither earns one of its own and the two belong together. The upper one keeps the label column, and its label has to name both halves. The lower one is declared `beside`, takes the right half of the control column, and carries its own label only if its control does not say what it is. One revert control at the end of the line answers for both.
 - Row kinds are: heading, toggle, slider, color, text, radio, dropdown, pair, buttons, and shells. The last two are one-offs. A `buttons` row holds no value and acts on the row above it; `shells` is the Shell tab's grid, one declared row that draws a line per stored shell. A new kind needs a reason no existing kind covers.
 - A slider carries a number field beside it, and the field is the way to enter an exact value.
+- A color row carries a chip and a hex field, and they are two separate stops. The chip opens the picker; the hex field takes a value that is already known.
 - A fraction stored as 0..1 is shown as a whole percent. The file keeps the decimal.
 - Every row that holds a value has a revert control at the right edge, which puts the shipped default back. A heading, a `buttons` row and the shells grid hold no single value, so none of them carries one.
 - Every row must actually write what it edits. A row whose setting is never persisted is worse than no row, because the change appears to take and then vanishes at the next launch.
 - Why a row is grayed out beats what it does, so a row grayed by the machine says so in its flyover in place of its usual text. A row grayed by another setting says nothing extra, because the switch that did it is the row above. A row set by the performance profile is not grayed at all - it takes input, and its flyover says that it is showing the profile's value and that changing it switches the profile to Custom.
+
+### The color picker
+
+- A chip opens a box over the panel, modal the way a prompt is: a saturation and brightness square, a hue strip down its right side, six value boxes, and Cancel and OK at the bottom right with OK the default.
+- The box is titled with the row's own label, so it is plain which color is being chosen.
+- The value boxes are Red %, Green %, Blue %, Brightness %, Saturation % and Hex, top to bottom. There is no hue box: the strip is the hue control.
+- Changes show on the row behind the box as they are made. Cancel puts back what the row held when it opened.
+- The marker on the square is a ring in whichever of black or white can be seen on the color under it. The strip's marker is black and white together, since every point on it is a full-strength color.
+- Arrows adjust whatever holds focus, by the same step a number box takes. The square and the strip are also draggable, which is the faster way and not the only way.
 
 ## Buttons and prompts
 

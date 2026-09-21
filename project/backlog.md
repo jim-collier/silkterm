@@ -108,13 +108,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
-- 🔘 Settings dialog:
-	- 🔘 A color picker. The colored boxes on the Colors tab should be clickable, and open a picker of the familiar sort:
-		- A square on the left carrying saturation and brightness.
-		- A narrow rainbow strip beside it, with a vertical slider for hue.
-		- Text boxes to the right: Red %, Green %, Blue %, Brightness %, Saturation %, and a hex value.
-		- Buttons at the bottom right: "Cancel|OK", with OK the default.
-
 - ✋ Save settings by editing only the lines that changed, so a file with a line that cannot be read still takes the window size, menu switches and new shells.
 	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
 	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
@@ -1951,6 +1944,21 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Settings dialog: a color picker. The colored boxes on the Colors tab should be clickable, and open a picker of the familiar sort: a square carrying saturation and brightness, a narrow rainbow strip beside it with a vertical slider for hue, text boxes to the right for Red %, Green %, Blue %, Brightness %, Saturation % and a hex value, and "Cancel|OK" at the bottom right with OK the default.
+	- `Fixed:` all of it, as a box over the panel that takes every click and key while it is up, the way the theme name box does. The box is titled with the row's own label.
+	- `Decided:` the box holds the color as hue, saturation and brightness rather than as three bytes. Black says nothing about hue and a gray says nothing about saturation, so a model read back off the bytes sends both markers home the moment a drag reaches an edge.
+	- `Decided:` changes go straight to the row behind the box, and Cancel puts back what the row held when it opened. The chip and the window under the dialog are then the preview, and there is no second copy of the value to get out of step.
+	- `Decided:` the square and the strip are two new modes of the renderer's own quad shader. A gradient built from flat quads is thousands of them for one square.
+	- `Decided:` the square mixes toward the hue in sRGB, not in linear light, which is the one place in the program that does. Mixing toward white in linear gives a square nobody would recognise as a color picker.
+	- `Decided:` no hue box among the six. The strip is the hue control and the other values can already name any color. Percents rather than 0 to 255, since every other fraction in the dialog is shown as a whole percent.
+	- `Fixed:` a color row has two focus stops now, the chip then the hex field. Space or Enter on the chip opens the picker, and the arrows adjust whatever holds focus inside it - the square, the strip, or a number - so nothing in the box is reachable only by pointer.
+	- `Pinned by:` nine tests in pick.rs over the color model and the box's geometry, and ten in settings_ui.rs over the wiring: that the box swallows every input path, that Cancel and OK do what they say, that Tab opens each value box selected, and that the value boxes are never mistaken for the shells grid's. Eleven mutations watched red, one per rule.
+	- `Measured:` seen on `:98` at scale 1 and 2. The pixel under the square's marker is the hex value exactly, the strip runs red through magenta back to red, and dragging, typing, arrow-stepping, Cancel and OK were each driven and read back off the row behind.
+	- `Note:` nothing here runs WGSL, so the two shader modes are held against the Rust model by their own text. What that catches is a square painted from a different formula, which would put the marker where the color is not.
+	- `Left alone:` no preview chip in the box. The marker's own centre is the color, and the chip behind follows every change.
+	- `Note:` not run on Windows, and no dogfood build.
+	- Opened: n/a. Closed: 20260920
 
 - ✅ Allow programs to change the tab title.
 	- `Fixed:` a title the running program asks for now names the tab, outranked only by a name typed on the tab. A fifth switch on the Window tab, "Program's own title", turns it off.
