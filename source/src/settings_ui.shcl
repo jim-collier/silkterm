@@ -221,7 +221,7 @@ rows:
 		whole: true
 		indent: 1
 		setting: text.scrim.strength
-		help: "How solid the halo gets. High values close the gaps between glyphs into a plate."
+		help: "How solid the halo gets. High values close the gaps between glyphs into a plate. Light mode quietens it, since a pale patch shows more against a darkened background than a dark one does."
 
 	ScrimRadius:
 		label: Scrim radius px
@@ -408,7 +408,7 @@ rows:
 		whole: true
 		indent: 1
 		setting: wallpaper.opacity
-		help: "How strongly the wallpaper shows through the terminal background."
+		help: "How strongly the wallpaper shows through the terminal background. Light mode mixes in more of it to reach the same visible result, so the number means the same thing in either mode."
 
 	BgBlur:
 		label: Blur px

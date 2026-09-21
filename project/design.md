@@ -23,6 +23,7 @@
 	- [Text readability scrim](#text-readability-scrim)
 	- [Minimum contrast (2026-08-30)](#minimum-contrast-2026-08-30)
 	- [Dark text on a light background (2026-09-20)](#dark-text-on-a-light-background-2026-09-20)
+	- [What light mode has to do differently (2026-09-20)](#what-light-mode-has-to-do-differently-2026-09-20)
 	- [Text colors from the wallpaper (2026-09-20)](#text-colors-from-the-wallpaper-2026-09-20)
 	- [Performance profiles (2026-09-03)](#performance-profiles-2026-09-03)
 	- [Font fallback stack](#font-fallback-stack)
@@ -360,7 +361,7 @@ The halo shape is selectable ("Scrim function"), because a plain Gaussian blur i
 
 The distance functions share one engine: a separable, exactly-Euclidean distance transform bounded to the halo radius. It takes a per-column 1D distance, then a row combine. That is cheap - two passes, no jump-flood - and reads either metric off the same field. Independently, a "Scrim falloff" curve shapes how the backing fades with distance: Sigmoid, Half-normal, Linear, Logarithmic, or Exponential. It applies both as the blur kernel weight and as the distance-path transfer. Falloff and function are orthogonal: the function decides the halo's shape, the falloff its fade. The falloff is named for the curve it draws rather than for a blur, since the same word otherwise names both a shape and a fade. A bell curve's outer half is a half-normal, and a smoothstep is a sigmoid. Every curve is normalized to reach zero at the halo's outer edge, so a halo ends where its radius says it does.
 
-A third knob, "Strength", decides how bold the finished halo is: each 20% doubles its opacity, up to five doublings at 100%. Because the doubled value is clamped, the halo's core saturates first and the solid part grows outward along the falloff. So the backing thickens into a plate rather than merely brightening, and it still stops at the radius. At 0 the halo is exactly as the function and falloff built it.
+A third knob, "Strength", decides how bold the finished halo is: each 20% doubles its opacity, up to five doublings at 100%. Because the doubled value is clamped, the halo's core saturates first and the solid part grows outward along the falloff. So the backing thickens into a plate rather than merely brightening, and it still stops at the radius. At 0 the halo is exactly as the function and falloff built it. Light mode takes some of that back, for the reason below.
 
 The shipped values are a radius of 8 px and a strength of 20%. Both were raised when the exponential falloff was made twice as steep, since a curve that drops away sooner has to start further out and heavier to finish in about the same place. The cheaper profiles keep the same share of the radius they always had, so they still look like the same halo built with fewer taps.
 
@@ -387,6 +388,24 @@ The fix raises coverage by an exponent before it becomes alpha, in glyphon's own
 Blending in gamma space instead would have fixed it at the source, and was rejected: the surface takes one sRGB encode per frame and it belongs to the graphics module, so a second encode inside the text pass is the bug class the color pipeline contract exists to stop.
 
 The value is decided once per render pass, not per glyph, because one pass draws the whole window and a uniform is what the shader can read. The main window's pass carries the terminal's own pair, so in a light theme the menu and tab labels - which stay on dark chrome in both modes - are thickened slightly along with everything else. That is accepted: it is a small strip, the direction is mild, and giving the chrome its own pass would cost a second renderer and a second atlas to fix a few hundred pixels. The Settings dialog is a separate context and decides on its own panel colors.
+
+### What light mode has to do differently (2026-09-20)
+
+Two settings are linear-light alphas, and linear light is not what the eye reads. sRGB's curve is steep near black and flat near white, so the same alpha covers a lot of visible ground over a dark background and almost none over a light one. Dark mode was calibrated first and is the reference, so nothing here runs in it.
+
+Wallpaper visibility is the obvious case. At the shipped 10% a picture is plainly there over black and all but gone over white - measured on the rig, its background sat 10 sRGB levels from the theme's own against dark mode's 30. So light mode raises the alpha behind the slider. How far is a judgement, because the two ways of reading "as much picture" disagree.
+
+Matching how far the composite sits from the background asks for 30%. That puts the picture there and leaves it flat: its own texture measured a quarter of dark mode's, and on screen it reads as a faint wash rather than a picture. Matching how much of that texture survives asks for 70%, which brings the detail back and takes the background to a mid gray - no longer light mode. The shipped value sits halfway between the two, at 50% behind a 10% slider, which is where a side-by-side against dark mode stops reading as a different feature. One constant moves it.
+
+Neither reading goes the other way: light mode never shows less picture than the number asks for, and at 100% the picture has replaced the background in both modes so the two readings agree with each other anyway.
+
+The scrim has the same asymmetry pointing the other way. The halo is the background color laid over whatever the picture put there, so in light mode it is a pale plate on a darkened field, which is the same move in the direction the eye notices most. Its alpha is scaled down until it covers the same ground dark mode's halo does, which works out at about a doubling and a half whatever the visibility is set to. It stops at a quarter of what was asked for, since past that the plate stops doing the job it is there for. On the rig that moved 43% of the pixels around a screenful of text by an average of 10 sRGB levels, and the text still read clearly.
+
+Both corrections measure with the sRGB transfer curve taken on Rec.709 luma. Luma because a linear-light alpha blend is affine in it, so one number stands in for a whole composite. The transfer curve because it tracks CIE L* closely enough here - the two disagree by two points of alpha on the shipped defaults - and because it is already the program's color language. Oklab lightness was measured and rejected: it has no linear toe, so it reads a near-black background as far more separable than it is and asks for twice the alpha.
+
+The picture itself is stood in for by one number, a linear luma of 0.13. That is the median of the shipped pack of 104, whose quartiles are 0.06 and 0.19. Each image's own brightness was available and was not used: a rotation folder would then move the alpha under the reader every few minutes, and an image far from the median is out by a few points of alpha rather than by a factor.
+
+Three places have to agree about the corrected alpha - the wallpaper quad's uniform, the field the derived text colors are placed against, and the scrim's gain. The uniform is rewritten per frame rather than fixed when the picture loads, because System mode can flip the answer under a running window and nothing reloads a wallpaper for a theme change.
 
 ### Text colors from the wallpaper (2026-09-20)
 

@@ -108,10 +108,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
-- 🔘 Dark mode is just about perfect, so don't make ANY changes that affect dark mode. But light mode is badly miscalibrated. Various settings may need to work differently in light mode. (Either different defaults, and/or different ways of calculating them depending on dark or light mode.) For example:
-	- Wallpaper is practically invisible at the dark mode's visibility %.
-	- When wallpaper is more visible (and thus often provining a dark background), text scrim is WAY too overpowering it light mode.
-
 - ✋ Save settings by editing only the lines that changed, so a file with a line that cannot be read still takes the window size, menu switches and new shells.
 	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
 	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
@@ -227,6 +223,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 - 🔘 Minimap: with a very deep scrollback, redrawing the map under heavy output stops the terminal for a moment each time.
 	- At 100,000 lines one redraw holds the terminal for about 150 ms, and at the 1,000,000-line maximum it would be over a second. The time between redraws already grows with it, so the average cost stays small; the pause itself does not.
 	- Opened: 20260919
+
+- 🔘 Two more settings of the same class as the light mode calibration, neither fixed.
+	- Window transparency. At the same `transparency.opacity` a light terminal over a dark desktop shows far less of it than a dark terminal over a light one. There is no reference to calibrate against, since what is behind the window is not ours to measure. Off by default, so nobody meets it unasked.
+	- The block cursor's plate. It is drawn at a fixed 55%, so in light mode it is a pale plate and in dark mode a dark one, which is the same asymmetry the scrim had. The contrast floor already holds the text on it legible in both modes, so this is a question of how loud it looks rather than whether it works.
+	- Opened: 20260920
 
 ### Done
 
@@ -1948,6 +1949,18 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ Dark mode is just about perfect, so don't make ANY changes that affect dark mode. But light mode is badly miscalibrated. Various settings may need to work differently in light mode. (Either different defaults, and/or different ways of calculating them depending on dark or light mode.) For example:
+	- Wallpaper is practically invisible at the dark mode's visibility %.
+	- When wallpaper is more visible (and thus often provining a dark background), text scrim is WAY too overpowering in light mode.
+	- `Cause:` both settings are linear-light alphas, and sRGB's curve is steep near black and flat near white. The same alpha covers a lot of visible ground over a dark background and almost none over a light one, so the wallpaper vanishes and the pale halo shouts.
+	- `Fixed:` a new module, `lightmode.rs`, that converts each of the two into what light mode needs for it to read the way dark mode's does. It returns the value it was handed in dark mode, so nothing there can move.
+	- `Decided:` "as much picture" has two readings and they disagree. Matching how far the composite sits from the background asks for 30% behind a 10% slider and leaves the picture flat. Matching how much of its own texture survives asks for 70% and turns the background mid-gray. The shipped value is halfway, 50%, which is where a side-by-side against dark mode stops reading as a different feature. `PRESENCE` in lightmode.rs moves it.
+	- `Measured:` on the rig at the shipped 10%, light mode's background went from 10 sRGB levels away from the theme's own to 58, against dark mode's 19, and the picture's own texture from 0.6 to 3.2 against dark mode's 6.4. The halo moved 43% of the pixels around a screenful of text by an average of 10 levels, and the text still read clearly.
+	- `Dark mode:` proven untouched on the rig - the same scene rendered by the new build and by one with the whole module disabled came out identical, 0 of 753,984 pixels different.
+	- `Pinned by:` eight tests in lightmode.rs and one in autotheme.rs, each watched red against its own mutation. The renderer and the scrim uniform cannot be reached by a test, since nothing in the tree builds a window.
+	- `Filed, not fixed:` two more of the same class, at the end of the features - window transparency, and the block cursor's plate.
+	- Opened: 20260920. Closed: 20260920
 
 - ✅ When theme colors are changed by the user, change the theme in the dropdown to "[unsaved]".
 	- `Fixed:` the collapsed Theme box says `[unsaved]` while any palette color disagrees with the theme. `dd_closed_label` in settings_ui.rs is the one place that decides, so no other dropdown is affected.

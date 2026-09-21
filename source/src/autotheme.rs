@@ -199,12 +199,6 @@ fn gray_lightness(luma: f32) -> f32 {
 	luma.max(0.0).cbrt()
 }
 
-fn luma_of(c: [u8; 3]) -> f32 {
-	config::to_linear(c[0]) * LUMA[0]
-		+ config::to_linear(c[1]) * LUMA[1]
-		+ config::to_linear(c[2]) * LUMA[2]
-}
-
 // Oklab a/b from a hue in degrees and a chroma.
 fn ab(hue: f32, chroma: f32) -> (f32, f32) {
 	let rad = hue.to_radians();
@@ -252,10 +246,12 @@ fn hue_chroma(c: [u8; 3]) -> (f32, f32) {
 
 // What the background behind a glyph really is, as a linear luma. The wallpaper
 // quad is premultiplied over the background fill, so this is the shader's own
-// blend with the image's luma standing in for its color.
-fn field_luma(sum: &Summary, image_luma: f32, bg: [u8; 3]) -> f32 {
-	let cover = (sum.alpha * sum.opacity).clamp(0.0, 1.0);
-	image_luma * sum.opacity + luma_of(bg) * (1.0 - cover)
+// blend with the image's luma standing in for its color. `alpha` is what the
+// quad is actually drawn at, which in light mode is not the slider's own number
+// (lightmode.rs).
+fn field_luma(sum: &Summary, image_luma: f32, bg: [u8; 3], alpha: f32) -> f32 {
+	let cover = (sum.alpha * alpha).clamp(0.0, 1.0);
+	image_luma * alpha + config::luma(bg) * (1.0 - cover)
 }
 
 // The cursor whose plate lands on `plate_target` over a field of `behind_luma`.
@@ -302,8 +298,9 @@ pub struct Derived {
 pub fn derive(sum: &Summary, s: &Settings) -> Derived {
 	let floor = s.text_min_contrast.clamp(0.0, 1.0);
 	let (bg, fg, cursor) = (s.bg, s.fg, s.cursor);
-	let hi = gray_lightness(field_luma(sum, sum.luma_hi, bg));
-	let lo = gray_lightness(field_luma(sum, sum.luma_lo, bg));
+	let alpha = crate::lightmode::wallpaper_alpha(s, sum.opacity);
+	let hi = gray_lightness(field_luma(sum, sum.luma_hi, bg, alpha));
+	let lo = gray_lightness(field_luma(sum, sum.luma_lo, bg, alpha));
 
 	// Which side the text sits on is the theme's, never the image's. A light
 	// theme that flipped to light text because a photo was dark would stop being
@@ -345,7 +342,7 @@ pub fn derive(sum: &Summary, s: &Settings) -> Derived {
 	.clamp(0.0, 1.0);
 	let out_cursor = cursor_for(
 		plate,
-		field_luma(sum, sum.luma_hi, bg),
+		field_luma(sum, sum.luma_hi, bg, alpha),
 		(hue + CURSOR_ROTATE).rem_euclid(360.0),
 		hue_chroma(cursor).1.min(MAX_CHROMA),
 	);
@@ -409,6 +406,10 @@ mod tests {
 			cursor,
 			colors_from_wallpaper: true,
 			wallpaper_enabled: true,
+			// A light background means light mode, which draws the picture at a
+			// higher alpha than the slider reads (lightmode.rs). Without this the
+			// light cases here are placed against a field nobody will ever see.
+			theme_mode: if lightness(bg) > 0.5 { "light" } else { "dark" }.to_string(),
 			..Settings::default()
 		}
 	}
@@ -424,7 +425,7 @@ mod tests {
 	#[test]
 	fn a_flat_gray_reports_its_own_luma_at_both_ends() {
 		let sum = summarize(&plain([128, 128, 128], 64, 64), 1.0);
-		let want = luma_of([128, 128, 128]);
+		let want = config::luma([128, 128, 128]);
 		assert!((sum.luma_hi - want).abs() < 1e-4, "{sum:?}");
 		assert!((sum.luma_lo - want).abs() < 1e-4, "{sum:?}");
 		assert!(sum.chroma < 1e-3, "a gray has no chroma: {sum:?}");
@@ -581,6 +582,31 @@ mod tests {
 		);
 	}
 
+	// Light mode draws the picture at a higher alpha than the slider reads, so the
+	// field the text is placed against is darker than the number alone suggests.
+	// Same colours, same picture, same slider - only the mode moves. A dark
+	// picture turned well up, because below that the field stays bright enough
+	// that the theme's own foreground wins either way.
+	#[test]
+	fn light_mode_places_the_text_against_the_alpha_it_will_really_be_drawn_at() {
+		let light_bg = [0xf6u8, 0xf5, 0xf0];
+		let dark_text = [0x30u8, 0x32, 0x38];
+		let sum = summarize(&plain([10, 10, 12], 32, 32), 0.50);
+		let mut s = settings(light_bg, dark_text, SILK_CURSOR);
+		assert_eq!(s.theme_mode, "light");
+		let lit = derive(&sum, &s);
+		s.theme_mode = "dark".to_string();
+		let unlit = derive(&sum, &s);
+		assert!(
+			lightness(lit.fg) < lightness(unlit.fg) - 0.01,
+			"light {:?} ({}) should sit below dark {:?} ({})",
+			lit.fg,
+			lightness(lit.fg),
+			unlit.fg,
+			lightness(unlit.fg)
+		);
+	}
+
 	// The plate the block cursor draws, over a field taken as a neutral at
 	// `behind` - the same model `cursor_for` searches against.
 	fn plate_over(cursor: [u8; 3], behind: f32) -> f32 {
@@ -605,7 +631,8 @@ mod tests {
 				for op in [0.1f32, 0.35, 1.0] {
 					let sum = summarize(&plain(rgb, 32, 32), op);
 					let out = derive(&sum, &s);
-					let plate = plate_over(out.cursor, field_luma(&sum, sum.luma_hi, bg));
+					let plate =
+						plate_over(out.cursor, field_luma(&sum, sum.luma_hi, bg, sum.opacity));
 					let gap = (lightness(out.fg) - plate).abs();
 					// Short only where the field is already past the target and the
 					// search bottoms out, which is the case the scrim covers.
@@ -631,7 +658,7 @@ mod tests {
 			for hue in [20.0f32, 140.0, 260.0] {
 				let (a, b) = ab(hue, 0.12);
 				let tinted = from_oklab(gray_lightness(behind), a, b);
-				let scale = behind / luma_of(tinted).max(1e-6);
+				let scale = behind / config::luma(tinted).max(1e-6);
 				let field: Vec<f32> = (0..3)
 					.map(|k| config::to_linear(tinted[k]) * scale)
 					.collect();
