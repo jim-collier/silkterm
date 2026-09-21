@@ -244,14 +244,15 @@ fn hue_chroma(c: [u8; 3]) -> (f32, f32) {
 	(b.atan2(a).to_degrees().rem_euclid(360.0), a.hypot(b))
 }
 
-// What the background behind a glyph really is, as a linear luma. The wallpaper
-// quad is premultiplied over the background fill, so this is the shader's own
-// blend with the image's luma standing in for its color. `alpha` is what the
-// quad is actually drawn at, which in light mode is not the slider's own number
-// (lightmode.rs).
-fn field_luma(sum: &Summary, image_luma: f32, bg: [u8; 3], alpha: f32) -> f32 {
-	let cover = (sum.alpha * alpha).clamp(0.0, 1.0);
-	image_luma * alpha + config::luma(bg) * (1.0 - cover)
+// What the background behind a glyph really is, as a linear luma - the wallpaper
+// pass's own blend, with the image's luma standing in for its color. Light mode
+// mixes differently from dark, so `mix` carries which one (lightmode.rs). Where
+// the image does not cover its pixel the background shows through first, so the
+// picture is filled with it before the two are mixed.
+fn field_luma(sum: &Summary, image_luma: f32, bg: [u8; 3], mix: crate::lightmode::Mix) -> f32 {
+	let bg = config::luma(bg);
+	let filled = image_luma + bg * (1.0 - sum.alpha.clamp(0.0, 1.0));
+	mix.field(filled, bg)
 }
 
 // The cursor whose plate lands on `plate_target` over a field of `behind_luma`.
@@ -298,9 +299,9 @@ pub struct Derived {
 pub fn derive(sum: &Summary, s: &Settings) -> Derived {
 	let floor = s.text_min_contrast.clamp(0.0, 1.0);
 	let (bg, fg, cursor) = (s.bg, s.fg, s.cursor);
-	let alpha = crate::lightmode::wallpaper_alpha(s, sum.opacity);
-	let hi = gray_lightness(field_luma(sum, sum.luma_hi, bg, alpha));
-	let lo = gray_lightness(field_luma(sum, sum.luma_lo, bg, alpha));
+	let mix = crate::lightmode::wallpaper_mix(s, sum.opacity);
+	let hi = gray_lightness(field_luma(sum, sum.luma_hi, bg, mix));
+	let lo = gray_lightness(field_luma(sum, sum.luma_lo, bg, mix));
 
 	// Which side the text sits on is the theme's, never the image's. A light
 	// theme that flipped to light text because a photo was dark would stop being
@@ -342,7 +343,7 @@ pub fn derive(sum: &Summary, s: &Settings) -> Derived {
 	.clamp(0.0, 1.0);
 	let out_cursor = cursor_for(
 		plate,
-		field_luma(sum, sum.luma_hi, bg, alpha),
+		field_luma(sum, sum.luma_hi, bg, mix),
 		(hue + CURSOR_ROTATE).rem_euclid(360.0),
 		hue_chroma(cursor).1.min(MAX_CHROMA),
 	);
@@ -607,6 +608,10 @@ mod tests {
 		);
 	}
 
+	fn mix(s: &Settings, slider: f32) -> crate::lightmode::Mix {
+		crate::lightmode::wallpaper_mix(s, slider)
+	}
+
 	// The plate the block cursor draws, over a field taken as a neutral at
 	// `behind` - the same model `cursor_for` searches against.
 	fn plate_over(cursor: [u8; 3], behind: f32) -> f32 {
@@ -631,8 +636,10 @@ mod tests {
 				for op in [0.1f32, 0.35, 1.0] {
 					let sum = summarize(&plain(rgb, 32, 32), op);
 					let out = derive(&sum, &s);
-					let plate =
-						plate_over(out.cursor, field_luma(&sum, sum.luma_hi, bg, sum.opacity));
+					let plate = plate_over(
+						out.cursor,
+						field_luma(&sum, sum.luma_hi, bg, mix(&s, sum.opacity)),
+					);
 					let gap = (lightness(out.fg) - plate).abs();
 					// Short only where the field is already past the target and the
 					// search bottoms out, which is the case the scrim covers.

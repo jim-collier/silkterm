@@ -4628,6 +4628,9 @@ impl State {
 		};
 
 		let mut under: Vec<RectInstance> = Vec::new();
+		// what each pane's fill covers - the light-mode wallpaper draws the fill
+		// itself and has to be clipped to it
+		let mut pane_fulls: Vec<Rect> = Vec::new();
 		// cursors are drawn separately (above the scrim, so its halo can't obscure them)
 		let mut cursors: Vec<(Rect, RectInstance)> = Vec::new();
 		let mut tops: HashMap<u64, f32> = HashMap::new();
@@ -4692,6 +4695,7 @@ impl State {
 				color: pane_bg,
 				..Default::default()
 			});
+			pane_fulls.push(pane.full);
 			if let Some(cursor_quad) = draw.cursor {
 				cursors.push((rect, cursor_quad));
 			}
@@ -5326,13 +5330,16 @@ impl State {
 			crate::text::coverage_gamma(cfg.fg, cfg.bg, cfg.text_dark_on_light_gamma),
 		);
 		gpu.rects.set_resolution(&gpu.gfx.queue, frame_w, frame_h);
-		if let Some(img) = &gpu.wallpaper_img {
-			// Light mode draws the picture at a higher alpha than the slider reads,
-			// so the same setting shows the same amount of picture either way
-			// (lightmode.rs). Re-read per frame: the mode can flip under a running
-			// window and nothing reloads the wallpaper for it.
-			let alpha = crate::lightmode::wallpaper_alpha(&cfg, img.opacity());
-			img.set_look(&gpu.gfx.queue, frame_w, frame_h, alpha);
+		// How the picture is mixed with the background. Light mode needs a different
+		// blend, not a different number (lightmode.rs). Re-read per frame: the mode
+		// can flip under a running window and nothing reloads a wallpaper for it.
+		let wp_mix = gpu
+			.wallpaper_img
+			.as_ref()
+			.map(|img| crate::lightmode::wallpaper_mix(&cfg, img.opacity()));
+		let wp_writes_fill = wp_mix.is_some_and(|m| m.perceptual);
+		if let (Some(img), Some(mix)) = (&gpu.wallpaper_img, wp_mix) {
+			img.set_look(&gpu.gfx.queue, frame_w, frame_h, mix, pane_bg);
 		}
 		gpu.rects
 			.upload(&gpu.gfx.device, &gpu.gfx.queue, &instances);
@@ -5871,11 +5878,29 @@ impl State {
 			});
 
 			let (sw, sh) = (gpu.gfx.config.width, gpu.gfx.config.height);
-			// pane backgrounds (exactly pane-sized, no clip needed)
-			gpu.rects.draw(&mut pass, 0..under_len);
+			// pane backgrounds (exactly pane-sized, no clip needed) - skipped where the
+			// wallpaper writes them itself
+			if !wp_writes_fill {
+				gpu.rects.draw(&mut pass, 0..under_len);
+			}
 			// background image over the pane fill, under cells/text
 			if let Some(img) = &gpu.wallpaper_img {
-				img.draw(&mut pass);
+				if wp_writes_fill {
+					// The mix replaces the fill rather than blending over it, so it has
+					// to stop at the pane edge - otherwise the divider slits between
+					// panes would take the pane's background color instead of their own.
+					for full in &pane_fulls {
+						let (x, y, w, h) = scissor(*full, sw, sh);
+						if w == 0 || h == 0 {
+							continue;
+						}
+						pass.set_scissor_rect(x, y, w, h);
+						img.draw(&mut pass);
+					}
+					pass.set_scissor_rect(0, 0, sw, sh);
+				} else {
+					img.draw(&mut pass);
+				}
 			}
 			// per-pane cell bg + cursor, clipped to the pane
 			for (rect, start, end) in &group_ranges {

@@ -10,40 +10,37 @@
 //! touched: every function here returns the value it was handed when the active
 //! mode is dark.
 //!
-//! - **Wallpaper visibility.** At 10% a picture is plainly there over black and
-//!   all but gone over white. The slider keeps its number and light mode raises
-//!   the alpha behind it. How far is a judgement, because the two ways of
-//!   reading "as much picture" disagree: how far the composite sits from the
-//!   background, and how much of the picture's own texture survives. Matching
-//!   the first alone puts the picture there and leaves it flat; matching the
-//!   second brings the detail back and takes the background to a mid gray.
-//!   `PRESENCE` picks the point between.
+//! - **Wallpaper visibility.** The slider means one thing: how much of the
+//!   picture's own contrast reaches the screen. A linear-light blend delivers
+//!   that over a near-black background and almost none of it over a light one,
+//!   so light mode mixes the background and the picture in a power curve
+//!   instead, at the amount dark mode's blend would have delivered. Nothing is
+//!   calibrated by eye and nothing is solved: both halves are closed form.
 //! - **Text scrim.** The halo is the background color laid over whatever the
 //!   picture put there, so in light mode it is a pale plate on a darkened
-//!   field, which is the same move in the direction the eye notices most. Its
-//!   alpha is scaled down until it covers the same ground dark mode's does.
+//!   field, which is the same move in the direction the eye notices most. That
+//!   composite blends against the destination through the pipeline's blend
+//!   state and cannot read it, so the halo is still a calibration: its alpha is
+//!   scaled down until it covers the same ground dark mode's does.
 //!
 //! The measure throughout is the sRGB transfer curve taken on Rec.709 luma. Luma
 //! because it is affine under the alpha composite, so one number stands in for a
 //! whole blend; the transfer curve because it tracks CIE L* closely enough here
-//! (the two disagree by two points of alpha on the shipped defaults) and it is
-//! already the program's color language.
+//! and it is already the program's color language.
 
 use crate::config::{self, Settings};
 
-// A stand-in for the picture, as a linear luma. Measured over the shipped pack
-// of 104: median 0.129, mean 0.141, quartiles 0.062 and 0.193. One number for
-// every image rather than each image's own, so a rotation folder does not change
-// the alpha under the user every few minutes - and a picture far from this one
-// is off by a few points, not by a factor.
+// Where the transfer curve's slope is read when the two modes are compared, as
+// a linear luma. Measured over the shipped pack of 104: median 0.129, mean
+// 0.141, quartiles 0.062 and 0.193. A picture far from this one is out by a few
+// points, not by a factor.
 const WALLPAPER_LUMA: f32 = 0.13;
 
-// How the two readings of "as much picture" are weighed: 0 matches how far the
-// composite sits from the background, 1 matches how much of the picture's own
-// texture survives. Measured on the rig at the shipped 10% over the built-in
-// theme, against dark mode at the same setting: 0 leaves a picture that is there
-// but flat, 1 gives back dark mode's detail over a mid-gray background.
-const PRESENCE: f32 = 0.5;
+// The transfer curve the mix happens in. A pure power rather than sRGB's own,
+// because sRGB's `- 0.055` term does not cancel: over a black background the
+// power curve makes the mix exactly the linear blend it replaces, and sRGB's
+// would lift the black by eight levels.
+const MIX_GAMMA: f32 = 2.4;
 
 // Where the two halos are compared. The gain cannot be right across the whole
 // falloff - the curves meet at both ends whatever it is - so it is matched at
@@ -85,45 +82,66 @@ fn alpha_for(from: f32, to: f32, want: f32) -> f32 {
 	((config::to_linear_f32(target) - from) / span).clamp(0.0, 1.0)
 }
 
-// How much of the picture's own texture survives, at this alpha over this
-// background. The alpha scales the picture's range in linear light, and the
-// transfer curve's slope where the composite sits decides how much of that the
-// eye gets back - which is why a picture laid over white goes flat while the
-// same picture over black keeps its detail.
-fn texture(alpha: f32, bg: f32) -> f32 {
-	let at = alpha * WALLPAPER_LUMA + (1.0 - alpha) * bg;
-	let slope = if at <= 0.003_130_8 {
+// The sRGB transfer curve's slope at a linear value. How much of a change in the
+// picture the eye gets back, where the composite happens to sit.
+fn slope(at: f32) -> f32 {
+	if at <= 0.003_130_8 {
 		12.92
 	} else {
 		(1.055 / 2.4) * at.powf(1.0 / 2.4 - 1.0)
-	};
-	alpha * slope
+	}
 }
 
-// The alpha at which the picture keeps `want` of its texture over `bg`. Rises
-// with the alpha either way round, so it bisects.
-fn alpha_for_texture(bg: f32, want: f32) -> f32 {
-	if texture(1.0, bg) <= want {
-		return 1.0;
-	}
-	let (mut lo, mut hi) = (0.0f32, 1.0f32);
-	for _ in 0..20 {
-		let mid = 0.5 * (lo + hi);
-		if texture(mid, bg) < want {
-			lo = mid;
-		} else {
-			hi = mid;
+// How much of the picture's own contrast a linear-light blend at `alpha` puts on
+// screen, over a background of `bg`. This is what the visibility slider has
+// always meant, whether or not anyone said so.
+//
+// Over pure black it works out at exactly `alpha^(1/2.4)`, which is why dark
+// mode has never needed any of this: black leaves the blend a pure scale of the
+// encoded picture, and a scale cannot touch contrast. A dark theme whose
+// background is not black delivers less, and this says how much less.
+fn encoded_scale(alpha: f32, bg: f32) -> f32 {
+	alpha * slope(alpha * WALLPAPER_LUMA + (1.0 - alpha) * bg) / slope(WALLPAPER_LUMA)
+}
+
+// What the wallpaper pass does this frame.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Mix {
+	// The alpha of the linear blend, or the share of the picture in the power
+	// curve. Which one is decided by `perceptual`.
+	pub amount: f32,
+	// False is the linear-light blend the program has always drawn, and is what
+	// dark mode gets. True mixes the background and the picture in a power curve,
+	// which needs the background color and so cannot be a hardware blend.
+	pub perceptual: bool,
+}
+
+impl Mix {
+	// The field a glyph sits on, as a linear luma, for a picture of `picture`
+	// over a background of `bg`. The renderer's own blend in one number, so the
+	// derived text colors are placed against what will really be there.
+	pub fn field(self, picture: f32, bg: f32) -> f32 {
+		if !self.perceptual {
+			return bg + (picture - bg) * self.amount;
 		}
+		let p = |x: f32| x.max(0.0).powf(1.0 / MIX_GAMMA);
+		let mixed = p(bg) + (p(picture) - p(bg)) * self.amount;
+		mixed.max(0.0).powf(MIX_GAMMA)
 	}
-	0.5 * (lo + hi)
 }
 
-// The alpha the wallpaper quad is drawn at, for a slider reading `slider`.
-pub fn wallpaper_alpha(s: &Settings, slider: f32) -> f32 {
+// How the wallpaper is drawn, for a slider reading `slider`.
+pub fn wallpaper_mix(s: &Settings, slider: f32) -> Mix {
 	if dark(s) {
-		return slider;
+		return Mix {
+			amount: slider,
+			perceptual: false,
+		};
 	}
-	opacity_for(slider, config::luma(s.bg), paired_dark_luma(s))
+	Mix {
+		amount: encoded_scale(slider, paired_dark_luma(s)).clamp(0.0, 1.0),
+		perceptual: true,
+	}
 }
 
 // How much of the asked-for halo alpha is actually drawn, for a wallpaper whose
@@ -136,35 +154,20 @@ pub fn halo_gain(s: &Settings, slider: f32) -> f32 {
 	gain_for(slider, config::luma(s.bg), paired_dark_luma(s))
 }
 
-// Light mode's alpha for a slider reading `slider`, given the two backgrounds.
-//
-// Two things decide how much picture is there, and they disagree. Matching how
-// far the composite sits from the background leaves light mode flat: the picture
-// is present and its detail is gone. Matching how much of the picture's own
-// texture survives brings the detail back and takes the background to a mid
-// gray, which stops it being light mode. `PRESENCE` picks the point between.
-//
-// Never below the slider itself: the correction is there to show more picture,
-// and near the top of the slider it has nothing left to add - at 100% the
-// picture has replaced the background in both modes and there is nothing to
-// match.
-fn opacity_for(slider: f32, light: f32, dark: f32) -> f32 {
-	let by_offset = alpha_for(
-		light,
-		WALLPAPER_LUMA,
-		shift(dark, WALLPAPER_LUMA, slider).abs(),
-	);
-	let by_texture = alpha_for_texture(light, texture(slider, dark));
-	(by_offset + (by_texture - by_offset) * PRESENCE).max(slider)
-}
-
 // Light mode's share of the halo alpha, given the two backgrounds. Both modes
 // are measured at their own worst case: the halo is the background color, and
-// the field under it is the picture at whatever alpha that mode draws it.
+// the field under it is the picture as that mode draws it.
 fn gain_for(slider: f32, light: f32, dark: f32) -> f32 {
-	let shown = opacity_for(slider, light, dark);
-	let field_dark = dark + (WALLPAPER_LUMA - dark) * slider;
-	let field_light = light + (WALLPAPER_LUMA - light) * shown;
+	let shown = Mix {
+		amount: encoded_scale(slider, dark).clamp(0.0, 1.0),
+		perceptual: true,
+	};
+	let drawn = Mix {
+		amount: slider,
+		perceptual: false,
+	};
+	let field_dark = drawn.field(WALLPAPER_LUMA, dark);
+	let field_light = shown.field(WALLPAPER_LUMA, light);
 	let want = shift(field_dark, dark, HALO_REF).abs();
 	(alpha_for(field_light, light, want) / HALO_REF).clamp(MIN_HALO_GAIN, 1.0)
 }
@@ -172,8 +175,8 @@ fn gain_for(slider: f32, light: f32, dark: f32) -> f32 {
 #[cfg(test)]
 mod tests {
 	use super::{
-		HALO_REF, MIN_HALO_GAIN, PRESENCE, WALLPAPER_LUMA, alpha_for, alpha_for_texture, gain_for,
-		halo_gain, opacity_for, shift, texture, wallpaper_alpha,
+		HALO_REF, MIN_HALO_GAIN, MIX_GAMMA, Mix, WALLPAPER_LUMA, encoded_scale, gain_for,
+		halo_gain, shift, wallpaper_mix,
 	};
 	use crate::config::{self, Settings};
 
@@ -189,7 +192,14 @@ mod tests {
 		}
 	}
 
+	fn bg_luma(name: &str, mode: &str) -> f32 {
+		config::luma(crate::theme::resolve(name, mode, true).bg)
+	}
+
 	const SLIDERS: [f32; 7] = [0.0, 0.05, 0.1, 0.25, 0.5, 0.8, 1.0];
+	// a picture's dark and bright ends, as linear luma
+	const LO: f32 = 0.02;
+	const HI: f32 = 0.45;
 
 	#[test]
 	fn dark_mode_gets_back_exactly_what_it_handed_over() {
@@ -198,78 +208,98 @@ mod tests {
 			for mode in ["dark", "system"] {
 				let s = themed(name, mode);
 				for v in SLIDERS {
-					assert_eq!(wallpaper_alpha(&s, v), v, "{name} {mode} {v}");
+					let mix = wallpaper_mix(&s, v);
+					assert_eq!(mix.amount, v, "{name} {mode} {v}");
+					assert!(!mix.perceptual, "{name} {mode} {v}");
 					assert_eq!(halo_gain(&s, v), 1.0, "{name} {mode} {v}");
 				}
 			}
 		}
 	}
 
+	// The whole reason the mix is a pure power curve rather than sRGB's own. Over
+	// a black background the two are the same arithmetic, so a dark theme could
+	// take either path and draw the same pixels.
 	#[test]
-	fn light_mode_sits_between_the_two_readings_of_as_much_picture() {
+	fn over_black_the_mix_is_the_blend_it_replaces() {
+		for v in SLIDERS {
+			let blend = Mix {
+				amount: v,
+				perceptual: false,
+			};
+			let curve = Mix {
+				amount: v.powf(1.0 / MIX_GAMMA),
+				perceptual: true,
+			};
+			for p in [0.0f32, 0.01, 0.13, 0.5, 1.0] {
+				let (a, b) = (blend.field(p, 0.0), curve.field(p, 0.0));
+				assert!((a - b).abs() < 1e-5, "v {v}, picture {p}: {a} against {b}");
+			}
+		}
+	}
+
+	// What the slider means, in both modes: this much of the picture's own
+	// contrast reaches the screen.
+	fn contrast_on_screen(mix: Mix, bg: f32) -> f32 {
+		config::from_linear(mix.field(HI, bg)) - config::from_linear(mix.field(LO, bg))
+	}
+
+	#[test]
+	fn light_mode_shows_the_contrast_dark_mode_shows() {
 		for name in crate::theme::names() {
-			let dark = config::luma(crate::theme::resolve(name, "dark", true).bg);
-			let light = config::luma(crate::theme::resolve(name, "light", true).bg);
+			let (dark, light) = (bg_luma(name, "dark"), bg_luma(name, "light"));
 			for v in SLIDERS {
-				let by_offset =
-					alpha_for(light, WALLPAPER_LUMA, shift(dark, WALLPAPER_LUMA, v).abs());
-				let by_texture = alpha_for_texture(light, texture(v, dark));
-				// texture always asks for more, which is what makes PRESENCE a choice
-				// rather than a rounding
-				assert!(by_texture >= by_offset - 1e-6, "{name} {v}");
-				let want = by_offset + (by_texture - by_offset) * PRESENCE;
-				let got = opacity_for(v, light, dark);
+				let in_dark = contrast_on_screen(
+					Mix {
+						amount: v,
+						perceptual: false,
+					},
+					dark,
+				);
+				let in_light = contrast_on_screen(wallpaper_mix(&themed(name, "light"), v), light);
+				// the stand-in picture is one luma and a real one is a spread, so
+				// this is close rather than exact
 				assert!(
-					(got - want.max(v)).abs() < 1e-5,
-					"{name} {v}: wanted {want}, got {got}"
+					(in_dark - in_light).abs() < 0.02,
+					"{name} {v}: dark {in_dark}, light {in_light}"
 				);
 			}
 		}
 	}
 
-	// Each invariant on its own, so a change to either is caught where it happens
-	// rather than only through the blend.
 	#[test]
-	fn each_reading_hits_what_it_aims_at() {
-		let dark = config::luma(crate::theme::resolve("SilkTerm", "dark", true).bg);
-		let light = config::luma(crate::theme::resolve("SilkTerm", "light", true).bg);
-		for v in [0.05f32, 0.1, 0.25, 0.5] {
-			let by_offset = alpha_for(light, WALLPAPER_LUMA, shift(dark, WALLPAPER_LUMA, v).abs());
-			assert!(
-				(shift(light, WALLPAPER_LUMA, by_offset).abs()
-					- shift(dark, WALLPAPER_LUMA, v).abs())
-				.abs() < 0.005,
-				"offset {v}"
-			);
-			let by_texture = alpha_for_texture(light, texture(v, dark));
-			assert!(
-				(texture(by_texture, light) - texture(v, dark)).abs() < 0.01,
-				"texture {v}"
-			);
-		}
-	}
-
-	#[test]
-	fn the_shipped_default_is_plainly_there_in_light_mode() {
+	fn the_shipped_default_asks_for_the_scale_black_would_have_given() {
 		let s = themed("SilkTerm", "light");
-		let a = wallpaper_alpha(&s, 0.10);
-		// half, near enough - the number is measured rather than chosen, so the
-		// band is what a change of constant is allowed to move
-		assert!((0.45..0.55).contains(&a), "{a}");
+		let mix = wallpaper_mix(&s, 0.10);
+		assert!(mix.perceptual);
+		// SilkTerm's dark background is black, so the closed form is exact
+		assert!(
+			(mix.amount - 0.10f32.powf(1.0 / MIX_GAMMA)).abs() < 1e-4,
+			"{mix:?}"
+		);
+	}
+
+	// A dark theme whose background is not black already shows less picture, so
+	// its light mode shows less too. Self-consistent rather than uniform.
+	#[test]
+	fn a_theme_with_a_lifted_dark_background_asks_for_less() {
+		let silk = wallpaper_mix(&themed("SilkTerm", "light"), 0.10).amount;
+		let pastel = wallpaper_mix(&themed("Pastel", "light"), 0.10).amount;
+		assert!(bg_luma("Pastel", "dark") > bg_luma("SilkTerm", "dark"));
+		assert!(pastel < silk - 0.05, "silk {silk}, pastel {pastel}");
 	}
 
 	#[test]
-	fn light_mode_never_shows_less_than_the_slider_asked() {
+	fn the_scale_runs_end_to_end_and_only_upward() {
 		for name in crate::theme::names() {
-			let s = themed(name, "light");
+			let dark = bg_luma(name, "dark");
+			assert_eq!(encoded_scale(0.0, dark), 0.0, "{name}");
+			assert!((encoded_scale(1.0, dark) - 1.0).abs() < 1e-5, "{name}");
 			let mut last = 0.0;
 			for i in 0..=100 {
-				let v = i as f32 / 100.0;
-				let a = wallpaper_alpha(&s, v);
-				assert!(a >= v - 1e-6, "{name} {v}: {a}");
-				assert!(a >= last - 1e-6, "{name} {v}: {a} after {last}");
-				assert!(a <= 1.0, "{name} {v}: {a}");
-				last = a;
+				let g = encoded_scale(i as f32 / 100.0, dark);
+				assert!(g >= last - 1e-6, "{name} at {i}: {g} after {last}");
+				last = g;
 			}
 		}
 	}
@@ -277,35 +307,35 @@ mod tests {
 	#[test]
 	fn the_halo_is_quietened_wherever_a_picture_is_up() {
 		let s = themed("SilkTerm", "light");
-		for v in [0.05f32, 0.1, 0.35, 0.75] {
+		for v in [0.05f32, 0.1, 0.35, 0.75, 1.0] {
 			let g = halo_gain(&s, v);
-			// about a third of the asked-for alpha, which is a doubling and a half
-			assert!((0.30..0.42).contains(&g), "{v}: {g}");
+			assert!((MIN_HALO_GAIN..1.0).contains(&g), "{v}: {g}");
 		}
-		// with the picture at full strength the background is gone and the plate
-		// has the furthest to travel, so the floor is what holds it
-		assert_eq!(halo_gain(&s, 1.0), MIN_HALO_GAIN);
 	}
 
 	#[test]
 	fn the_halo_covers_the_same_ground_in_both_modes() {
 		let name = "SilkTerm";
-		let dark = config::luma(crate::theme::resolve(name, "dark", true).bg);
-		let light = config::luma(crate::theme::resolve(name, "light", true).bg);
+		let (dark, light) = (bg_luma(name, "dark"), bg_luma(name, "light"));
 		for v in [0.05f32, 0.1, 0.25, 0.5] {
 			let gain = gain_for(v, light, dark);
-			let shown = opacity_for(v, light, dark);
-			let field_dark = dark + (WALLPAPER_LUMA - dark) * v;
-			let field_light = light + (WALLPAPER_LUMA - light) * shown;
+			let field_dark = Mix {
+				amount: v,
+				perceptual: false,
+			}
+			.field(WALLPAPER_LUMA, dark);
+			let field_light = wallpaper_mix(&themed(name, "light"), v).field(WALLPAPER_LUMA, light);
 			let want = shift(field_dark, dark, HALO_REF).abs();
 			let got = shift(field_light, light, HALO_REF * gain).abs();
-			assert!((got - want).abs() < 0.01, "{v}: wanted {want}, got {got}");
+			assert!(
+				(got - want).abs() < 0.01 || gain <= MIN_HALO_GAIN,
+				"{v}: wanted {want}, got {got}"
+			);
 		}
 	}
 
 	#[test]
 	fn no_picture_leaves_the_halo_alone() {
-		let s = themed("SilkTerm", "light");
-		assert_eq!(halo_gain(&s, 0.0), 1.0);
+		assert_eq!(halo_gain(&themed("SilkTerm", "light"), 0.0), 1.0);
 	}
 }

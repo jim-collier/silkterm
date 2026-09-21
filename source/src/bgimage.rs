@@ -14,9 +14,14 @@ use std::sync::atomic::{AtomicU8, Ordering};
 struct Uniform {
 	resolution: [f32; 2],
 	image_size: [f32; 2],
-	opacity: f32,
+	amount: f32,
 	fit: f32,         // 0 = stretch, 1 = zoom (cover)
 	anchor: [f32; 2], // which part of the image survives a zoom crop; 0.5 = center
+	// linear background color, and the alpha the whole layer is drawn at. Both
+	// are only read on the perceptual path, which writes the background itself.
+	bg: [f32; 4],
+	perceptual: f32,
+	_pad: [f32; 3],
 }
 
 // Wallpaper VRAM-content probe verdict (see `vram_check_poll`).
@@ -40,7 +45,7 @@ pub struct ImageRenderer {
 	fit: f32,
 	anchor: [f32; 2],
 	// last resolution written to the uniform (skip the per-frame re-write)
-	last: std::cell::Cell<(f32, f32, f32)>,
+	last: std::cell::Cell<(f32, f32, crate::lightmode::Mix, [f32; 4])>,
 	// VT-switch loss probe: this texture is a REAL casualty of a VRAM purge
 	// (it is sampled every frame, so it lives hot in video memory - unlike a
 	// synthetic sentinel, which the driver can keep restorable elsewhere). A
@@ -232,29 +237,48 @@ impl ImageRenderer {
 			probe_ref,
 			probe_buf,
 			probe_inflight: None,
-			last: std::cell::Cell::new((0.0, 0.0, -1.0)),
+			last: std::cell::Cell::new((
+				0.0,
+				0.0,
+				crate::lightmode::Mix {
+					amount: -1.0,
+					perceptual: false,
+				},
+				[0.0; 4],
+			)),
 		}
 	}
 
-	// What the slider (or the image's own tag) asked for, which is not always
-	// what gets drawn - see `set_look`.
+	// What the slider (or the image's own tag) asked for, which is not always what
+	// gets drawn - see `set_look`.
 	pub fn opacity(&self) -> f32 {
 		self.opacity
 	}
 
 	// Called per frame. fit/anchor are fixed at construction, so the uniform only
-	// changes on a resize or when light mode re-reads the visibility.
-	pub fn set_look(&self, queue: &wgpu::Queue, w: f32, h: f32, opacity: f32) {
-		if self.last.get() == (w, h, opacity) {
+	// changes on a resize, or when the mode or the visibility moves.
+	pub fn set_look(
+		&self,
+		queue: &wgpu::Queue,
+		w: f32,
+		h: f32,
+		mix: crate::lightmode::Mix,
+		bg: [f32; 4],
+	) {
+		let now = (w, h, mix, bg);
+		if self.last.get() == now {
 			return;
 		}
-		self.last.set((w, h, opacity));
+		self.last.set(now);
 		let uniform_data = Uniform {
 			resolution: [w, h],
 			image_size: self.image_size,
-			opacity,
+			amount: mix.amount,
 			fit: self.fit,
 			anchor: self.anchor,
+			bg,
+			perceptual: if mix.perceptual { 1.0 } else { 0.0 },
+			_pad: [0.0; 3],
 		};
 		queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform_data));
 	}
@@ -369,9 +393,11 @@ const BG_WGSL: &str = r"
 struct Uniform {
     resolution: vec2<f32>,
     image_size: vec2<f32>,
-    opacity: f32,
+    amount: f32,
     fit: f32,
     anchor: vec2<f32>,
+    bg: vec4<f32>,
+    perceptual: f32,
 };
 @group(0) @binding(0) var<uniform> u: Uniform;
 @group(0) @binding(1) var tex: texture_2d<f32>;
@@ -397,7 +423,22 @@ fn fs(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
         uv = (p + (disp - u.resolution) * u.anchor) / disp;
     }
     let c = textureSample(tex, samp, uv);
-    let a = c.a * u.opacity;
-    return vec4<f32>(c.rgb * a, a); // premultiplied
+    if (u.perceptual < 0.5) {
+        let a = c.a * u.amount;
+        return vec4<f32>(c.rgb * a, a); // premultiplied
+    }
+    // Light mode. The eye reads a power curve, not linear light, so the same
+    // linear alpha that shows a picture over black shows almost nothing over
+    // white - mix in the curve instead. That needs the background color, which a
+    // hardware blend cannot supply, so this writes the pane fill itself and the
+    // caller clips it to the pane.
+    // (No double quotes anywhere in here - the whole shader is one raw literal.)
+    let filled = c.rgb + u.bg.rgb * (1.0 - c.a); // the picture's own holes
+    let e = vec3<f32>(1.0 / 2.4);
+    let lo = pow(max(u.bg.rgb, vec3<f32>(0.0)), e);
+    let hi = pow(max(filled, vec3<f32>(0.0)), e);
+    let mixed = pow(mix(lo, hi, vec3<f32>(u.amount)), vec3<f32>(2.4));
+    let la = u.bg.a;
+    return vec4<f32>(mixed * la, la); // premultiplied
 }
 ";
