@@ -5325,9 +5325,9 @@ impl State {
 		let (frame_w, frame_h) = (gpu.gfx.config.width as f32, gpu.gfx.config.height as f32);
 		self.text
 			.update_viewport(&gpu.gfx.queue, gpu.gfx.config.width, gpu.gfx.config.height);
-		self.text.set_coverage_gamma(
+		self.text.set_text_blend(
 			&gpu.gfx.queue,
-			crate::text::coverage_gamma(cfg.fg, cfg.bg, cfg.text_dark_on_light_gamma),
+			crate::text::text_blend(cfg.fg, cfg.bg, cfg.text_dark_on_light),
 		);
 		gpu.rects.set_resolution(&gpu.gfx.queue, frame_w, frame_h);
 		// How the picture is mixed with the background. Light mode needs a different

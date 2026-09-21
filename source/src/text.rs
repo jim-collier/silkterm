@@ -47,18 +47,44 @@ fn pin_mono_family(fs: &FontSystem) {
 // Weight a terminal bold cell should request: the closest weight to Bold the
 // pinned mono family really ships. Use instead of a literal Weight::BOLD, which
 // kicks the family out (into a proportional fallback) when it has no bold face.
-// Glyph coverage is blended in linear light, so a half covered pixel comes out
-// near three quarters brightness whichever way round the two colors are. On a
-// dark background that reads as a strong edge; on a light one it is almost no
-// ink at all, and the thin parts of every letter go with it. Raising coverage
-// by an exponent below 1 gives them back, and only text darker than what is
-// behind it needs that - the other way round is already heavy enough.
-pub fn coverage_gamma(fg: [u8; 3], bg: [u8; 3], setting: f32) -> f32 {
-	if crate::palette::to_oklab(fg).0 < crate::palette::to_oklab(bg).0 {
-		setting
-	} else {
-		1.0
-	}
+// What the text pass needs to blend glyph coverage the way an sRGB blend would,
+// which is the weight the font was drawn for: the pair as sRGB grays of the same
+// brightness, and how much of the correction to apply.
+//
+// Coverage is blended in linear light, so a half covered pixel comes out near
+// three quarters brightness whichever way round the two colors are. On a dark
+// background that reads as a strong edge; on a light one it is almost no ink at
+// all, and the thin parts of every letter go with it. Only text darker than what
+// is behind it needs the correction - the other way round is already heavy
+// enough - and that side is decided on Oklab lightness, the measure minimum
+// contrast uses.
+//
+// One alpha serves all three channels, so the curve is built from grays of the
+// pair's own brightness. A glyph in some other color takes the same curve, which
+// is off by up to about 20 levels on its partly covered pixels and always in the
+// direction of more ink.
+pub fn text_blend(fg: [u8; 3], bg: [u8; 3], amount: f32) -> (f32, f32, f32) {
+	let (fg_gray, bg_gray) = (gray_of(fg), gray_of(bg));
+	let on = crate::palette::to_oklab(fg).0 < crate::palette::to_oklab(bg).0;
+	(
+		fg_gray,
+		bg_gray,
+		if on {
+			amount.clamp(0.0, crate::config::MAX_DARK_ON_LIGHT)
+		} else {
+			0.0
+		},
+	)
+}
+
+// A color as the sRGB gray of the same brightness. Rec.709 luma in linear light,
+// encoded back, so the curve built from it runs over the range the real pair
+// does.
+fn gray_of(c: [u8; 3]) -> f32 {
+	let luma = 0.2126 * crate::config::to_linear(c[0])
+		+ 0.7152 * crate::config::to_linear(c[1])
+		+ 0.0722 * crate::config::to_linear(c[2]);
+	crate::config::from_linear(luma)
 }
 
 pub fn mono_bold_weight() -> glyphon::Weight {
@@ -826,8 +852,10 @@ impl TextCtx {
 
 	// Set the coverage exponent for every renderer sharing this context. Cheap
 	// per frame: the uniform is only rewritten when the value moves.
-	pub fn set_coverage_gamma(&mut self, queue: &wgpu::Queue, gamma: f32) {
-		self.gpu().viewport.set_coverage_gamma(queue, gamma);
+	pub fn set_text_blend(&mut self, queue: &wgpu::Queue, blend: (f32, f32, f32)) {
+		self.gpu()
+			.viewport
+			.set_text_blend(queue, blend.0, blend.1, blend.2);
 	}
 
 	pub fn update_viewport(&mut self, queue: &wgpu::Queue, w: u32, h: u32) {
@@ -1070,25 +1098,47 @@ mod tests {
 	use super::*;
 
 	// Only dark-on-light gets the correction. Applying it the other way would
-	// fatten text that linear blending has already made heavy enough.
+	// thin text that linear blending has already made heavy enough.
 	#[test]
-	fn only_text_darker_than_its_background_is_thickened() {
+	fn only_text_darker_than_its_background_is_corrected() {
 		let (black, white) = ([0, 0, 0], [255, 255, 255]);
-		assert_eq!(coverage_gamma(black, white, 0.65), 0.65);
-		assert_eq!(coverage_gamma(white, black, 0.65), 1.0);
+		assert_eq!(text_blend(black, white, 1.0).2, 1.0);
+		assert_eq!(text_blend(white, black, 1.0).2, 0.0);
 		// a light theme's real pair, not just the extremes
 		assert_eq!(
-			coverage_gamma([0x30, 0x2c, 0x28], [0xf2, 0xef, 0xe9], 0.65),
-			0.65
-		);
-		assert_eq!(
-			coverage_gamma([0xd8, 0xd4, 0xcc], [0x1c, 0x1c, 0x22], 0.65),
+			text_blend([0x30, 0x2c, 0x28], [0xf2, 0xef, 0xe9], 1.0).2,
 			1.0
 		);
+		assert_eq!(
+			text_blend([0xd8, 0xd4, 0xcc], [0x1c, 0x1c, 0x22], 1.0).2,
+			0.0
+		);
 		// nothing to correct where the two are the same
-		assert_eq!(coverage_gamma(white, white, 0.65), 1.0);
+		assert_eq!(text_blend(white, white, 1.0).2, 0.0);
 		// the setting off means the shader takes its old path either way
-		assert_eq!(coverage_gamma(black, white, 1.0), 1.0);
+		assert_eq!(text_blend(black, white, 0.0).2, 0.0);
+		// the headroom above the blend is real, and it stops somewhere
+		assert_eq!(text_blend(black, white, 1.6).2, 1.6);
+		assert_eq!(
+			text_blend(black, white, 9.0).2,
+			crate::config::MAX_DARK_ON_LIGHT
+		);
+	}
+
+	// The pair the curve is built from spans the real pair's own brightness, and
+	// the shader divides by the gap between the two - so a dark-on-light pair has
+	// to come back the darker one first.
+	#[test]
+	fn the_pair_reaches_the_shader_as_grays_of_its_own_brightness() {
+		let (fg, bg, _) = text_blend([0, 0, 0], [255, 255, 255], 1.0);
+		assert!(fg == 0.0 && (bg - 1.0).abs() < 1e-5, "{fg} against {bg}");
+		let (fg, bg, on) = text_blend([0x30, 0x32, 0x38], [0xf6, 0xf5, 0xf0], 1.0);
+		assert!(fg > 0.15 && fg < 0.25, "fg gray {fg}");
+		assert!(bg > 0.93 && bg < 0.99, "bg gray {bg}");
+		assert_eq!(on, 1.0);
+		// a saturated pair still reads in the right order
+		let (fg, bg, _) = text_blend([0x07, 0x3d, 0x14], [0xe9, 0xee, 0xe9], 1.0);
+		assert!(fg < bg, "{fg} against {bg}");
 	}
 
 	// A monospace face routinely carries a double-width char at its ordinary

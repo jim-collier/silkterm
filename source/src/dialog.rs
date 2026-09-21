@@ -862,9 +862,9 @@ impl DialogWin {
 		self.text.update_viewport(&self.gfx.queue, w, h);
 		// The panel's own colors decide it here, not the terminal's.
 		let cfg = config::settings();
-		self.text.set_coverage_gamma(
+		self.text.set_text_blend(
 			&self.gfx.queue,
-			crate::text::coverage_gamma(cfg.dialog_fg, cfg.dialog_bg, cfg.text_dark_on_light_gamma),
+			crate::text::text_blend(cfg.dialog_fg, cfg.dialog_bg, cfg.text_dark_on_light),
 		);
 
 		// gather rects (About button + flyover, or the Settings controls) + text

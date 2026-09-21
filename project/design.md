@@ -22,7 +22,7 @@
 	- [Minimap](#minimap)
 	- [Text readability scrim](#text-readability-scrim)
 	- [Minimum contrast (2026-08-30)](#minimum-contrast-2026-08-30)
-	- [Dark text on a light background (2026-09-20)](#dark-text-on-a-light-background-2026-09-20)
+	- [Dark text on a light background (2026-09-21)](#dark-text-on-a-light-background-2026-09-21)
 	- [How much of the wallpaper is on screen (2026-09-20)](#how-much-of-the-wallpaper-is-on-screen-2026-09-20)
 	- [Text colors from the wallpaper (2026-09-20)](#text-colors-from-the-wallpaper-2026-09-20)
 	- [Performance profiles (2026-09-03)](#performance-profiles-2026-09-03)
@@ -379,15 +379,23 @@ Every built-in theme's own foreground clears the floor on its own, which is chec
 
 The block cursor is a second background. It is drawn as a plate at 55% under the glyph, and the glyph keeps its own color, so the text on it has to clear the same floor against the plate as blended over the theme's background. That is checked for every built-in theme and mode the same way. A cursor at the text's own brightness fails it outright, which is what the monochrome themes shipped with. In a light theme the rule also sets how dark the text has to be: the plate sits between the text and the background, and a paler foreground leaves no room for one that both shows as a block and carries the text.
 
-### Dark text on a light background (2026-09-20)
+### Dark text on a light background (2026-09-21)
 
 The color pipeline works in linear light, and glyph coverage is blended there too. A pixel the rasterizer says is half covered comes out at about three quarters brightness either way round. On a dark background that is a strong edge. On a light one it is barely a quarter of the ink the eye expects, so the thin parts of every stroke fade and a light theme reads a weight lighter than the same font in a dark one. Bold survives because most of its pixels are fully covered.
 
-The fix raises coverage by an exponent before it becomes alpha, in glyphon's own fragment shader, through a value carried in the padding its params uniform already had. At 1.0 the shader takes exactly the path it took before. `text.dark_on_light_gamma` sets it, defaulting to 0.65, and it is applied only where the text is darker than the background behind it: light on dark is already heavy enough, and correcting it as well would just make it muddy. The comparison is Oklab lightness, the same measure minimum contrast uses.
+What the text should look like is settled first. Almost every other program blends text in sRGB, and that is the weight a font is drawn and hinted for, so the target is the pixel an sRGB blend of the pair would have produced.
 
-Blending in gamma space instead would have fixed it at the source, and was rejected: the surface takes one sRGB encode per frame and it belongs to the graphics module, so a second encode inside the text pass is the bug class the color pipeline contract exists to stop.
+The fix reaches it without blending there. glyphon's fragment shader is given the text color, its background and an amount, all in the params uniform, and it bends coverage so the finished pixel comes out on that target: blend the pair in sRGB at the reported coverage, decode, and read off how far between the two the answer sits. That fraction is the alpha. The output is still linear and the surface is still encoded exactly once, which is what the color pipeline contract is about - the rejected alternative was a second encode of the output inside the text pass, not arithmetic that reads the sRGB curve.
 
-The value is decided once per render pass, not per glyph, because one pass draws the whole window and a uniform is what the shader can read. The main window's pass carries the terminal's own pair, so in a light theme the menu and tab labels - which stay on dark chrome in both modes - are thickened slightly along with everything else. That is accepted: it is a small strip, the direction is mild, and giving the chrome its own pass would cost a second renderer and a second atlas to fix a few hundred pixels. The Settings dialog is a separate context and decides on its own panel colors.
+`text.dark_on_light` says how much of the correction to apply, defaulting to 1.0, and it is applied only where the text is darker than the background behind it. Light on dark is already heavy enough and correcting that side would thin it. The comparison is Oklab lightness, the same measure minimum contrast uses.
+
+The setting runs to 2.0 rather than stopping at the blend. Everything up to 1.0 is a correction and 1.0 is the whole of it; above that is taste, and it is there because how heavy text ought to look is partly the display and the font. It fills the counters of small letters if pushed, which the config comment says.
+
+The first version of this was a coverage exponent, and the exponent was the wrong curve rather than the wrong number. Matching an sRGB blend needs roughly 0.53 at a quarter coverage, 0.35 at a half and 0.18 at three quarters, so no single value fits: one that filled the stems smudged the faint edge pixels, and one that left the edges alone left the stems pale. Measured on the shipped light theme, the exponent it shipped with was about 20 sRGB levels light on a three-quarter covered pixel. The correction here has no such number in it - at full amount every pixel carries the ink the rasterizer reported.
+
+One alpha has to serve all three channels, so the pair reaches the shader as sRGB grays of its own brightness. A glyph in some other color - an ANSI red, say - takes the same curve, which measures up to about 20 levels off on its partly covered pixels, always toward more ink. Correcting per glyph would mean encoding each glyph color in the shader for a difference smaller than the one being fixed.
+
+The pair is decided once per render pass, not per glyph, because one pass draws the whole window and a uniform is what the shader can read. The main window's pass carries the terminal's own pair, so in a light theme the menu and tab labels - which stay on dark chrome in both modes - are corrected along with everything else, in the wrong direction. That is accepted: it is a small strip, and giving the chrome its own pass would cost a second renderer and a second atlas to fix a few hundred pixels. The Settings dialog is a separate context and decides on its own panel colors.
 
 ### How much of the wallpaper is on screen (2026-09-20)
 

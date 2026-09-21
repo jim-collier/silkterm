@@ -177,9 +177,10 @@ pub const PANE_GAP_PX: f32 = 1.0;
 pub const DIVIDER_GRAB_PX: f32 = 5.0; // mouse tolerance for grabbing a pane divider
 pub const FOCUS_RING_PX: f32 = 2.0;
 pub const SETTLE_EPS: f32 = 0.002; // a settle threshold, not a measurement - never scaled
-// Floor on text.dark_on_light_gamma. Below this the correction stops reading as
-// weight and starts filling the counters of small letters.
-pub const GAMMA_FLOOR: f32 = 0.4;
+// Ceiling on text.dark_on_light. 1.0 is the sRGB blend the font was drawn for;
+// the headroom above it is for taste, and past this the counters of small
+// letters fill in.
+pub const MAX_DARK_ON_LIGHT: f32 = 2.0;
 
 pub const DIVIDER: [u8; 3] = [0x2c, 0x2c, 0x36];
 
@@ -375,7 +376,7 @@ pub struct Settings {
 	pub text_scrim_softness: f32, // 0 = hard/solid scrim, 1 = soft/faint (maps to the intensity boost)
 	pub text_scrim_strength: f32, // 0..100% -> 0..5 doublings of the halo alpha (0 = as built)
 	pub text_outline: f32, // antialiased outline around glyphs, px (0 = none; scrim color rules)
-	pub text_dark_on_light_gamma: f32, // coverage exponent where text is darker than its background (1 = off)
+	pub text_dark_on_light: f32, // how much of the sRGB-blend correction dark-on-light text gets, 0..2 (0 = off, 1 = the blend)
 	pub text_scrim_ramp: String, // halo falloff curve: "sigmoid" | "half_normal" | "linear" | "log" | "exp"
 	pub text_scrim_function: String, // halo build: "dilate" | "sdf" | "dt" | "gaussian" (legacy blur)
 	pub text_scrim_regular_weight: bool, // blur bold text at regular weight (uniform halo; crisp text keeps its weight)
@@ -543,7 +544,7 @@ impl Default for Settings {
 			text_scrim_softness: 0.5,
 			text_scrim_strength: 20.0,
 			text_outline: 1.0,
-			text_dark_on_light_gamma: 0.65,
+			text_dark_on_light: 1.0,
 			text_scrim_ramp: "exp".to_string(),
 			text_scrim_function: "sdf".to_string(),
 			text_scrim_regular_weight: true,
@@ -1749,8 +1750,8 @@ pub fn persist(orig: &Settings, s: &Settings) -> bool {
 	if !same_f32(s.text_outline, orig.text_outline) {
 		doc.put_float("text.outline", r(s.text_outline));
 	}
-	if !same_f32(s.text_dark_on_light_gamma, orig.text_dark_on_light_gamma) {
-		doc.put_float("text.dark_on_light_gamma", r(s.text_dark_on_light_gamma));
+	if !same_f32(s.text_dark_on_light, orig.text_dark_on_light) {
+		doc.put_float("text.dark_on_light", r(s.text_dark_on_light));
 	}
 	if s.text_scrim_ramp != orig.text_scrim_ramp {
 		doc.put_string("text.scrim.ramp", &s.text_scrim_ramp);
@@ -2025,7 +2026,7 @@ struct RawConfig {
 	text_scrim_softness: Option<f32>,
 	text_scrim_strength: Option<f32>,
 	text_outline: Option<f32>,
-	text_dark_on_light_gamma: Option<f32>,
+	text_dark_on_light: Option<f32>,
 	text_scrim_ramp: Option<String>,
 	text_scrim_function: Option<String>,
 	text_scrim_regular_weight: Option<bool>,
@@ -2361,7 +2362,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		text_scrim_softness: r.f("text.scrim.softness"),
 		text_scrim_strength: r.f("text.scrim.strength"),
 		text_outline: r.f("text.outline"),
-		text_dark_on_light_gamma: r.f("text.dark_on_light_gamma"),
+		text_dark_on_light: r.f("text.dark_on_light"),
 		text_scrim_ramp: r.s("text.scrim.ramp"),
 		text_scrim_function: r.s("text.scrim.function"),
 		text_scrim_regular_weight: r.b("text.scrim.regular_weight"),
@@ -2814,10 +2815,10 @@ fn resolve(raw: RawConfig) -> Settings {
 			.unwrap_or(d.text_scrim_strength)
 			.clamp(0.0, 100.0),
 		text_outline: raw.text_outline.unwrap_or(d.text_outline).clamp(0.0, 8.0),
-		text_dark_on_light_gamma: raw
-			.text_dark_on_light_gamma
-			.unwrap_or(d.text_dark_on_light_gamma)
-			.clamp(GAMMA_FLOOR, 1.0),
+		text_dark_on_light: raw
+			.text_dark_on_light
+			.unwrap_or(d.text_dark_on_light)
+			.clamp(0.0, MAX_DARK_ON_LIGHT),
 		// the older spellings still parse: "s" was renamed to "sigmoid" (which is
 		// what a smoothstep is), and the falloff's "gaussian" to "half_normal" so
 		// it stops reading like the gaussian BLUR the function list also offers.
@@ -3307,10 +3308,18 @@ const CONFIG_RENAMES: &[(&str, &str)] = &[
 // leaves rest through Ease-in and the one knob that fed four mechanisms is
 // gone. scroll.ease_in was a unitless fraction; its replacement is a duration
 // (scroll.ease_in_ms), so the old value cannot be carried by a rename.
+// text.dark_on_light_gamma is the same: it named a coverage exponent, and its
+// replacement (text.dark_on_light) is how much of a correction to apply, so
+// the old number means nothing under the new one.
 // `shell.default` is here because the list itself now names the default (its
 // top active entry). Adoption runs BEFORE this drops the line - see
 // `adopt_default_shell` - so the value is moved into the list, not discarded.
-const CONFIG_REMOVED: &[&str] = &["scroll.tau_ms", "scroll.ease_in", "shell.default"];
+const CONFIG_REMOVED: &[&str] = &[
+	"scroll.tau_ms",
+	"scroll.ease_in",
+	"shell.default",
+	"text.dark_on_light_gamma",
+];
 
 // Defaults that changed, as (path, the value that used to be the default). An
 // existing config carries the template's commented lines verbatim, so after a
@@ -3430,7 +3439,7 @@ const LEGACY_KEYS: &[(&str, &str)] = &[
 	("text_scrim_ramp", "text.scrim.ramp"),
 	("text_scrim_regular_weight", "text.scrim.regular_weight"),
 	("text_outline", "text.outline"),
-	("text_dark_on_light_gamma", "text.dark_on_light_gamma"),
+	("text_dark_on_light", "text.dark_on_light"),
 	("color_emoji", "text.color_emoji"),
 	("embolden_inverse", "text.embolden_inverse"),
 	("cursor_scrim", "cursor.scrim"),
@@ -5432,13 +5441,16 @@ text:
 
 	# outline: 1.0  ## Default
 
-	## How much to thicken text that is darker than the background behind it.
+	## How much of the correction text darker than its background gets.
 	## Partly covered pixels are blended in linear light, which costs dark text
 	## on a light background most of the ink at the edge of every stroke, so a
-	## light theme reads thin. 1.0 leaves the letters as they were drawn; lower
-	## is bolder. Light themes only - nothing here touches light-on-dark text.
-	## Range: 0.4 to 1.0
-	# dark_on_light_gamma: 0.65  ## Default
+	## light theme reads thin and pale. At 1.0 a letter carries the ink it was
+	## drawn with, the way almost every other program paints text; 0 turns the
+	## correction off. Above 1.0 it keeps going, for a display or a font where
+	## even that reads light - expect small letters to start closing up.
+	## Light themes only - light-on-dark text is left alone.
+	## Range: 0 to 2
+	# dark_on_light: 1.0  ## Default
 
 	## Brighten or darken text that is too close to its background color to
 	## read. 0 is off.
@@ -9902,6 +9914,22 @@ mod tests {
 			out.contains("# from_wallpaper: true  ## Default"),
 			"{out:?}"
 		);
+	}
+
+	// The coverage exponent is gone and its number means nothing as an amount,
+	// so the line goes rather than carrying a value over. An active one has to
+	// go too: left in place it would read as a setting nothing answers for.
+	#[test]
+	fn an_existing_config_loses_the_coverage_exponent() {
+		for line in [
+			"\t# dark_on_light_gamma: 0.65  ## Default\n",
+			"\tdark_on_light_gamma: 0.5\n",
+		] {
+			let out = migrate_config_text(&format!("text:\n{line}\toutline: 1.0\n"))
+				.expect("the retired line should go");
+			assert!(!out.contains("dark_on_light_gamma"), "{out:?}");
+			assert!(out.contains("outline: 1.0"), "{out:?}");
+		}
 	}
 
 	// The walker is what gives every line its full nested path - the whole
