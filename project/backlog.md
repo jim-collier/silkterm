@@ -157,16 +157,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Note: the dialog copy was specified 20260826.
 	- Opened: 20260817-120024
 
-- 🔘 Wallpaper: Need a way to detect maximum and average brightness of background image - or some heuristic of "perceived brightness", and apply a variable ramp to background image visibility, so that it gets darker quicker, as the % goes down.
-	- 🔘 Really what I'm after, is this resulting effect. The implimentation is up to research:
-		- 🔘 At 100% background image visibility, it's just the image as-is.
-		- 🔘 But below that, the opacity % scales with perception.
-			- 🔘 In other words, at say 90%, it is actually scaled to some average of ([perceived brightness], [brightest pixel]).
-			- 🔘 As an example, 50% for a very bright image, may be significantly darker than 50% for a very dark image.
-		- 🔘 And the inverse, for light-mode themes.
-		- 🔘 Need a config file name and a default value for the resulting strength of this calculation.
-	- Opened: 20260703-100322
-
 - 🔘 At high text scrim blur radius and low softness, the blur has boxy artifacts.
 	- Cause: the scrim is a separable blur with a truncated kernel. The hard cutoff leaves a faint edge that low softness amplifies into a visible square, and the linear and s-curve falloffs are not true Gaussians, so their support reads as a diamond or box rather than a circle. The fix is a look-versus-performance tradeoff (wider extent, more taps, or a windowed kernel) that wants eyeballing. Deferred to a visual pass.
 	- 🔘 New feature: Adjustable blur quality in settings:
@@ -1950,6 +1940,36 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 #### Done - New features and enhancements
 
+- ✅ Wallpaper visibility means the same thing in light mode as in dark, without a calibration.
+	- `Replaces:` the light mode calibration closed earlier the same day, which picked a point between two readings of "as much picture" and shipped the constant that sat between them.
+	- `Cause:` the slider was handed straight to a linear-light alpha blend. Over a black background that blend is a pure scale of the encoded picture, so it cannot touch contrast - which is why dark mode never needed anything. Over a light background it is a veil, and no choice of number gets the contrast back.
+	- `Fixed:` light mode mixes the background and the picture in a power curve instead of blending, at the amount dark mode's blend would have delivered. Both halves are closed form. `PRESENCE`, the two solvers and the bisection are gone, and `lightmode.rs` is `visibility.rs` now, since the module answers how much of a thing gets drawn rather than what light mode does differently.
+	- `Why a pure power and not sRGB:` over black the power curve makes the mix exactly the blend it replaces, so the two modes are one rule. sRGB's `- 0.055` term does not cancel and would have lifted dark mode's black by eight levels.
+	- `Measured:` the picture's own contrast on screen, at the shipped 10%: dark 6.4 sRGB levels of spread, light 0.6 before and 6.4 after. At half visibility, 12.5 against 12.5.
+	- `Dark mode:` proven untouched on the rig - the same scene under the new build and under one predating any of this came out identical, 0 of 753,984 pixels, at two visibilities and with a split.
+	- `Cost:` a mix needs the background color, which a hardware blend cannot supply, so the pass writes the pane fill itself and is clipped to the pane. The divider slits between panes keep their own color rather than taking a faint tint from the picture. Six `pow` per pixel on one full-screen quad, against two bisections a frame on the processor that are now gone. Not measured on a real GPU; dark mode cannot have moved, since its path is the same instructions.
+	- `Pinned by:` nine tests in visibility.rs and one in autotheme.rs, each watched red against its own mutation.
+	- Opened: 20260920. Closed: 20260920
+
+- ✅ Wallpaper: Need a way to detect maximum and average brightness of background image - or some heuristic of "perceived brightness", and apply a variable ramp to background image visibility, so that it gets darker quicker, as the % goes down.
+	- ✅ Really what I'm after, is this resulting effect. The implimentation is up to research:
+		- ✅ At 100% background image visibility, it's just the image as-is.
+		- ✅ But below that, the opacity % scales with perception.
+			- ✅ In other words, at say 90%, it is actually scaled to some average of ([perceived brightness], [brightest pixel]).
+			- ✅ As an example, 50% for a very bright image, may be significantly darker than 50% for a very dark image.
+		- ✅ And the inverse, for light-mode themes.
+		- ✅ Need a config file name and a default value for the resulting strength of this calculation.
+	- Opened: 20260703-100322
+	- `Fixed:` `wallpaper.even_visibility`, 0 to 1, shipped at 1. A picture further from the background color than the shipped pack's median is drawn at less than the slider says, and one closer at more, so the setting means the same thing whatever rotates in next.
+	- `How bright a picture reads:` its overall level and its bright end together, half each, taken in the mix's own curve. The bright end is half the answer because glare comes from there - a night sky with a sun in it is not a dark picture to look at. `Summary` carries both, measured on the same grid the derived text colors use.
+	- `At 100% the picture is drawn as it is`, as the entry asked. The correction fades out with the slider and is gone at the top, so the one reading a ramp must not disturb is safe by construction.
+	- `And the inverse for light mode:` the rule measures distance from the background, so over a light background it is the dark picture that stands out and gets held back. Nothing says "light" anywhere in it.
+	- `Measured:` on the rig at a 10% slider in dark mode, the pack's brightest picture went from a mean of 58.8 to 48.3 and its darkest from 0.8 to 2.6. In light mode the same two went from 26 and 93 sRGB levels of displacement to 63 and 52.
+	- `Setting it to 0 restores the old behavior exactly`, confirmed on the rig pixel for pixel against a build that predates any of this.
+	- `Note:` this is the one part that deliberately changes dark mode, which the light mode entry above forbade. The two entries disagreed and this one is older and more specific. `even_visibility: 0` is the way back.
+	- `Pinned by:` seven tests in visibility.rs, each watched red against its own mutation. The first pass missed one - dropping the bright end from the brightness statistic left every test green - so a test for a dark picture with a bright area went in.
+	- Opened: 20260703-100322. Closed: 20260920
+
 - ✅ Dark mode is just about perfect, so don't make ANY changes that affect dark mode. But light mode is badly miscalibrated. Various settings may need to work differently in light mode. (Either different defaults, and/or different ways of calculating them depending on dark or light mode.) For example:
 	- Wallpaper is practically invisible at the dark mode's visibility %.
 	- When wallpaper is more visible (and thus often provining a dark background), text scrim is WAY too overpowering in light mode.
@@ -1960,6 +1980,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- `Dark mode:` proven untouched on the rig - the same scene rendered by the new build and by one with the whole module disabled came out identical, 0 of 753,984 pixels different.
 	- `Pinned by:` eight tests in lightmode.rs and one in autotheme.rs, each watched red against its own mutation. The renderer and the scrim uniform cannot be reached by a test, since nothing in the tree builds a window.
 	- `Filed, not fixed:` two more of the same class, at the end of the features - window transparency, and the block cursor's plate.
+	- ✅ `Update, same day:` the mechanism here is superseded. Matching one reading or blending two was the wrong question - light mode needed a different blend, not a different number. See the two entries above, which drop `PRESENCE` and the whole calibration with it.
 	- Opened: 20260920. Closed: 20260920
 
 - ✅ When theme colors are changed by the user, change the theme in the dropdown to "[unsaved]".

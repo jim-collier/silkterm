@@ -10054,6 +10054,7 @@ mod tests {
 		live.wallpaper_summary = Some(crate::autotheme::Summary {
 			luma_hi: 0.3,
 			luma_lo: 0.02,
+			luma_mean: 0.13,
 			alpha: 1.0,
 			hue: 250.0,
 			chroma: 0.08,
