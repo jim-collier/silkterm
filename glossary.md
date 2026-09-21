@@ -21,6 +21,7 @@ Terminal jargon that any terminal shares is left out unless SilkTerm gives it a 
 - [Bare window](#bare-window)
 - [Build number](#build-number)
 - [Cell](#cell)
+- [Color picker](#color-picker)
 - [Contrast mask](#contrast-mask)
 - [Copy on output](#copy-on-output)
 - [Copy on select](#copy-on-select)
@@ -87,6 +88,10 @@ A short code baked into every build, printed by `--version` and shown in Help > 
 ## Cell
 
 One character position in the terminal grid. The grid is a fixed number of cells wide and tall, and every measurement of the text - the cursor, the scroll offset, a selection - is in cells rather than pixels.
+
+## Color picker
+
+The box a color chip opens on the Themes tab. A square sets saturation and brightness, the strip beside it sets the hue, and six boxes read and take the same color as percentages and as a hex value. Changes show on the row behind it as they are made, and Cancel puts the old color back.
 
 ## Contrast mask
 

@@ -32,6 +32,7 @@
 	- [Measurements and display scaling](#measurements-and-display-scaling)
 	- [Attention colors and dialog chrome](#attention-colors-and-dialog-chrome)
 	- [Groups and sub-groups in the Settings dialog](#groups-and-sub-groups-in-the-settings-dialog)
+	- [The color picker (2026-09-20)](#the-color-picker-2026-09-20)
 	- [Saved themes](#saved-themes)
 	- [The shell list and how it is filled](#the-shell-list-and-how-it-is-filled)
 	- [What a pane's shell inherits](#what-a-panes-shell-inherits)
@@ -540,7 +541,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - The dialog's own accents follow the theme. They used to be a fixed blue while the theme's attention color was something else entirely, so the panel could not agree with the terminal it belonged to. The pressed-button fill is that color mixed back toward the panel, which is what makes a pressed button read as pressed rather than as the focused one.
 
-- A focused field shows one outline, not two. The ring sits exactly on the box's own outline and the box stands its border down. Where the ring genuinely spans more than one control, such as a color chip and its hex field, it stays a little outside instead, and only the field's border gives way.
+- A focused field shows one outline, not two. The ring sits exactly on the box's own outline and the box stands its border down. Where the focused thing is not a box at all, such as a checkbox or a slider handle, the ring sits a little outside it instead.
 
 - Tabs sit on a recessed **Gutter** strip and stand on the rule that closes it off, the way tabbed interfaces generally read. The current tab is a lighter gray rather than an accent: "you are here" is not the same job as "look at this". Above the rows there is no heading repeating the tab's own name, since the strip has said it already.
 
@@ -555,6 +556,24 @@ The built-in stack is last for a reason. The generic monospace query below it is
 - A fraction stored as a decimal is shown as a whole percent. Nobody thinks in 0.35, and the file is a different audience from the dialog. The decimal is what the renderer wants and what a hand-edited config should keep. The two directions are exact inverses, so reverting one gives back its own default rather than a hair off it.
 
 - The tabs follow what a person is looking at rather than what the code calls it: Background, Text, Cursor, Movement, Themes, Window. Settings that describe one subject sit together even when they are implemented in different places. The cursor's shape, its animation and whether it joins the text halo are all "cursor" to the person changing them.
+
+### The color picker (2026-09-20)
+
+- A color chip opens a picker: a saturation and brightness square, a hue strip beside it, six value boxes, and Cancel and OK. The hex field on the row stays where it is. Typing a known hex is faster than hunting for it, and a picker is for the case where the value is not known yet.
+
+- The box holds the color as hue, saturation and brightness rather than as the three bytes. Dragging to the bottom of the square leaves black, which says nothing about hue, and dragging to the left edge leaves a gray, which says nothing about saturation either. Reading the model back off the bytes each frame would send both markers home the moment the color reached an edge. The bytes are derived from the model, and the trip back the other way is exact for every color, so nothing drifts on the way in.
+
+- Changes go straight to the row behind the box, and Cancel puts back what the row held when it opened. That makes the chip, and the window under the dialog, the preview: there is no second copy of the value to get out of step, and the one thing to undo is one assignment.
+
+- The square and the strip are drawn by the renderer's own quad shader, as two modes of it. A gradient built from flat quads would be thousands of them for one square, and a picker is not worth a texture upload per hue.
+
+- The square mixes toward the hue in sRGB, not in linear light. Every other color in the program is handed to the GPU linear, and mixing toward white there gives a square nobody would recognise as a color picker: the pale half swamps everything else. So the square's quad carries its hue in sRGB and the shader encodes the result itself. That is the one exception, and it is written down where the quad is declared.
+
+- Six value boxes: red, green and blue as whole percents, then brightness, saturation and a hex value. No hue box. The strip is the hue control, and the other five can already name any color between them. Percents rather than 0 to 255 because every other fraction in the dialog shows as a whole percent, and a settings dialog should not switch units halfway down.
+
+- The chip is a focus stop of its own, so a Color row has two: the chip, then the hex field. Walking onto the chip opens nothing, and Space or Enter opens the picker. Without that the picker would be the one thing in the dialog a keyboard could not reach.
+
+- Inside the box the arrows adjust whatever holds focus: the square by a hundredth of its range, the strip by a hundredth of a turn, a value box by a hundredth of its own range. That is the same step every number box in the dialog already takes.
 
 ### Saved themes
 

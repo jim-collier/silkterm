@@ -1424,12 +1424,20 @@ pub struct RectInstance {
 	pub size: [f32; 2],
 	pub color: [f32; 4],
 	// params.x = mode (0 solid quad, 1 close-"X" mark, 2 rounded quad,
-	// 3 triangle - a submenu arrow, or a move-this-row arrow),
+	// 3 triangle - a submenu arrow, or a move-this-row arrow,
+	// 4 the color picker's saturation/brightness square, 5 its hue strip),
 	// params.y = stroke px for the X, corner radius for the rounded quad,
 	// quarter-turns clockwise for the triangle (0 right, 1 down, 2 left, 3 up).
 	// The X and the arrows are drawn in the fragment shader, so each centers
 	// exactly in its quad (a font glyph never did - baseline metrics vary, and
 	// there is no arrow every interface font carries).
+	//
+	// Mode 4 reads `color` as sRGB rather than linear, unlike every other mode:
+	// it is the hue the square mixes toward, and mixing toward white in linear
+	// light gives a gradient nobody would recognise as a color picker. Modes 4
+	// and 5 encode the result themselves, so the value that arrives is the one
+	// the box is showing. Neither may use params.y - it is a length, and
+	// `quads_px` scales it.
 	pub params: [f32; 2],
 }
 
@@ -1587,7 +1595,7 @@ impl RectRenderer {
 	}
 }
 
-const RECT_WGSL: &str = r"
+pub(crate) const RECT_WGSL: &str = r"
 struct Uniform { resolution: vec2<f32>, _pad: vec2<f32> };
 @group(0) @binding(0) var<uniform> u: Uniform;
 
@@ -1665,10 +1673,36 @@ fn turned_half(half: vec2<f32>, turns: f32) -> vec2<f32> {
     return half;
 }
 
+// sRGB -> linear, per channel. The surface encodes on write, so a color the
+// shader builds itself has to arrive linear like every other one.
+fn to_linear(c: vec3<f32>) -> vec3<f32> {
+    let lo = c / 12.92;
+    let hi = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(hi, lo, c <= vec3<f32>(0.04045));
+}
+
+// The fully lit color at this hue, sRGB. Mirrored in pick.rs, which needs the
+// same answer on the CPU to place the marker.
+fn hue_rgb(h: f32) -> vec3<f32> {
+    let k = fract(h) * 6.0;
+    return vec3<f32>(
+        clamp(abs(k - 3.0) - 1.0, 0.0, 1.0),
+        clamp(2.0 - abs(k - 2.0), 0.0, 1.0),
+        clamp(2.0 - abs(k - 4.0), 0.0, 1.0),
+    );
+}
+
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
+    var rgb = in.color.rgb;
     var a = in.color.a;
-    if (in.params.x > 2.5) {
+    if (in.params.x > 4.5) {
+        rgb = to_linear(hue_rgb(in.local.y / in.size.y));
+    } else if (in.params.x > 3.5) {
+        let s = in.local.x / in.size.x;
+        let v = 1.0 - in.local.y / in.size.y;
+        rgb = to_linear(mix(vec3<f32>(1.0), in.color.rgb, s) * v);
+    } else if (in.params.x > 2.5) {
         let half = in.size * 0.5;
         let p = turned(in.local - half, half, in.params.y);
         // ~1px linear edge, same convention as the X bars
@@ -1688,7 +1722,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         a = a * max(xbar(q, half_len, half_th), xbar(vec2<f32>(q.y, q.x), half_len, half_th));
     }
     // premultiply: lets translucent backgrounds composite over the desktop
-    return vec4<f32>(in.color.rgb * a, a);
+    return vec4<f32>(rgb * a, a);
 }
 ";
 

@@ -33,6 +33,7 @@ mod minimap;
 mod palette;
 mod pane;
 mod perf;
+mod pick;
 mod profile;
 mod scrim;
 mod scroll;

@@ -182,6 +182,12 @@ pub struct Layout {
 	pub scrollbar_width: f32,
 	pub scrollbar_inset: f32,
 	pub scrollbar_thumb_min: f32,
+	pub pick_gap: f32,
+	pub pick_strip: f32,
+	pub pick_label_width: f32,
+	pub pick_field_width: f32,
+	pub pick_min_square: f32,
+	pub pick_marker: f32,
 }
 
 // Flyover text for the footer buttons, which are chrome rather than settings and
@@ -321,6 +327,12 @@ fn parse(text: &str) -> Result<Ui, Vec<String>> {
 		scrollbar_width: float("layout.scrollbar_width", &mut problems),
 		scrollbar_inset: float("layout.scrollbar_inset", &mut problems),
 		scrollbar_thumb_min: float("layout.scrollbar_thumb_min", &mut problems),
+		pick_gap: float("layout.pick_gap", &mut problems),
+		pick_strip: float("layout.pick_strip", &mut problems),
+		pick_label_width: float("layout.pick_label_width", &mut problems),
+		pick_field_width: float("layout.pick_field_width", &mut problems),
+		pick_min_square: float("layout.pick_min_square", &mut problems),
+		pick_marker: float("layout.pick_marker", &mut problems),
 	};
 	let glyph = |path: &str, problems: &mut Vec<String>| -> &'static str {
 		match doc.get_string(path) {
