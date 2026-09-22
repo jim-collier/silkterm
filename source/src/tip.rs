@@ -196,6 +196,19 @@ impl<T: Copy + PartialEq> Dwell<T> {
 		(Instant::now().duration_since(*since) >= DELAY).then_some(*target)
 	}
 
+	// `ripe`, for a tip that should not stay up forever. After `limit` it goes
+	// down, and stays down until the pointer leaves and comes back, since only
+	// a new target restarts the clock. A zero limit never takes it down.
+	pub fn ripe_for(&self, limit: Duration) -> Option<T> {
+		self.ripe_at(Instant::now(), limit)
+	}
+
+	fn ripe_at(&self, now: Instant, limit: Duration) -> Option<T> {
+		let (target, since) = self.over.as_ref()?;
+		let up = now.saturating_duration_since(*since).checked_sub(DELAY)?;
+		(limit.is_zero() || up < limit).then_some(*target)
+	}
+
 	// When the loop next has to wake to raise a tip. None while nothing is being
 	// pointed at, and while one is already up.
 	pub fn wake(&self) -> Option<Instant> {
@@ -207,8 +220,9 @@ impl<T: Copy + PartialEq> Dwell<T> {
 
 #[cfg(test)]
 mod tests {
-	use super::{Dwell, beside, lay_out, place, wrap, wrap_budget};
+	use super::{DELAY, Dwell, beside, lay_out, place, wrap, wrap_budget};
 	use crate::pane::Rect;
+	use std::time::Duration;
 
 	fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
 		Rect { x, y, w, h }
@@ -327,6 +341,37 @@ mod tests {
 		let far = rect(230.0, 60.0, 160.0, 24.0);
 		let (left, _) = beside(far, (150.0, 40.0), win, 6.0, 4.0);
 		assert_eq!(left, 74.0);
+	}
+
+	// A tip left up too long goes away, and moving about on the same target
+	// does not bring it back - only leaving and coming back does.
+	#[test]
+	fn a_tip_goes_down_after_its_limit_until_the_pointer_comes_back() {
+		let limit = Duration::from_secs(30);
+		let mut dwell: Dwell<usize> = Dwell::default();
+		dwell.point_at(Some(1));
+		let (_, since) = dwell.over.unwrap();
+		let at = |secs: u64| since + DELAY + Duration::from_secs(secs);
+		assert_eq!(dwell.ripe_at(since, limit), None, "not up before the delay");
+		assert_eq!(dwell.ripe_at(at(1), limit), Some(1));
+		assert_eq!(dwell.ripe_at(at(29), limit), Some(1));
+		assert_eq!(dwell.ripe_at(at(31), limit), None);
+		assert_eq!(dwell.ripe_at(at(600), limit), None, "stays down");
+		assert_eq!(
+			dwell.ripe_at(at(600), Duration::ZERO),
+			Some(1),
+			"zero never hides"
+		);
+		dwell.point_at(Some(1));
+		assert_eq!(dwell.over.unwrap().1, since, "same target keeps its clock");
+		dwell.point_at(None);
+		dwell.point_at(Some(1));
+		let (_, back) = dwell.over.unwrap();
+		assert!(back >= since);
+		assert_eq!(
+			dwell.ripe_at(back + DELAY + Duration::from_secs(1), limit),
+			Some(1)
+		);
 	}
 
 	// The clock runs on while the pointer stays put, and restarts when it moves

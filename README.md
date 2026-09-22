@@ -367,7 +367,7 @@ Setting `XDG_CONFIG_HOME` overrides the platform default everywhere, and `--conf
 
 Windows splits the two because settings are worth roaming between machines and a 60 MiB wallpaper pack is not. A pack already sitting beside the config still works; nothing has to be moved.
 
-If making changes directly (rather than through Settings), you can apply them immediately with the "Reload config" menu item.
+If making changes directly (rather than through Settings), you can apply them immediately with the "Reload config" menu item. Settings reads the file each time it opens, so it also shows what another SilkTerm window saved.
 
 Settings names are meant to read plainly, but a few of them - scrim, contrast mask, automask mix - are particular to SilkTerm. [glossary.md](glossary.md) defines those.
 

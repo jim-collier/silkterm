@@ -93,6 +93,15 @@ fn mix3(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
 	}
 	out
 }
+// The user's own values: a live copy wears the performance profile, and the
+// text and cursor it shows may be the wallpaper's rather than the user's -
+// which would otherwise be what a saved theme stored.
+fn users_own(mut settings: Settings) -> Settings {
+	crate::profile::unapply(&mut settings);
+	crate::autotheme::unapply(&mut settings);
+	settings
+}
+
 fn dlg() -> Dlg {
 	let base = if config::is_dark() {
 		DARK_DLG
@@ -887,12 +896,7 @@ impl SettingsDialog {
 			h,
 		};
 		let specs: &'static [Spec] = &ui().specs;
-		// the user's own values: the live copy wears the performance profile, and
-		// the text and cursor it shows may be the wallpaper's rather than the
-		// user's - which would otherwise be what a saved theme stored
-		let mut settings = (*config::settings()).clone();
-		crate::profile::unapply(&mut settings);
-		crate::autotheme::unapply(&mut settings);
+		let settings = users_own((*config::settings()).clone());
 		Self {
 			orig: settings.clone(),
 			edited: settings,
@@ -1388,6 +1392,14 @@ impl SettingsDialog {
 			scroll: self.scroll,
 		}
 	}
+	// Open on these values instead of the live copy. The app hands in the file
+	// as it is now, since another window may have saved since this one loaded.
+	pub fn start_from(&mut self, settings: Settings) {
+		let settings = users_own(settings);
+		self.orig = settings.clone();
+		self.edited = settings;
+	}
+
 	// A restored view comes from a dialog that no longer exists, so nothing about
 	// its geometry can be assumed: the UI font, screen height or field set may all
 	// have changed since. Clamp rather than trust.
@@ -9646,6 +9658,36 @@ mod tests {
 		// typing again clears the complaint
 		d.char_input('x');
 		assert!(d.prompt.as_ref().unwrap().warn.is_none());
+	}
+
+	// Settings opens on the file, so a change another window saved after this
+	// one loaded is what the dialog shows, and a save from here writes only what
+	// was edited.
+	#[test]
+	fn settings_opens_on_the_file_as_it_is_now() {
+		let _guard = config::test_config_lock();
+		let _ = config::settings();
+		let dir = std::env::temp_dir().join(format!("silkterm_reopen_{}", std::process::id()));
+		let _ = std::fs::create_dir_all(&dir);
+		let path = dir.join("config.shcl");
+		let _ = std::fs::write(&path, "");
+		config::set_config_override(path.clone());
+		let loaded = config::reload_from_disk();
+		let mut other = loaded.clone();
+		other.margin = loaded.margin + 5.0;
+		assert!(config::persist(&loaded, &other));
+
+		let mut d = mk_dialog(4000.0);
+		d.start_from(config::reload_from_disk());
+		assert_eq!(d.orig.margin, other.margin, "the other window's save");
+		assert_eq!(d.edited.margin, other.margin);
+		d.edited.columns = loaded.columns + 7;
+		assert!(config::persist(&d.orig, &d.edited));
+		let back = config::reload_from_disk();
+		assert_eq!(back.margin, other.margin);
+		assert_eq!(back.columns, loaded.columns + 7);
+
+		let _ = std::fs::remove_dir_all(&dir);
 	}
 
 	// A saved theme has to come back after a restart, or saving it meant nothing.

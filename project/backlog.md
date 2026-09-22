@@ -91,10 +91,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
-- 🔘 When settings are changed in one instance, the settings of another instance shows what it loaded with, not the updated settings. Any given instance doesn't need to change itself whenever something else changes the settings - it just needs to load the latest, when Settings is opened. (And be able to apply whatever has changed, when OK is pressed.)
-
-- 🔘 Tab tooltip: If user left the mouse over the tooltip, close the tooltip after being on for 30 seconds (tunable in config file). To show it again, the mouse has to first move off the tab, then back on.
-
 - ✋ Integrate and test with the latest shcl from the online dev branch.
 	- It says "v2.0.0" because a new release hasn't been cut yet, but it's actually 'v3.0.0-beta.1'.
 	- Has some breaking changes to the API.
@@ -1978,6 +1974,18 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - New features and enhancements
+
+- ✅ When settings are changed in one instance, the settings of another instance shows what it loaded with, not the updated settings. Any given instance doesn't need to change itself whenever something else changes the settings - it just needs to load the latest, when Settings is opened. (And be able to apply whatever has changed, when OK is pressed.)
+	- `Fixed:` Settings reads the file each time it opens. The file gets only what was edited in the dialog, and OK or Apply puts everything that differs from what the window runs live, another window's changes included. Opening Settings changes nothing on screen, and Cancel changes nothing.
+	- `Note:` the session's own choices are folded in first, as Reload config does: command-line font and colors, a session wallpaper, the Remote profile.
+	- `Left alone:` shells found at launch while the file was open elsewhere are kept only in memory, so an OK then drops them until the next launch.
+	- `Pinned by:` `settings_opens_on_the_file_as_it_is_now`, watched red against a dialog that opens on the live copy.
+	- Opened: n/a. Closed: 20260922
+
+- ✅ Tab tooltip: If user left the mouse over the tooltip, close the tooltip after being on for 30 seconds (tunable in config file). To show it again, the mouse has to first move off the tab, then back on.
+	- `Fixed:` the tab tip goes away after `window.tab_tip_max_s` seconds, 30 by default, 0 for never. Moving about on the same tab does not bring it back, and moving to another tab counts as leaving. Config file only, with no row in Settings.
+	- `Pinned by:` `a_tip_goes_down_after_its_limit_until_the_pointer_comes_back`, watched red.
+	- Opened: n/a. Closed: 20260922
 
 - ✅ Wallpaper visibility means the same thing in light mode as in dark, without a calibration.
 	- `Replaces:` the light mode calibration closed earlier the same day, which picked a point between two readings of "as much picture" and shipped the constant that sat between them.

@@ -405,6 +405,7 @@ pub struct Settings {
 	pub idle_release_min: usize, // ...or this long merely unfocused and quiet
 	pub tab_regular_pct: f32,  // a tab's ordinary width, as a % of the window's width
 	pub tab_max_pct: f32,      // widest a tab may be, as a % of the window's width
+	pub tab_tip_max_s: f32,    // longest a tab's tip stays up; 0 = until the pointer leaves
 	pub remembered_columns: usize, // last actual window size (not shown in the dialog)
 	pub remembered_rows: usize,
 	pub word_separators: String, // delimiters for double-click word selection
@@ -573,6 +574,7 @@ impl Default for Settings {
 			idle_release_min: 240,
 			tab_regular_pct: 10.0,
 			tab_max_pct: 100.0,
+			tab_tip_max_s: 30.0,
 			remembered_columns: 160,
 			remembered_rows: 48,
 			// alacritty's default delimiters minus ':', so a Windows drive path
@@ -2055,6 +2057,7 @@ struct RawConfig {
 	idle_release_min: Option<usize>,
 	tab_regular_pct: Option<f32>,
 	tab_max_pct: Option<f32>,
+	tab_tip_max_s: Option<f32>,
 	remembered_columns: Option<usize>,
 	remembered_rows: Option<usize>,
 	word_separators: Option<String>,
@@ -2391,6 +2394,7 @@ fn read_raw(text: &str, path: &std::path::Path) -> RawConfig {
 		idle_release_min: r.u("window.idle_release_min"),
 		tab_regular_pct: r.f("window.tab_regular_width_pct"),
 		tab_max_pct: r.f("window.tab_max_width_pct"),
+		tab_tip_max_s: r.f("window.tab_tip_max_s"),
 		remembered_columns: r.u("window.remembered_columns"),
 		remembered_rows: r.u("window.remembered_rows"),
 		word_separators: r.s("selection.word_separators"),
@@ -2902,6 +2906,7 @@ fn resolve(raw: RawConfig) -> Settings {
 		// maximum dragged below the regular width is stored as it was set rather
 		// than quietly rewritten under the user.
 		tab_max_pct: raw.tab_max_pct.unwrap_or(d.tab_max_pct).clamp(2.0, 100.0),
+		tab_tip_max_s: raw.tab_tip_max_s.unwrap_or(d.tab_tip_max_s).max(0.0),
 		remembered_columns: numi(raw.remembered_columns, d.remembered_columns, limits::GRID),
 		remembered_rows: numi(raw.remembered_rows, d.remembered_rows, limits::GRID),
 		word_separators: raw.word_separators.unwrap_or(d.word_separators),
@@ -5594,6 +5599,10 @@ window:
 	## Tab width as a percent of the window width.
 	# tab_regular_width_pct: 10.0  ## Default
 	# tab_max_width_pct: 100.0  ## Default
+
+	## Seconds a tab's flyover stays up before it goes away. It comes back
+	## once the pointer has left the tab and come back. 0 keeps it up.
+	# tab_tip_max_s: 30  ## Default
 
 ## ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ## Hyperlinks

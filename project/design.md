@@ -704,6 +704,8 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - There are two placement rules, not one, and which applies is a property of what is being described. A Settings row's tip goes under the control, flipping above it when there is no room - a footer button's tip clamped into the bottom edge would sit on the buttons it explains. A menu row's tip goes beside the popup instead, because a box under the row would cover the rows the reader is choosing between.
 
+- The tab's tip goes away after 30 seconds, and comes back only once the pointer has left the tab and returned (2026-09-22). The pointer is often left on the strip after picking a tab, and the tip then covered the top of the pane for as long as it sat there. `window.tab_tip_max_s` sets the time, and 0 keeps it up. The other tips close when the pointer moves on, which it does almost at once in a menu or a dialog.
+
 - A menu row gets a tip only when its label does not already say what it does. Copy and New tab explain themselves; Paste Selection, Read-only and Bare window do not. A tip on every row is noise a reader learns to skip past, which costs the ones that matter.
 
 - A tip's box is its own color, derived from the chrome it hangs off rather than taken from it (2026-09-20). The shipped menu background is the inactive tab's own bytes, so a tab tip filled with it drew as a tab that had grown downward, and a menu row's tip had the same fault against the popup beside it. Both now fill with the menu background lifted by the step the strip puts between an inactive and an active tab, then warmed, since every tab color leans faintly blue. The border and the text come off the same two colors. The dialogs already did this with the button shade against their panel.
@@ -894,6 +896,10 @@ Three defects came out of building it, all fixed with it: a program could put co
 	- A refused save is said on screen, since stderr reaches nobody on Windows and nobody who started SilkTerm from a menu (2026-09-18). Windows shows its own message box. Elsewhere a small window drawn like About stands in for one, since Linux has no message box every desktop carries. It names the file and the lines, and says changes are used now but not kept.
 	- Saves nobody asked for, such as a resize, a menu switch or shells found at launch, are said once a session for each file, or every resize would raise it again. An OK or Apply in Settings is answered every time, and OK then closes, since trying again cannot help. A file open in another program still keeps Settings open, because trying again can.
 	- Editing only the lines a save changes, the way the rating does, would let most saves through. That is held for shcl 3.0, which is expected to change how a file with such a line is read and written.
+
+- Settings opens on the file as it is now, not on what the window loaded (2026-09-22). Several windows share one file, and one that saved after this window loaded would otherwise not show here. The file then gets only what was edited in the dialog, and the window takes everything that differs from what it runs, so OK is also when another window's change arrives.
+	- The file is read when the dialog opens, not watched. Opening Settings changes nothing on screen, and Cancel leaves the window as it was.
+	- The session's own choices are folded in first, the way Reload config folds them: the command line's font and colors, a wallpaper named for the session, the Remote profile.
 
 - The template's sections follow the Settings dialog's tabs, in the same order, so a person who has learned one has learned the other. That order reaches a new file only. An existing config keeps whatever order it has, since the machinery that adds new settings places them but never moves what is already there.
 
