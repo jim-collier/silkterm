@@ -139,9 +139,14 @@ fMain(){
 	baseCmdArgs+=("-x*/.git/*" "-x*/versions/*")
 	## Rust: keep the final release binaries, drop debug profiles and every
 	## intermediate. rar's '*' spans '/', so the '*/target/*/' forms also cover
-	## per-target cross-compile trees.
-	baseCmdArgs+=("-x*/target/debug/*" "-x*/target/*/debug/*" "-x*/target/lint/*" "-x*/target/profiling/*")
-	baseCmdArgs+=("-x*/target/*/deps/*" "-x*/target/*/build/*" "-x*/target/*/incremental/*" "-x*/target/*/.fingerprint/*" "-x*/target/*/examples/*")
+	## per-target cross-compile trees. Each dir is excluded as well as its
+	## contents, or the archive still carries it as an empty folder.
+	baseCmdArgs+=("-x*/target/debug" "-x*/target/debug/*" "-x*/target/*/debug" "-x*/target/*/debug/*")
+	baseCmdArgs+=("-x*/target/lint" "-x*/target/lint/*" "-x*/target/profiling" "-x*/target/profiling/*")
+	baseCmdArgs+=("-x*/target/*/deps" "-x*/target/*/deps/*" "-x*/target/*/build" "-x*/target/*/build/*" "-x*/target/*/incremental" "-x*/target/*/incremental/*")
+	baseCmdArgs+=("-x*/target/*/.fingerprint" "-x*/target/*/.fingerprint/*" "-x*/target/*/examples" "-x*/target/*/examples/*")
+	## Cargo's bookkeeping beside the binaries: dep-info, locks, toolchain probe.
+	baseCmdArgs+=("-x*/target/*.d" "-x*/target/*.cargo-*lock" "-x*/target/*.rustc_info.json" "-x*/target/*CACHEDIR.TAG")
 	## Python and Node: fetched or regenerated wholesale. 'dist' is deliberately
 	## absent - that's where the release packages land.
 	baseCmdArgs+=("-x*/__pycache__/*" "-x*/.venv/*" "-x*/.mypy_cache/*" "-x*/.pytest_cache/*" "-x*/.ruff_cache/*" "-x*/node_modules/*")
