@@ -255,9 +255,10 @@ GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
 ## target/mmap-bench is the minimap rig's scratch: a 32 MiB flood file it makes
 ## on demand, plus one log per run.
 ##
-## The wallpaper originals (about 350 MB) sit behind the private/wallpaper/source
-## symlink, which rar follows. They are the full-size sources the shipped pack is
-## made from, and are kept in their own tree outside this project.
+## The wallpaper originals (about 350 MB), duplicates (80 MB) and archive (200 MB)
+## sit behind the private/wallpaper/source symlink, which rar follows. The
+## originals are the full-size sources the shipped pack is made from, and all
+## three are kept in their own tree outside this project.
 ##
 ## One rar pattern per line, no '-x' prefix and no shell quoting: the publish
 ## script adds the flag and passes each line through as one argument.
@@ -270,7 +271,11 @@ export GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES='*/cicd/artifacts
 */target/mmap-bench
 */target/mmap-bench/*
 */wallpaper/source/010_origs
-*/wallpaper/source/010_origs/*'
+*/wallpaper/source/010_origs/*
+*/wallpaper/source/0_dupes
+*/wallpaper/source/0_dupes/*
+*/wallpaper/source/0_archive
+*/wallpaper/source/0_archive/*'
 
 ## Set a non-empty commit message to publish hands-off (suppresses the script's
 ## prompt and supplies the message so `git commit` won't open an editor). Left
