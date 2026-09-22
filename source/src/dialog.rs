@@ -288,6 +288,7 @@ impl DialogWin {
 		resume: Option<View>,
 		sized: Option<(f32, f32)>,
 		warm: Option<&crate::gfx::DialogGpu>,
+		base: config::Settings,
 	) -> anyhow::Result<Self> {
 		// provisional window first: sizing needs a TextCtx to measure labels in
 		// the real UI font (same pattern as About)
@@ -315,6 +316,7 @@ impl DialogWin {
 			max_h,
 			scale,
 		);
+		dialog.start_from(base);
 		if let Some(view) = resume {
 			dialog.restore(view);
 		}

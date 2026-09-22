@@ -2844,7 +2844,9 @@ impl State {
 	// Bring the tab tip up once the pointer has rested, and keep what it says
 	// current while it is up. Returns true when the frame has to be redrawn.
 	fn update_tab_tip(&mut self) -> bool {
-		let Some(tab) = self.tab_hover.ripe() else {
+		let limit =
+			Duration::try_from_secs_f32(config::settings().tab_tip_max_s).unwrap_or_default();
+		let Some(tab) = self.tab_hover.ripe_for(limit) else {
 			return self.tab_hover.wake().is_none() && self.tab_tip.take().is_some();
 		};
 		let now = Instant::now();
@@ -4136,7 +4138,9 @@ impl State {
 		// LIVE list rather than the dialog's own `orig`: a scan that arrived while
 		// the dialog was open has already been folded into both of its copies
 		// (Dialog::fold_shells), so the two agree, and taking the live one is what
-		// keeps them honest if they ever do not.
+		// keeps them honest if they ever do not. They do not when another window
+		// changed the list after this one loaded; the dialog's list is then
+		// written whole, and it already holds that change.
 		//
 		// An entry with no command names nothing to run, so it is dropped here
 		// rather than written - that is the whole of the grid's "Command is
@@ -4152,9 +4156,23 @@ impl State {
 		config::keep_wallpaper_on_apply(&live, self.wp_locked, &mut orig, &mut edited);
 		// use_system_font is a persisted setting that only reorders font_family at
 		// resolve time, so nothing special to strip - persist the diff as usual.
+		// The dialog opened on the file, so the file gets only what was edited,
+		// while this window takes everything that differs from what it runs -
+		// including what another window saved since this one loaded.
 		let wrote = config::persist(&orig, &edited);
-		self.apply_new_settings(&orig, edited, false);
+		self.apply_new_settings(&live, edited, false);
 		wrote
+	}
+
+	// What Settings opens on: the file as it is now, not what this window loaded,
+	// with this session's own choices folded in the way a reload folds them.
+	fn settings_for_dialog(&self) -> config::Settings {
+		settings_after_reload(
+			&config::settings(),
+			config::reload_from_disk(),
+			&self.cli_style,
+			self.wp_locked,
+		)
 	}
 
 	// Re-read config.shcl from disk and live-apply it (the "internal command" for
@@ -8155,11 +8173,10 @@ impl ApplicationHandler<UserEvent> for App {
 				}
 			}
 		}
-		let open_settings = self
-			.state
-			.as_mut()
-			.is_some_and(|state| std::mem::take(&mut state.pending_settings));
-		if open_settings {
+		let settings_base = self.state.as_mut().and_then(|state| {
+			std::mem::take(&mut state.pending_settings).then(|| state.settings_for_dialog())
+		});
+		if let Some(base) = settings_base {
 			// a view older than the resume window is dead either way, so take it
 			// unconditionally and discard it if it has expired
 			let resume = self
@@ -8174,6 +8191,7 @@ impl ApplicationHandler<UserEvent> for App {
 				resume,
 				sized,
 				warm.as_ref(),
+				base,
 			) {
 				Ok(d) => {
 					self.dialog = Some(d);
