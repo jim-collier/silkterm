@@ -242,9 +242,9 @@ GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
 ## rest is logs and staging. Excluding it is also load-bearing, not just tidy -
 ## the wine staging tree holds a wineprefix whose dosdevices map Z: to '/' (plus
 ## raw /dev nodes), so a backup that walks in climbs out of the repo and into the
-## whole filesystem. Exclude the dir as well as its contents, or rar still
-## descends to test each entry. private/source is bulk working material that
-## never ships, same treatment.
+## whole filesystem. A pattern naming a dir skips it whole, without rar going
+## in, so one line per dir is enough. private/source is bulk working material
+## that never ships.
 ##
 ## forks/ holds working clones of the patched dependencies. Each has its own
 ## remote, so the archive would otherwise carry 50 MB of a copy of something
@@ -255,6 +255,12 @@ GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
 ## target/mmap-bench is the minimap rig's scratch: a 32 MiB flood file it makes
 ## on demand, plus one log per run.
 ##
+## Everything else under target/ that is not a final build is scratch too: the
+## before and after builds kept for a comparison, their captures, and a docs
+## backup from the 09-15 history rewrite. source/target and the clipboard-race
+## test crate's target are stray lint and test builds. A new scratch dir under
+## target/ needs a line here.
+##
 ## The wallpaper originals (about 350 MB), duplicates (80 MB) and archive (200 MB)
 ## sit behind the private/wallpaper/source symlink, which rar follows. The
 ## originals are the full-size sources the shipped pack is made from, and all
@@ -263,19 +269,19 @@ GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
 ## One rar pattern per line, no '-x' prefix and no shell quoting: the publish
 ## script adds the flag and passes each line through as one argument.
 export GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES='*/cicd/artifacts
-*/cicd/artifacts/*
 */private/source
-*/private/source/*
 */forks
-*/forks/*
 */target/mmap-bench
-*/target/mmap-bench/*
+*/target/lightnew
+*/target/lightold
+*/target/mapopt
+*/target/wpmix
+*/target/rewrite-20260915.docs-backup
+*/source/target
+*/clipboard-race/target
 */wallpaper/source/010_origs
-*/wallpaper/source/010_origs/*
 */wallpaper/source/0_dupes
-*/wallpaper/source/0_dupes/*
-*/wallpaper/source/0_archive
-*/wallpaper/source/0_archive/*'
+*/wallpaper/source/0_archive'
 
 ## Set a non-empty commit message to publish hands-off (suppresses the script's
 ## prompt and supplies the message so `git commit` won't open an editor). Left
