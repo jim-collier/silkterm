@@ -91,12 +91,20 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### New features and enhancements
 
+- 🔘 When settings are changed in one instance, the settings of another instance shows what it loaded with, not the updated settings. Any given instance doesn't need to change itself whenever something else changes the settings - it just needs to load the latest, when Settings is opened. (And be able to apply whatever has changed, when OK is pressed.)
+
+- 🔘 Tab tooltip: If user left the mouse over the tooltip, close the tooltip after being on for 30 seconds (tunable in config file). To show it again, the mouse has to first move off the tab, then back on.
+
+- ✋ Integrate and test with the latest shcl from the online dev branch.
+	- It says "v2.0.0" because a new release hasn't been cut yet, but it's actually 'v3.0.0-beta.1'.
+	- Has some breaking changes to the API.
+
 - ✋ Save settings by editing only the lines that changed, so a file with a line that cannot be read still takes the window size, menu switches and new shells.
 	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
 	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
 	- Opened: 20260918
 
-- NOTE: Stop here to work on releasing RC1.
+- **Stop here to work on releasing RC1**.
 
 - 🔘 Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
 	- Note: These effects should come in "prepackaged effects" that can be applied to similar other types of on-screen elements.
@@ -145,7 +153,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- 🔘 New feature: Adjustable blur quality in settings:
 		- High: Very high quality, may require a higher-end GPU, no visible artifacts at all.
 		- Medium (default): The current quality.
-		- Low: Trash quality, only looks OK at small blur radii. For VMs or remote sessions with punishing graphics. (In fact maybe this should be auto-detected...)
+		- Low: Trash quality, only looks OK at small blur radii.
 	- Opened: 20260724-080316
 
 - 🔘 Add silkterm to a Windows package manager (e.g. winget or choco).
@@ -161,6 +169,22 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Note: the rest of the dialog rework is done, under Done - New features and enhancements.
 	- Opened: 20260719-085918
 
+- 🔘 Wallpaper control enhancements:
+	- "Randomize" checkbox
+		- [ ] New window
+		- [ ] New tab
+		- [ ] New pane (defer to when this is technically possible)
+		- [ ] Interval
+			- Slider 1 second to 1 week
+	- Minimum contrast % at 0% background image visibility  [at 0% background image visibility - not useful since wallpaper would be invisible, but establishes the floor and range.]
+		- Default 50%
+	- Maximum contrast % [at 100% background image visibility]
+		- Default 100%.
+	- Minimum saturation % [at 0% background image visibility - not useful since wallpaper would be invisible, but establishes the floor and range.]
+		- Default 50%
+	- Maximum saturation % [at 100% background image visibility]
+		- Default 100%.
+
 - 🛠️ Command-line options:
 	- 🔘 Per-pane scope for the style options. `--font-name`, `--font-size`, `--background-color`, `--foreground-color`, `--wallpaper` and its stretch, zoom and opacity all apply to the whole window today. Varying them per pane needs a per-pane renderer the single text context does not have.
 	- 🔘 Per-pane `--title`. Accepted and reserved, but nothing displays it yet.
@@ -169,7 +193,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Note: the rest of the option set is done, under Done - New features and enhancements.
 	- Opened: 20260628-083740
 
-- 🔘 Additional "File" menu option: "Save entire current layout to config".
+- 🔘 Additional "File" menu option: "Save entire current layout to config" (current or specified config).
 	- Including window, tab, shell, and pane layout and configurations - everything.
 	- One possibly to make this easier, store non-default per-tab and per-pane configurations as a "command line" in the config, that each override all other config settings. E.g.:
 		- Emits the create/select form: `--new-tab` / `--new-pane` (with explicit `--splits`, direction, and non-default `--size`) for structure, plus `--tab=<id>` / `--pane=<id>` for per-entity overrides. Always writes explicit directions and sizes (never the "more space" default) so a saved layout reproduces regardless of window size.
