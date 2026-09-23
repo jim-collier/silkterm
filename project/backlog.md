@@ -71,8 +71,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Bugs
 
-- 🔘 Muffer: When several lines of text are entered, upon hitting "Enter" key, different lines of text scroll up at seemingly different rates. There is at least one horizontal seam between two moving at different rates.
-
 - ✋ A save from Settings moves the lines of a commented-out section under the setting above it.
 	- `# rotate:` with `# enabled: true` indented under it, placed after another setting, comes back with `# enabled: true` above `# rotate:` and indented under that setting. Uncommented later, the values read as part of the wrong setting and do nothing.
 	- This is how shcl 2.0.0 writes a file, and shcl's current code does the same.
@@ -227,6 +225,16 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ Muffer: When several lines of text are entered, upon hitting "Enter" key, different lines of text scroll up at seemingly different rates. There is at least one horizontal seam between two moving at different rates.
+	- Reproduced: on a 50-row window, Enter with a five-line message moves the conversation up 3 rows and the message up 6, since the input box collapses under it.
+	- Cause: the slide followed the 3-row move and held everything under it still, which took in the last two message lines. They snapped into place while the lines above them eased up underneath.
+	- Fixed: rows under the slide that moved the same way, only further, now slide with it. The whole message moves as one.
+	- Pinned by: `an_entered_message_slides_whole` and `a_row_that_moved_less_or_nowhere_stays_band` in `pane.rs`.
+	- Left alone: the message still jumps part of the way before easing, because one pane has one slide. Two slides at once is the deferred stacked-panes item.
+	- Note: on a short window the same Enter is not seen as a scroll at all, and it changes without easing.
+	- Opened: 20260923
+	- Closed: 20260923-124053
 
 - ✅ When switching virtual desktops (on regular non-VM GPU-acellerated Linux), Silkterm sometimes won't repaint.
 	- It's hard to reproduce. Sometimes it will partially repaint in blocks, sometime not at all.
