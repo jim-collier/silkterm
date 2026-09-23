@@ -4604,14 +4604,49 @@ fn translate_span(cur: &[u64], last: &[u64], shift: i32) -> Option<(usize, usize
 // leaves out. Combined by MAX, which is what makes this safe: a band can only grow,
 // so no row that slid before starts sliding differently, and since the span always
 // contains every moved row a band can never swallow one that genuinely scrolled.
+// The span also takes in rows past its far edge that moved the same way, only
+// further (`moved_further`).
 fn slide_bands(cur: &[u64], last: &[u64], shift: i32) -> (usize, usize) {
 	let n = cur.len();
 	let (mut st, mut sb) = static_bands(cur, last);
 	if let Some((top, bot)) = translate_span(cur, last, shift) {
+		let (top, bot) = if shift > 0 {
+			(top, bot + moved_further(cur, last, shift, bot))
+		} else {
+			(top - moved_further(cur, last, shift, top), bot)
+		};
 		st = st.max(top);
 		sb = sb.max(n - 1 - bot);
 	}
 	if st + sb >= n { (0, 0) } else { (st, sb) }
+}
+
+// Rows just past the span's far edge (`edge` is its last row that way) that moved
+// in the shift's direction by more rows than it: muffer's input box collapses on
+// Enter, so the entered lines climb further than the transcript above them. Left
+// to the band, the message's lower lines snapped into place while the upper ones
+// eased up under them. Sliding at the smaller shift they jump part of the way
+// and ease the rest, and a row that moved further can never run backward.
+fn moved_further(cur: &[u64], last: &[u64], shift: i32, edge: usize) -> usize {
+	let n = cur.len();
+	let k = shift.unsigned_abs() as usize;
+	let mut best = 0;
+	for s in k + 1..=APP_SCROLL_MAX.min(n.saturating_sub(1)) {
+		let run = (0..)
+			.map_while(|d| {
+				let (i, src) = if shift > 0 {
+					let i = edge + 1 + d;
+					(i, i + s)
+				} else {
+					let i = edge.checked_sub(1 + d)?;
+					(i, i.checked_sub(s)?)
+				};
+				(src < n && cur[i] == last[src] && cur[i] != last[i]).then_some(())
+			})
+			.count();
+		best = best.max(run);
+	}
+	best
 }
 
 // Rows at the bottom a program redrew in place while `k` lines scrolled into
@@ -6032,6 +6067,76 @@ mod tests {
 			"the mid-region overlay does not collapse the region"
 		);
 		assert!(30 - sb > 13, "rows below the stranded overlay still slide");
+	}
+
+	// Muffer on Enter with a five-line message, as it repaints at 50 rows: the
+	// transcript climbs 3 rows, and the message climbs 6 out of the collapsing input
+	// box, with the queued hint, spinner and a fresh box under it.
+	fn muffer_enter_frames() -> (Vec<u64>, Vec<u64>) {
+		let (rule, spin, foot, hint, prompt, busy) = (7, 8, 9, 11, 12, 13);
+		let mut last = vec![0u64; 50];
+		for (row, v) in last.iter_mut().enumerate().take(39) {
+			*v = 1062 + row as u64;
+		}
+		last[40] = spin;
+		last[42] = rule;
+		for j in 0..5 {
+			last[43 + j] = 2000 + j as u64;
+		}
+		last[48] = rule;
+		last[49] = foot;
+		let mut cur = vec![0u64; 50];
+		for (row, v) in cur.iter_mut().enumerate().take(36) {
+			*v = 1065 + row as u64;
+		}
+		for j in 0..5 {
+			cur[37 + j] = 2000 + j as u64;
+		}
+		cur[42] = hint;
+		cur[44] = spin;
+		cur[46] = rule;
+		cur[47] = prompt;
+		cur[48] = rule;
+		cur[49] = busy;
+		(cur, last)
+	}
+
+	#[test]
+	fn an_entered_message_slides_whole() {
+		let (cur, last) = muffer_enter_frames();
+		assert_eq!(scroll_shift_signed(&cur, &last, APP_SCROLL_MAX), 3);
+		assert_eq!(translate_span(&cur, &last, 3), Some((0, 39)));
+		// the message ends on row 41: every line of it slides, the hint under it holds
+		assert_eq!(slide_bands(&cur, &last, 3), (0, 8));
+		assert_eq!(
+			vanished_range(3, 0, 8, 50),
+			0..3,
+			"the strip is still the top rows"
+		);
+		// the same frames upside down: a step back takes rows above the span
+		let (mut rc, mut rl) = (cur.clone(), last.clone());
+		rc.reverse();
+		rl.reverse();
+		assert_eq!(scroll_shift_signed(&rc, &rl, APP_SCROLL_MAX), -3);
+		assert_eq!(slide_bands(&rc, &rl, -3), (8, 0));
+	}
+
+	#[test]
+	fn a_row_that_moved_less_or_nowhere_stays_band() {
+		let (mut cur, mut last) = muffer_enter_frames();
+		// the fourth and fifth lines climbed only 2: sliding them from 3 would drop
+		// them a row first
+		last[42] = 2003;
+		last[43] = 2004;
+		last[46] = 31;
+		last[47] = 32;
+		assert_eq!(slide_bands(&cur, &last, 3), (0, 10));
+		// and a row redrawn in place is never taken
+		let (c2, l2) = muffer_enter_frames();
+		cur = c2;
+		last = l2;
+		last[40] = cur[40];
+		assert_eq!(slide_bands(&cur, &last, 3), (0, 10));
 	}
 
 	#[test]
