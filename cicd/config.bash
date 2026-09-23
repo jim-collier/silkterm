@@ -237,14 +237,12 @@ RELEASE_SIGN_NAMESPACE="silkterm-release"
 ## Stage 7: backup + publish to git (runs from repo root).
 GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
 
-## Extra backup excludes for this project. cicd/artifacts is per-run scratch: the
-## release binaries there are copies of ones already kept from target/, and the
-## rest is logs and staging. Excluding it is also load-bearing, not just tidy -
-## the wine staging tree holds a wineprefix whose dosdevices map Z: to '/' (plus
-## raw /dev nodes), so a backup that walks in climbs out of the repo and into the
-## whole filesystem. A pattern naming a dir skips it whole, without rar going
-## in, so one line per dir is enough. private/source is bulk working material
-## that never ships.
+## Extra backup excludes for this project, on top of the publisher's own. Those
+## already cover cicd/artifacts scratch (logs, profiling, GUI captures, the
+## size-comparison downloads), a wineprefix's dosdevices and drive_c, which map
+## Z: to '/', private/source, and every 0_archive. cicd/artifacts/release stays
+## in: the packages and installers there exist nowhere else. A pattern naming a
+## dir skips it whole, without rar going in, so one line per dir is enough.
 ##
 ## forks/ holds working clones of the patched dependencies. Each has its own
 ## remote, so the archive would otherwise carry 50 MB of a copy of something
@@ -261,16 +259,14 @@ GIT_PUBLISH=(cicd/utility/n8git_backup-and-publish)
 ## test crate's target are stray lint and test builds. A new scratch dir under
 ## target/ needs a line here.
 ##
-## The wallpaper originals (about 350 MB), duplicates (80 MB) and archive (200 MB)
-## sit behind the private/wallpaper/source symlink, which rar follows. The
-## originals are the full-size sources the shipped pack is made from, and all
-## three are kept in their own tree outside this project.
+## The wallpaper originals (about 350 MB) and duplicates (80 MB) sit behind the
+## private/wallpaper/source symlink, which rar follows. The originals are the
+## full-size sources the shipped pack is made from, and both are kept in their
+## own tree outside this project.
 ##
 ## One rar pattern per line, no '-x' prefix and no shell quoting: the publish
 ## script adds the flag and passes each line through as one argument.
-export GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES='*/cicd/artifacts
-*/private/source
-*/forks
+export GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES='*/forks
 */target/mmap-bench
 */target/lightnew
 */target/lightold
@@ -280,8 +276,7 @@ export GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES='*/cicd/artifacts
 */source/target
 */clipboard-race/target
 */wallpaper/source/010_origs
-*/wallpaper/source/0_dupes
-*/wallpaper/source/0_archive'
+*/wallpaper/source/0_dupes'
 
 ## Set a non-empty commit message to publish hands-off (suppresses the script's
 ## prompt and supplies the message so `git commit` won't open an editor). Left

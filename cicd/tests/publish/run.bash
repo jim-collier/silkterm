@@ -80,7 +80,8 @@ fCheck "nothing in the value ran" test ! -e "${canary}"
 ## The shipped list and the reader still agree.
 shipped="$(bash -c 'source "$1" && printf "%s" "${GIT_BACKUP_AND_PUBLISH_RAR_EXCLUDES}"' _ "${config}")"
 fRarArgs shipped "${shipped}"
-fCheck "the shipped excludes reach rar" grep -qFx -- "-x*/cicd/artifacts" "${work}/rar-args"
+fCheck "the shipped excludes reach rar" grep -qFx -- "-x*/forks" "${work}/rar-args"
+fCheck "and the release packages stay in" bash -c '! grep -qE "^-x.*cicd/artifacts(/release)?/?$" "$1"' _ "${work}/rar-args"
 fCheck "as plain patterns" bash -c '! grep -q "^-x.*[\"'"'"']" "$1"' _ "${work}/rar-args"
 
 ## A failed pull leaves the work where it was, tracked and untracked, with no stash.
@@ -153,3 +154,4 @@ echo "all passed"
 ##		- 20260908 JC: Created.
 ##		- 20260917 JC: A failed pull, a message as given, and the blank prompt answer.
 ##		- 20260917 JC: The excludes go through the publisher's own reader to a stub rar.
+##		- 20260922 JC: The release packages stay in the backup.
