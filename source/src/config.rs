@@ -1108,7 +1108,10 @@ pub fn keep_session_on_apply(live: &Settings, opened: &Settings, edited: &mut Se
 // this cannot bail on a file the loader reads fine and silently save nothing.
 fn read_doc(path: &std::path::Path) -> Option<shcl::Document> {
 	let text = std::fs::read_to_string(path).ok()?;
-	Some(shcl::Document::parse(&text))
+	// a launch that found the file busy left it as 2.x wrote it
+	Some(shcl::Document::parse(
+		&from_shcl2_text(&text).unwrap_or(text),
+	))
 }
 
 // One classified line of a config text, with its full nested path resolved from
@@ -2121,7 +2124,9 @@ fn load() -> Settings {
 	// the program's own option set changed. The in-place writes defer (with an
 	// FYI) if the file looks open in another program. A heading an earlier
 	// conversion left holding the wallpaper image is put right before that, or
-	// the file reads as pre-nesting and converts again.
+	// the file reads as pre-nesting and converts again. Ahead of all of it, a
+	// file shcl 2.x wrote is respelled for 3.0, since every step parses it.
+	convert_shcl2_config(&path);
 	repair_wallpaper_heading(&path);
 	convert_legacy_config(&path);
 	adopt_default_shell(&path);
@@ -4037,7 +4042,7 @@ fn migrated_text(text: &str, keep_default_shell: bool) -> Option<String> {
 // What a launch parses when its rewrites were put off because the file looked
 // open elsewhere: the renames still apply, in memory.
 fn loaded_text(text: &str) -> std::borrow::Cow<'_, str> {
-	migrate_config_text(text).map_or(std::borrow::Cow::Borrowed(text), std::borrow::Cow::Owned)
+	rewritten_by(text, &[from_shcl2_text, migrate_config_text])
 }
 
 // What the next launch parses: the text its rewrites leave, in the launch's own
@@ -4051,7 +4056,8 @@ fn loaded_text(text: &str) -> std::borrow::Cow<'_, str> {
 // A step added to `load` belongs here too.
 type LaunchStep = fn(&str) -> Option<String>;
 
-const LAUNCH_STEPS: [LaunchStep; 4] = [
+const LAUNCH_STEPS: [LaunchStep; 5] = [
+	from_shcl2_text,
 	wallpaper_heading_repaired,
 	converted_config_text,
 	adopted_shell_text,
@@ -4499,11 +4505,21 @@ fn unbury(text: &str, lines: &mut [String], origin: &[Option<usize>]) -> Result<
 		}
 		let now_at = |index: usize| origin.iter().position(|from| *from == Some(index));
 		// the setting that changed, or with only a line gone unreadable, the first
-		// one still deeper than it should be
-		let pick = settings.iter().find(|(index, path, proper)| match changed {
-			Some(changed) => path == changed,
-			None => now_at(*index).is_some_and(|now| lines[now] != *proper),
-		});
+		// one still deeper than it should be. A changed one already in place can
+		// still be under a line that is not, which skips it with that line.
+		let misplaced =
+			|index: usize, proper: &String| now_at(index).is_some_and(|now| lines[now] != *proper);
+		let pick = changed
+			.and_then(|changed| {
+				settings
+					.iter()
+					.find(|(index, path, proper)| path == changed && misplaced(*index, proper))
+			})
+			.or_else(|| {
+				settings
+					.iter()
+					.find(|(index, _, proper)| misplaced(*index, proper))
+			});
 		let what = || changed.map_or("a line".to_string(), |path| format!("`{path}`"));
 		let Some((index, _, proper)) = pick else {
 			return Err(what());
@@ -4902,10 +4918,13 @@ fn trailing_comment(rest: &str) -> Option<&str> {
 	None
 }
 
-// shcl's own footer, in this file's '##' comment style. Kept last: backfill
-// appends a wholly-new section at the end of the file, which would otherwise
-// leave the footer stranded in the middle.
-const SHCL_BANNER: &str = "\
+// shcl's own footer. Kept last: backfill appends a wholly-new section at the
+// end of the file, which would otherwise leave the footer stranded in the
+// middle. Its Format line is also what marks a file as past shcl 2.x.
+const SHCL_BANNER: &str = shcl::GEN_BANNER;
+
+// The footer from before it carried a Format line.
+const SHCL_BANNER_OLD_MAIN: &str = "\
 ##
 ## This config file format is SHCL.
 ## \"Simple Hierarchical Config Language\"
@@ -4945,7 +4964,12 @@ const SHCL_BANNER_MARK: &str = "This config file format is SHCL.";
 // re-imposing our own wording over someone's would be the rude half of this.
 fn with_shcl_banner(text: &str) -> Option<String> {
 	let mut lines: Vec<&str> = text.lines().collect();
-	for spelling in [SHCL_BANNER, SHCL_BANNER_OLD_HOME, SHCL_BANNER_OLD] {
+	for spelling in [
+		SHCL_BANNER,
+		SHCL_BANNER_OLD_MAIN,
+		SHCL_BANNER_OLD_HOME,
+		SHCL_BANNER_OLD,
+	] {
 		let run: Vec<&str> = spelling.trim_end_matches('\n').lines().collect();
 		while let Some(at) = run_at(&lines, &run) {
 			lines.drain(at..at + run.len());
@@ -4972,6 +4996,47 @@ fn run_at(lines: &[&str], run: &[&str]) -> Option<usize> {
 		return None;
 	}
 	(0..=lines.len() - run.len()).find(|&i| lines[i..i + run.len()] == *run)
+}
+
+// A file shcl 2.x wrote has no Format line, and 3.0 reads a few of its
+// spellings differently. The one that matters here is a backslash outside
+// double quotes, which a Windows path is full of. shcl rewrites the file once
+// so it reads the same. The footer's Format line is what says it was done, so
+// migrate's own stamp at the end gives way to the footer wherever it is ours.
+fn from_shcl2_text(text: &str) -> Option<String> {
+	if text.lines().any(|l| l.starts_with(shcl::FORMAT_LINE_HEAD)) {
+		return None;
+	}
+	let stamped = shcl::migrate(text, true).text;
+	let stamp = format!("{}\n", shcl::FORMAT_LINE);
+	let body = stamped
+		.strip_suffix(&format!("{stamp}{}\n", shcl::MIGRATED_LINE))
+		.or_else(|| stamped.strip_suffix(&stamp))
+		.unwrap_or(&stamped);
+	// None here is a footer somebody rewrote, which keeps migrate's stamp
+	let out = with_shcl_banner(body)
+		.filter(|out| out.contains(shcl::FORMAT_LINE))
+		.unwrap_or_else(|| stamped.clone());
+	(out != text).then_some(out)
+}
+
+fn convert_shcl2_config(path: &std::path::Path) {
+	let Ok(text) = std::fs::read_to_string(path) else {
+		return;
+	};
+	let Some(out) = from_shcl2_text(&text) else {
+		return;
+	};
+	if config_open_elsewhere(path) {
+		note_config_busy(path);
+		return;
+	}
+	if let Err(e) = write_config_atomic(path, &out) {
+		eprintln!(
+			"{APP_NAME}: could not update config {}: {e}",
+			path.display()
+		);
+	}
 }
 
 fn refresh_shcl_banner(path: &std::path::Path) {
@@ -5658,8 +5723,9 @@ shell:
 ##
 ## This config file format is SHCL.
 ## "Simple Hierarchical Config Language"
+##    Format   3
 ##    Home     https://github.com/yottacore/shcl
-##    Syntax   https://github.com/yottacore/shcl/blob/main/project/spec.md
+##    Syntax   https://github.com/yottacore/shcl/blob/v3.0.0/project/spec.md
 ##    Legal    SHCL is Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]. License: MIT. No warranty.
 ##
 "##;
@@ -8488,6 +8554,10 @@ mod tests {
 		assert_eq!(fixed, added);
 		assert_eq!(fixed.matches(SHCL_BANNER_MARK).count(), 1);
 
+		// and the one from before it had a Format line
+		let main = format!("font:\n\tsize: 13.0\n\n{SHCL_BANNER_OLD_MAIN}");
+		assert_eq!(with_shcl_banner(&main).as_deref(), Some(added.as_str()));
+
 		// so is the one with the old shcl home
 		let moved_home = format!("font:\n\tsize: 13.0\n\n{SHCL_BANNER_OLD_HOME}");
 		assert_eq!(
@@ -8508,6 +8578,58 @@ mod tests {
 	fn an_edited_banner_is_left_alone() {
 		let mine = "font:\n\tsize: 13.0\n\n## This config file format is SHCL. Go read the spec.\n";
 		assert!(with_shcl_banner(mine).is_none());
+	}
+
+	// These are the lines shcl 2.0.0 wrote for a UNC path, a drive path and a
+	// tab. Read as they stand, 3.0 doubles the backslashes in the first.
+	#[test]
+	fn a_file_shcl2_wrote_reads_the_same() {
+		let body =
+			"shell:\n\tunc: \\\\\\\\server\\\\share\n\tdir: \"C:\\\\Users\\\\new\"\n\ttab: a\\tb\n";
+		let wanted = [
+			("shell.unc", "\\\\server\\share"),
+			("shell.dir", "C:\\Users\\new"),
+			("shell.tab", "a\tb"),
+		];
+		for text in [
+			body.to_string(),
+			format!("{body}\n{SHCL_BANNER_OLD_MAIN}"),
+			format!("{body}\n{SHCL_BANNER_OLD}"),
+		] {
+			let out = from_shcl2_text(&text).expect("a 2.x file is rewritten");
+			let doc = shcl::Document::parse(&out);
+			for (path, value) in wanted {
+				assert_eq!(doc.get_string(path).as_deref(), Ok(value), "{out}");
+			}
+			assert!(out.ends_with(SHCL_BANNER), "{out}");
+			assert_eq!(out.matches(shcl::FORMAT_LINE_HEAD).count(), 1, "{out}");
+			assert!(from_shcl2_text(&out).is_none(), "twice:\n{out}");
+			assert!(with_shcl_banner(&out).is_none(), "{out}");
+			assert_eq!(next_launch_text(&text), next_launch_text(&out));
+		}
+		// a footer somebody rewrote still gets marked, just not by ours
+		let mine = format!("{body}\n## This config file format is SHCL. Mine.\n");
+		let out = from_shcl2_text(&mine).expect("rewritten");
+		assert!(out.contains(shcl::FORMAT_LINE) && !out.contains(SHCL_BANNER));
+		assert!(from_shcl2_text(&out).is_none());
+		assert_eq!(
+			shcl::Document::parse(&out)
+				.get_string("shell.unc")
+				.as_deref(),
+			Ok("\\\\server\\share")
+		);
+		// and the shipped template has nothing to do
+		assert!(from_shcl2_text(default_config()).is_none());
+	}
+
+	// shcl 2.0.0 wrote `# enabled: true` above `# rotate:` and indented under
+	// `opacity`, so the lines read wrong once uncommented. The save is shcl's.
+	#[test]
+	fn a_save_keeps_a_commented_block_in_order() {
+		let text = "wallpaper:\n\topacity: 0.2\n\t# rotate:\n\t\t# enabled: true\n\tblur: 3\n";
+		let mut doc = shcl::Document::parse(text);
+		assert!(doc.set_int("wallpaper.blur", 4));
+		assert_eq!(doc.to_canonical(), text.replace("blur: 3", "blur: 4"));
 	}
 
 	// #136 convention: explanatory comments use '## '; commented-out (disabled)

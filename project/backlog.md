@@ -91,12 +91,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Covers the Settings dialog, maximized as well, and the About and notice boxes. The fixes are under Done.
 	- Opened: 20260919-153000
 
-- ✋ A save from Settings moves the lines of a commented-out section under the setting above it.
-	- `# rotate:` with `# enabled: true` indented under it, placed after another setting, comes back with `# enabled: true` above `# rotate:` and indented under that setting. Uncommented later, the values read as part of the wrong setting and do nothing.
-	- This is how shcl 2.0.0 writes a file, and shcl's current code does the same.
-	- ✋ 20260918: waits for shcl. The writer is shcl's, and a second writer in SilkTerm was decided against. The other save items in this group are closed.
-	- Opened: 20260911-064028
-
 - ✋ A short settings file can get one section's commented defaults filed under another.
 	- Seen on a hand-written file: the Performance defaults were written under Transparency, and the next launch added them again where they belong.
 	- Same cause as the dotted-line config item below. The launch step that adds missing settings picks their place from a file with too few lines to go on. That step is SilkTerm's own, so a new shcl release is unlikely to fix either one.
@@ -107,19 +101,18 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- From nine lines such as `window.columns: 100`, one launch put the scroll settings under `performance` and `margin` under the wallpaper's `rotate` block.
 	- The next launch added them again in the right places, so the file keeps growing.
 	- ✋ The next shcl release may fix this. Check again once it is out.
+	- Note: 20260924, shcl 3.0 gives the same file as 2.0.0 here, so the fix is SilkTerm's own, as with the item above.
 	- Opened: 20260915
 
 ### Features and enhancements
 
-- ✋ Integrate and test with the latest shcl from the online dev branch.
-	- It says "v2.0.0" because a new release hasn't been cut yet, but it's actually 'v3.0.0-beta.1'.
-	- Has some breaking changes to the API.
-	- Note: a trial on the `shcl3` branch stopped on a shcl regression. One badly indented line drops the correctly indented lines after it.
-	- Opened: 20260921-130145
+- 🔘 Take shcl 3.0.0-beta.1 from crates.io once it is published, and drop the git patch in `Cargo.toml`.
+	- Opened: 20260924-141949
 
 - ✋ Save settings by editing only the lines that changed, so a file with a line that cannot be read still takes the window size, menu switches and new shells.
 	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
 	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
+	- Note: 20260924, shcl 3.0 still counts a line it cannot place as lost and has no save that edits single lines. So this is no longer waiting on shcl.
 	- Opened: 20260918
 
 - **Stop here to work on releasing RC1**.
@@ -420,6 +413,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ A save from Settings moves the lines of a commented-out section under the setting above it.
+	- `# rotate:` with `# enabled: true` indented under it, placed after another setting, comes back with `# enabled: true` above `# rotate:` and indented under that setting. Uncommented later, the values read as part of the wrong setting and do nothing.
+	- This is how shcl 2.0.0 writes a file, and shcl's current code does the same.
+	- ✋ 20260918: waits for shcl. The writer is shcl's, and a second writer in SilkTerm was decided against. The other save items in this group are closed.
+	- Fixed: by shcl 3.0, which keeps a run of comments in the order and nesting it was written in.
+	- Pinned by: `a_save_keeps_a_commented_block_in_order`, which fails on shcl 2.0.0.
+	- Opened: 20260911-064028
+	- Closed: 20260924-141949
 
 - ✅ Pipeline and installer review 20260924
 	- ✅ Windows PowerShell 5.1 could not pick a release. It hands the API's list over as one object, so every tag was read at once.
@@ -883,6 +885,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- The same happens with a second Windows error of this kind, which another program's settings file is known to have lost this way.
 	- Fixed: when a failed save leaves nothing where the settings file was, the new settings are written there directly, without following a link elsewhere or overwriting a file that came back. Every save above gets this.
 	- The Windows failure itself has not been caused on purpose, so that half is unconfirmed on Windows.
+	- Note: 20260924, shcl 3.0 fixes this in its own save. It keeps the old file under a backup name and puts it back. The direct write above stays as the last resort.
 	- Opened: 20260911-091446
 	- Closed: 20260911-102118
 
@@ -2237,6 +2240,18 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - Features and enhancements
+
+- ✅ Integrate and test with the latest shcl from the online dev branch.
+	- It says "v2.0.0" because a new release hasn't been cut yet, but it's actually 'v3.0.0-beta.1'.
+	- Has some breaking changes to the API.
+	- Note: a trial on the `shcl3` branch stopped on a shcl regression. One badly indented line drops the correctly indented lines after it.
+	- Fixed: the regression is gone in shcl's dev. Only the badly indented line is skipped now.
+	- Fixed: a config shcl 2.x wrote is rewritten once at launch so it reads the same under 3.0. 2.x wrote a Windows path with bare backslashes, which 3.0 would read doubled. The footer is now shcl's own and carries the format version.
+	- Fixed: adding missing settings gave up on a file with two settings typed too deep, since 3.0 skips a line written under a bad one.
+	- Note: the commented-out section bug and the Windows failed-save bug are fixed in shcl. The dotted-line growth and the line-by-line save are not.
+	- Pinned by: `a_file_shcl2_wrote_reads_the_same`, watched red with the rewrite taken out.
+	- Opened: 20260921-130145
+	- Closed: 20260924-141949
 
 - ✅ Docs and wallpaper pack pass 20260924
 	- ✅ Two vendor wallpapers with no redistribution license are out of the pack and the gallery. 102 remain.
