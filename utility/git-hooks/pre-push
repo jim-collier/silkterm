@@ -20,7 +20,7 @@ set -eu
 gated=0
 main_local=""
 main_remote=""
-while read -r local_ref local_sha remote_ref remote_sha; do
+while read -r _ local_sha remote_ref remote_sha; do
 	case "$remote_ref" in
 		refs/heads/main)
 			# deleting the branch pushes the zero sha - nothing to verify
@@ -92,10 +92,18 @@ if [ -n "$main_local" ]; then
 	fi
 fi
 
+top="$(git rev-parse --show-toplevel)"
+
+# Private content scrub, on every push, when this machine has the private tree.
+# A clone without it pushes as before.
+scrub="$top/../private/hooks/scrub.bash"
+if [ -x "$scrub" ]; then
+	"$scrub" "$top" || { echo "pre-push: content scrub failed" >&2; exit 1; }
+fi
+
 [ "$gated" = "1" ] || exit 0
 
 echo "pre-push: gating push to main (cicd.bash --gate; --no-verify skips)" >&2
-top="$(git rev-parse --show-toplevel)"
 # Gate the commit being pushed, not whatever the working tree holds. Those are
 # routinely different here, and a fix still sitting unstaged used to carry the
 # push - the gate passed on the tree and main got the version without it. A

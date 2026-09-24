@@ -167,7 +167,7 @@ rm -rf "${runDir}"
 ## something else, and a second run's stop. Each on a free number, with the
 ## sandbox's own run directory.
 fFreeDisplay(){ local n; for n in $(seq "${1}" 299); do [[ -e "/tmp/.X${n}-lock" || -e "/tmp/.X11-unix/X${n}" ]] || { echo "${n}"; return 0; }; done; return 1; }
-fGone(){ local i; for i in {1..50}; do [[ -d "/proc/${1}" ]] || return 0; sleep 0.1; done; return 1; }
+fGone(){ local _; for _ in {1..50}; do [[ -d "/proc/${1}" ]] || return 0; sleep 0.1; done; return 1; }
 if command -v Xvfb >/dev/null && command -v xdpyinfo >/dev/null; then
 	mkdir -p "${runDir}"; chmod 700 "${runDir}"
 	fRig(){ USER="${sandboxUser}" CICD_HEADLESS_DISPLAY=":${1}" CICD_HEADLESS_SIZE=320x200x24 "${headless}" "${@:2}"; }

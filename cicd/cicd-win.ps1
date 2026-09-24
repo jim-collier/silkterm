@@ -154,7 +154,13 @@ $LogDir = Join-Path $Root "cicd\artifacts\lint-win"
 ## any box can grab it. Deliberately a SEPARATE dir from the launcher's local
 ## versions folder - runterm copies from here into that, and the two never share a
 ## folder. Same layout the Linux pipeline's DOGFOOD_DESTS uses.
-$DogfoodDir      = Join-Path $env:USERPROFILE "synced\0-0\common\exec\app\mswin"
+## First one that exists wins, the same list the launcher reads. 'synced' can read
+## as empty on Windows, so the real Dropbox spelling follows it.
+$DogfoodDirs     = @(
+	(Join-Path $env:USERPROFILE "synced\0-0\common\exec\app\mswin")
+	(Join-Path $env:USERPROFILE "Dropbox\0-0\common\exec\app\mswin")
+)
+$DogfoodDir      = @($DogfoodDirs | Where-Object { Test-Path -LiteralPath $_ }) + $DogfoodDirs | Select-Object -First 1
 $DogfoodFixedExe = "silkterm.exe"
 ## Dropped beside it: the icon a shortcut points at, and a sidecar naming the build,
 ## since a cross-build says nothing about the box that later reads it.
@@ -415,7 +421,9 @@ function fDogfood {
 		New-Item -ItemType Directory -Path $DogfoodDir -Force | Out-Null
 	}
 	$dst = Join-Path $DogfoodDir $DogfoodFixedExe
-	Copy-Item -LiteralPath $pick.Exe -Destination $dst -Force
+	## A running copy is locked on Windows. Leave it be rather than end the run here.
+	try { Copy-Item -LiteralPath $pick.Exe -Destination $dst -Force -ErrorAction Stop }
+	catch { fWarn "dogfood copy is in use; skipped ($dst)"; return }
 	Set-Content -LiteralPath "$dst.tag" -Value "$($pick.Tk)wwi" -Encoding ascii
 
 	$icon = Join-Path $Root $DogfoodIcon
@@ -492,13 +500,13 @@ function fPublish {
 	}
 
 	## Sync with this branch's upstream if it has one (a brand-new local branch has
-	## nothing to pull; the push below sets its upstream on first publish). --no-edit
-	## keeps an unattended run from blocking on a merge-commit editor.
+	## nothing to pull; the push below sets its upstream on first publish). Stage 0
+	## already made sure the branch is only behind, so this never needs a merge.
 	& git rev-parse --abbrev-ref '@{u}' 2>$null | Out-Null
 	$hasUpstream = ($LASTEXITCODE -eq 0)
 	if ($hasUpstream) {
-		fEcho_Clean "git pull --no-ff ..."
-		fExec "git pull" "git" @("pull", "--no-ff", "--no-edit")
+		fEcho_Clean "git pull --ff-only ..."
+		fExec "git pull" "git" @("pull", "--ff-only")
 	}
 	if ($didStash) {
 		fEcho_Clean "git stash pop ..."
@@ -655,7 +663,7 @@ function fWslLinuxHalf {
 	fNote "cicd.bash ...: $($cicdArgs -join ' ')"
 	fEcho_Clean
 
-	& wsl.exe -d $distro --cd $wslRepo -e env "CARGO_TARGET_DIR=$wslTarget" CICD_LINUX_HALF=1 bash cicd/cicd.bash @cicdArgs
+	& wsl.exe -d $distro --cd $wslRepo -e env "CARGO_TARGET_DIR=$wslTarget" "SILK_BUILD_MINUTES=$env:SILK_BUILD_MINUTES" CICD_LINUX_HALF=1 bash cicd/cicd.bash @cicdArgs
 	if ($LASTEXITCODE -ne 0) { fDie "Linux half failed (exit $LASTEXITCODE)" }
 	fEcho "OK: Linux half"
 }
@@ -743,6 +751,19 @@ function fMain {
 	fSection "0  Remote sync"
 	if ($NoSync) { fNote "remote sync skipped" }
 	else { fRemoteSync }
+
+	## Pin the build number for the run, as cicd.bash does, and hand it to the WSL half.
+	## A clean tree takes its commit's time, so a rebuild of a release commit gets the
+	## same number. A dirty tree is a different binary, so it keeps the clock.
+	if (-not $env:SILK_BUILD_MINUTES) {
+		$buildSecs = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+		$dirtyLines = @(& git status --porcelain --untracked-files=no 2>$null)
+		if ($LASTEXITCODE -eq 0 -and $dirtyLines.Count -eq 0) {
+			$commitSecs = "$(& git log -1 --format=%ct 2>$null)".Trim()
+			if ($commitSecs -match '^\d+$') { $buildSecs = [long]$commitSecs }
+		}
+		$env:SILK_BUILD_MINUTES = "$([math]::Floor(($buildSecs - 946684800) / 60))"
+	}
 
 	## Stage 1: format.
 	fSection "1  Format"

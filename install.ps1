@@ -25,6 +25,10 @@
 ##	                 plus the preference variables scoped to the run.
 ##	  - 20260917 JC: The signature check feeds ssh-keygen the checksums file's own
 ##	                 bytes on Linux and macOS, where Start-Process rewrote it.
+##	  - 20260924 JC: Release list read correctly on 5.1, which hands an API array
+##	                 over as one object; a -NonInteractive run fails with the -Yes
+##	                 hint instead of quietly aborting; a system install from 32-bit
+##	                 PowerShell goes to the 64-bit Program Files.
 
 ##	Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 ##	Licensed under The MIT License (MIT). Full text at:
@@ -43,7 +47,7 @@ param(
 
 ##	•••••••••••••••••••  Per-project settings - edit only these  ••••••••••••••••••
 
-$installerVersion = '1.1.0'
+$installerVersion = '1.2.0'
 $ownerRepo        = 'yottacore/silkterm'
 $appName          = 'SilkTerm'
 $exeName          = 'silkterm'
@@ -352,7 +356,9 @@ function fMain {
 	}
 	if ($release -eq 'dev' -and -not $tag) {
 		try {
-			$rels = @(fApi "$apiBase/releases?per_page=10")
+			##	5.1 passes the array on as one object, so collect it before wrapping.
+			$rels = fApi "$apiBase/releases?per_page=10"
+			$rels = @($rels)
 			if ($rels.Count -gt 0) { $tag = $rels[0].tag_name }
 		} catch { $apiError = fInnerMessage $_ }
 	}
@@ -431,7 +437,9 @@ function fMain {
 						'or drop -Target system to install just for you (no elevation needed).'
 					)
 				}
-				$destDir = Join-Path $env:ProgramFiles $appName
+				##	32-bit PowerShell on 64-bit Windows sees Program Files (x86) here.
+				$programFiles = if ($env:ProgramW6432) { $env:ProgramW6432 } else { $env:ProgramFiles }
+				$destDir = Join-Path $programFiles $appName
 				$menuDir = Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs'
 				$pathScope = 'Machine'
 			}
@@ -493,9 +501,10 @@ function fMain {
 			##	plain [string] cast of the latter still comes back $null, and
 			##	.Trim() on that throws.
 			$answer = ''
-			try { $answer = "$(Read-Host 'Proceed? [y/N]')".Trim().ToLowerInvariant() } catch { $answer = '' }
+			$cannotAsk = $false
+			try { $answer = "$(Read-Host 'Proceed? [y/N]')".Trim().ToLowerInvariant() } catch { $cannotAsk = $true }
 			if ($answer -ne 'y' -and $answer -ne 'yes') {
-				if ($answer -eq '' -and [Console]::IsInputRedirected) {
+				if ($cannotAsk -or ($answer -eq '' -and [Console]::IsInputRedirected)) {
 					fFail 'there is no terminal here to ask for confirmation' @(
 						'Re-run with -Yes to install without being asked.'
 					)

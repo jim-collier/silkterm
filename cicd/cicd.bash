@@ -90,11 +90,6 @@ export RUST_TEST_THREADS="${CICD_MAX_JOBS}"
 cd "${root}"
 stamp="$(date +%Y%m%d-%H%M%S)"
 
-## Pin the build number for the whole run. build.rs would otherwise read the clock
-## per target, so the four cross builds of one release would report four different
-## builds, minutes apart, and the release notes could not name one of them.
-export SILK_BUILD_MINUTES=$(( ($(date +%s) - 946684800) / 60 ))
-
 ## Parse options.
 assume_yes=0; quiet=0; quick=0; gate=0; no_arm=0; no_windows=0; sync=1; cli_message=""
 while (($#)); do case "$1" in
@@ -166,7 +161,11 @@ fEcho(){       if [[ -n "$*"     ]]; then fEcho_Clean "[ $* ]"; else fEcho_Clean
 fEcho_Force(){ fEcho_ResetBlankCounter; fEcho "$*"; }
 _letterbox="••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••"
 fSection(){ fEcho_Clean; fEcho_Clean "${_letterbox}"; fEcho "$*"; }
-fDie(){ { fEcho_Force "FAILED: $*"; } >&2; exit 1; }
+fDie(){ { fEcho_Force "FAILED: $*"; echo; } >&2; exit 1; }
+## True when a process here is running the file at $1. Reads /proc, since fuser is
+## not on every distro. A Windows build in the synced dir is never run from there.
+fInUse(){ local want exe; want="$(readlink -f "$1" 2>/dev/null)" || return 1; [[ -n "$want" ]] || return 1
+	for exe in /proc/[0-9]*/exe; do if [[ "$(readlink "$exe" 2>/dev/null)" == "$want" ]]; then return 0; fi; done; return 1; }
 ## Tag for a build copy: '<toolchain: gnu|msvc><built on: l|m|b|w><target: l|m|b|w><arch: i|a>'.
 ## Built-on is this host; the target and arch come from the os-arch label the build
 ## was made under, so a cross-build is tagged for where it will RUN. Prints nothing
@@ -299,7 +298,7 @@ write_sums(){
 	mapfile -t expects < <(release_expects)
 	fWriteBuiltFrom "${art_dir}" "${built_from_state:-}" "${expects[@]}"
 }
-trap 'rc=$?; printf "\n[ CICD ABORTED (exit %s) at line %s: %s ]\n" "$rc" "$LINENO" "$BASH_COMMAND" >&2; exit $rc' ERR
+trap 'rc=$?; printf "\n[ CICD ABORTED (exit %s) at line %s: %s ]\n\n" "$rc" "$LINENO" "$BASH_COMMAND" >&2; exit $rc' ERR
 
 ## Gate mode: the local merge gate (what a bare-bones hosted CI would run).
 ## fmt --check + clippy -D warnings + tests, fail-fast, nothing mutated, no
@@ -506,6 +505,20 @@ fi
 ## after. Stage 0 is past, so its fast-forward is not mistaken for that.
 built_from_state="$(fSourceState)"
 
+## Pin the build number for the whole run. build.rs would otherwise read the clock
+## per target, so the four cross builds of one release would report four different
+## builds, minutes apart, and the release notes could not name one of them. A clean
+## tree takes its commit's time, so a rebuild of a release commit gets the same
+## number. A dirty tree is a different binary, so it keeps the clock. After stage 0,
+## since a fast-forward moves the commit. A value cicd-win hands down is kept.
+if [[ -z "${SILK_BUILD_MINUTES:-}" ]]; then
+	buildSecs="$(date +%s)"
+	if [[ -z "$(git status --porcelain --untracked-files=no 2>/dev/null || echo dirty)" ]]; then
+		buildSecs="$(git log -1 --format=%ct 2>/dev/null || date +%s)"
+	fi
+	export SILK_BUILD_MINUTES=$(( (buildSecs - 946684800) / 60 ))
+fi
+
 ## Stage 1: format.
 fSection "1/8  Format"
 if ((${#FMT_CMD[@]} == 0)); then
@@ -542,6 +555,20 @@ fi
 if [[ -n "${XLINT_CMD+x}" ]] && ((${#XLINT_CMD[@]})) && "${LINT_PROBE[@]}" >/dev/null 2>&1; then
 	"${XLINT_CMD[@]}" || fDie "windows lints failed"
 	fEcho "OK: windows lints clean"
+fi
+## First-party shell scripts, at warning level.
+if command -v shellcheck >/dev/null 2>&1; then
+	mapfile -t shellFiles < <(git -C "${root}" ls-files '*.bash' '*.sh' cicd/utility/n8git_backup-and-publish utility/git-hooks/pre-commit utility/git-hooks/pre-push utility/runterm)
+	(cd "${root}" && shellcheck -S warning "${shellFiles[@]}") || fDie "shellcheck found problems"
+	fEcho "OK: shell scripts clean"
+else
+	fEcho "WARNING: shellcheck not installed; shell scripts not linted"
+fi
+## Private content scrub, when this machine has the private tree. A clone without
+## it builds as before.
+if [[ -x "${root}/../private/hooks/scrub.bash" ]]; then
+	"${root}/../private/hooks/scrub.bash" "${root}" || fDie "content scrub failed"
+	fEcho "OK: content scrub"
 fi
 ## The fuzz soak. Same targets the test run just went through, given a real
 ## budget each. Gating: a case that breaks an invariant reports the seed that
@@ -768,7 +795,19 @@ run_profiler
 
 ## Stage 5: release builds.
 fSection "5/8  Release build (native)"
-retry_build "native release" "${RELEASE_NATIVE_CMD[@]}"
+## Panic locations and generated bindings carry the build box's absolute paths, which
+## put the home folder and account name into every published binary and made builds
+## differ between boxes. A cfg(all()) entry is joined with the per-target flags in
+## .cargo/config.toml, where RUSTFLAGS would replace them. Later entries win, so the
+## target dir comes after the root it usually sits in.
+mkdir -p "${TARGET_DIR}"
+remapCfg="$(cd "${TARGET_DIR}" && pwd)/remap-paths.toml"
+remapTarget="$(cd "${TARGET_DIR}" && pwd)"
+printf "[target.'cfg(all())']\nrustflags = ['--remap-path-prefix=%s=/cargo', '--remap-path-prefix=%s=/silkterm', '--remap-path-prefix=%s=/target']\n" \
+	"${CARGO_HOME:-${HOME}/.cargo}" "${root}" "${remapTarget}" > "${remapCfg}"
+## True when a built file still names this box's home or checkout.
+fHasLocalPaths(){ grep -a -q -F -e "${HOME}/" -e "${root}/" "$1"; }
+retry_build "native release" "${RELEASE_NATIVE_CMD[@]}" --config "${remapCfg}"
 [[ -f "${RELEASE_NATIVE_BIN}" ]] || fDie "native release binary missing: ${RELEASE_NATIVE_BIN}"
 fEcho "OK: native release: ${RELEASE_NATIVE_BIN} ($(du -h "${RELEASE_NATIVE_BIN}" | cut -f1))"
 built_arts=("${RELEASE_NATIVE_OSARCH:-native}|${RELEASE_NATIVE_BIN}")
@@ -776,12 +815,17 @@ if ((BUILD_CROSS)) && ((${#CROSS_TARGETS[@]})); then
 	for t in "${CROSS_TARGETS[@]}"; do
 		local_label="${t%%|*}"; rest="${t#*|}"; osarch="${rest%%|*}"; rest="${rest#*|}"; art="${rest%%|*}"; cmd="${rest#*|}"
 		fSection "5/8  Release build: ${local_label}"
-		retry_build "${local_label}" eval "${cmd}"
+		retry_build "${local_label}" eval "${cmd} --config $(printf '%q' "${remapCfg}")"
 		[[ -f "${art}" ]] || fDie "missing artifact for ${local_label}: ${art}"
 		fEcho "OK: ${local_label}: ${art} ($(du -h "${art}" | cut -f1))"
 		built_arts+=("${osarch}|${art}")
 	done
 fi
+
+for pair in "${built_arts[@]}"; do
+	if fHasLocalPaths "${pair#*|}"; then fDie "${pair#*|} still holds a local path (${HOME} or ${root})"; fi
+done
+fEcho "OK: no local paths in ${#built_arts[@]} binary(s)"
 
 ## A Windows binary with no icon and no version block links fine and reports
 ## nothing, so it has to be looked for. The aarch64 exe shipped that way for a
@@ -913,6 +957,11 @@ for xd in "${DOGFOOD_DESTS[@]:-}"; do
 	fi
 	if [[ -z "$xdest" ]]; then
 		fEcho "WARNING: no dogfood dest writable for ${xosarch} (${xdirs//|/, }); skipping"
+		continue
+	fi
+
+	if [[ -e "${xdest}/${xname}" ]] && fInUse "${xdest}/${xname}"; then
+		fEcho "WARNING: ${xdest}/${xname} is running; dogfood copy skipped"
 		continue
 	fi
 
