@@ -13,6 +13,7 @@ Some shells never tell the operating system where they are. PowerShell is an exa
 The fix is the same one every terminal uses: have the shell say where it is, in a short escape sequence. SilkTerm listens for two spellings and takes either.
 
 - **OSC 7**, a `file://` URL - what the unix shells emit, and what GNOME Terminal, WezTerm, kitty and others read.
+
 - **OSC 9;9**, a plain path - the ConEmu spelling that Windows Terminal documents. A PowerShell profile already set up for Windows Terminal works here unchanged.
 
 What the shell reports wins over what the operating system can see. A reported directory that no longer exists on this machine is ignored, and the operating system's answer stands instead - which is also what rejects a path reported from the far side of an `ssh`, since an OSC 7 URL naming another machine is never believed.
@@ -29,7 +30,7 @@ What it will not do:
 
 - **Put it back.** Deleting the block is how you switch it off. Nothing restores it - a note beside the config records which profiles were written to, so an empty one is left alone.
 
-- **Replace a prompt you chose.** If your prompt is still the one PowerShell ships, the block swaps in a git-aware one (below). If it is anything else, including oh-my-posh, starship or a `prompt` function of your own, it is left alone: on PowerShell 6+ the prompt is not touched at all, and on Windows PowerShell 5.1, which has no other hook, yours is wrapped rather than replaced.
+- **Replace a prompt you chose.** If your prompt is still the one PowerShell comes with, the block swaps in a git-aware one (below). If it is anything else, including oh-my-posh, starship or a `prompt` function of your own, it is left alone: on PowerShell 6+ the prompt is not touched at all, and on Windows PowerShell 5.1, which has no other hook, yours is wrapped rather than replaced.
 
 - **Write a file the shell would refuse to read.** If PowerShell's execution policy blocks script files, the block would only turn every launch into a red execution-policy error, so the profile is left alone and a line says which shell and why. Windows PowerShell 5.1 is commonly in that state; `Get-ExecutionPolicy` shows it, and `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` is the usual fix - your call to make, not SilkTerm's.
 
@@ -41,16 +42,17 @@ To switch the whole thing off before it ever runs, set `shell.integration: false
 
 Once the block is in place, a stock prompt reads:
 
-```text
+~~~text
 [PS 7.6] 09:41:22 you@yourbox:~/projects/silkterm [ github.com:you/silkterm.git:dev ✓✘ ]
 >
-```
+~~~
 
 Left to right: which PowerShell this is, because two of them look alike at a prompt; the time the prompt was drawn; who and where; and the directory, with your home folder shortened to `~`.
 
 The part in brackets only appears inside a git working tree, and the two marks at the end of it are a check or a cross:
 
 - The first says everything is committed. A modified file or an untracked one turns it red.
+
 - The second says the branch is level with its upstream - nothing to push, nothing to pull. A branch with no upstream at all counts as not level.
 
 When the branch is ahead or behind, the counts follow the marks, such as `↑2↓1`. The name in front of the branch is the remote the branch tracks, else `origin`, else the first remote there is. A repository with no remote shows the branch alone.
@@ -67,7 +69,7 @@ The look is a port of [x9ps1-git](https://github.com/jim-collier/x9ps1-git), the
 
 This is the block, if you would rather paste it in yourself (`notepad $PROFILE`, creating the file if it is not there):
 
-```powershell
+~~~powershell
 # >>> SilkTerm shell integration >>>
 # Reports this shell's directory to the terminal, so a new tab, pane or window
 # opens where this shell is. PowerShell keeps its location to itself, so there
@@ -280,7 +282,7 @@ if ($Host.Name -eq 'ConsoleHost' -and -not [Console]::IsOutputRedirected) {
 	__SilkTermReportDir
 }
 # <<< SilkTerm shell integration <<<
-```
+~~~
 
 The guard on the first line is what keeps it out of your way: it reports only in an interactive console session whose output is not redirected, so `pwsh -File build.ps1 > log.txt` gets a clean log rather than escape sequences in it.
 
@@ -288,10 +290,10 @@ The guard on the first line is what keeps it out of your way: it reports only in
 
 Nothing to set up - bash moves its own process, so SilkTerm can ask the operating system. Add this only if you want a pane behind `ssh`, `sudo -i` or a container to report as well:
 
-```bash
+~~~bash
 # ~/.bashrc
 PROMPT_COMMAND='printf "\033]7;file://%s%s\033\\" "$HOSTNAME" "$PWD"'
-```
+~~~
 
 Many distributions already do this for you - Debian and Fedora ship `/etc/profile.d/vte.sh`, which emits the same sequence. Check with `echo "$PROMPT_COMMAND"` before adding a second one.
 
@@ -317,10 +319,10 @@ Clear the checkbox again, or set `shell.bash_prompt: false`, to switch it off. T
 
 Same story as bash - nothing needed locally:
 
-```zsh
+~~~zsh
 # ~/.zshrc
 precmd() { printf "\033]7;file://%s%s\033\\" "$HOST" "$PWD" }
-```
+~~~
 
 ## fish
 

@@ -29,7 +29,7 @@
 ##		the table before adding a new one: the rig reproduced SilkTerm's speed within
 ##		0.6% and its memory within 1.3%, and a figure taken any other way does not
 ##		belong beside the existing rows. Figures from a second machine are a separate
-##		question again - see include/showdown-README.md on calibrating one.
+##		question again - see include/showdown-readme.md on calibrating one.
 ##
 ##	Usage:
 ##		utility/update-showdown.py                      measure this terminal

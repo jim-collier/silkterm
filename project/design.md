@@ -9,6 +9,7 @@
 
 <!-- TOC ignore:true -->
 ## Table of contents
+
 <!-- TOC -->
 
 - [Goal](#goal)
@@ -78,7 +79,7 @@ Rust + `alacritty_terminal` crate (not a fork of Alacritty repo).
 
 Rationale:
 
-- `alacritty_terminal` crate (v0.15.0 at design time; v0.26 as built) ships PTY + full VT/ANSI parser + grid state as a standalone library. Inherit the two hardest, correctness-critical pieces.
+- `alacritty_terminal` crate (v0.15.0 at design time; v0.26 as built) provides PTY + full VT/ANSI parser + grid state as a standalone library. Inherit the two hardest, correctness-critical pieces.
 
 - Do not `git fork alacritty` - its renderer is built to snap to cells and maintainers reject smooth scroll by design. Forking = fighting architecture + merge debt. Crate = clean dependency, build only the renderer.
 
@@ -106,7 +107,7 @@ SilkTerm implements an event-loop-driven renderer over a retained terminal model
 
 The spine of the program is a single ownership tree:
 
-```text
+~~~text
 App  (winit ApplicationHandler)
 +- State                      Main window
 |  +- Gfx                     GPU backend: native wgpu surface, a glutin GL context
@@ -119,7 +120,7 @@ App  (winit ApplicationHandler)
 |           \- TermInstance   Alacritty Term + its PTY-reader thread
 \- DialogWin?                 Optional pop-out window (Settings / About),
                                 self-contained with its own Gfx + text renderer
-```
+~~~
 
 So a window is a list of tabs, a tab is a split tree of panes, a pane wraps one terminal; pop-out dialogs are independent sibling windows.
 
@@ -269,7 +270,7 @@ Where it sits:
 
 - The configured width is the whole column's.
 
-The mapping, which is the load-bearing decision:
+The mapping, which is the decision everything else rests on:
 
 - The whole buffer - history plus screen - always maps linearly onto the column, top-anchored, oldest first. The editors slide their minimap once the document outgrows it; this one never does.
 
@@ -279,7 +280,7 @@ The mapping, which is the load-bearing decision:
 
 - Two narrower rules were tried before that one and each broke the other's case (2026-09-20). Trimming whenever the view is following the bottom reads a jump to the bottom as output, since the view eases in the same way, and shortens the map by the whole distance the gesture has left to travel. Trimming only while the output chase owns the motion misses the rest of a flood after a single keystroke, because a keystroke aims the view at the bottom and that flag does not clear while output keeps arriving. Both are one-line readings of the scroll position from outside the scroll model, which carries the chase's undrained backlog and a gesture's remaining travel in one number. Counting the unreached lines inside the model is what settles both, since only it can tell the two apart.
 
-- With a short buffer, lines draw at a capped height (1.5 px at 1x) and the preview just does not reach the bottom of the column yet. That cap is scaled but not rounded to whole pixels, on purpose: a line has to be able to sit at a fraction of one, or its ink lands inside a single pixel row and a page goes back to reading as a slab.
+- With a short buffer, lines draw at a capped height (1.5 px at 1x) and the preview just does not reach the bottom of the column yet. That cap is scaled but not rounded to whole pixels, on purpose: a line has to be able to sit at a fraction of one, or its ink falls inside a single pixel row and a page goes back to reading as a slab.
 
 - With a deep buffer, lines go sub-pixel and blend down, so the map compresses instead of scrolling. At the default 10,000-line scrollback a line is a fraction of a pixel; colored regions still read as bands, which is most of the point.
 
@@ -305,7 +306,7 @@ What a line looks like:
 
 - The column steps aside while a full-screen program runs, and the text gets its width back. Such a program draws on its own screen, which has no scroll buffer behind it, so the map would show a rectangle at the top of an otherwise empty column.
 
-- Which programs are the exception is a setting rather than a rule, because there is no way to tell from the outside whether a full-screen program is one the map could usefully follow. It ships naming a pager and the two multiplexers.
+- Which programs are the exception is a setting rather than a rule, because there is no way to tell from the outside whether a full-screen program is one the map could usefully follow. By default it names a pager and the two multiplexers.
 
 Interaction:
 
@@ -369,7 +370,7 @@ The shipped values are a radius of 8 px and a strength of 20%. Both were raised 
 
 Programs pick text colors for a terminal they cannot see. One that assumes a light background writes near-black text, and on a dark one it disappears. So a floor is enforced on how close text may come to the color behind it, and anything under it is moved away: lighter on a dark background, darker on a light one.
 
-The comparison is against the cell's own background color, not against what a pixel behind the glyph actually shows. Per-pixel would mean the wallpaper, the blur, the scrim and the cell color all at once, in the shader, and it would give one word two colors across a gradient. The cell color is also the honest answer in practice: a cell carrying its own background paints it solid, and one on the default background gets a scrim halo of exactly that color, with the wallpaper already pulled most of the way toward it.
+The comparison is against the cell's own background color, not against what a pixel behind the glyph actually shows. Per-pixel would mean the wallpaper, the blur, the scrim and the cell color all at once, in the shader, and it would give one word two colors across a gradient. The cell color is also the right answer in practice: a cell carrying its own background paints it solid, and one on the default background gets a scrim halo of exactly that color, with the wallpaper already pulled most of the way toward it.
 
 Lightness is measured in Oklab rather than as a WCAG ratio. That ratio's constant term swamps the dark end, so two near-blacks score respectably while being invisible, which is the whole case this is for. The move changes Oklab L alone and leaves a and b, so hue and saturation survive and colors stay told apart: a lifted navy is still navy. It goes to whichever side the text is already on, unless that side has no room left before white or black, in which case it goes the other way. Pale text on a merely light background is the case that needs the flip.
 
@@ -401,7 +402,7 @@ The pair is decided once per render pass, not per glyph, because one pass draws 
 
 The visibility slider is an authored amount - a person moved it - and what the renderer wants is a linear-light alpha. Those are not the same thing, in two separate ways, and both used to show.
 
-The first is the mode. sRGB's curve is steep near black and flat near white, so the same alpha covers a lot of visible ground over a dark background and almost none over a light one. Measured on the rig at the shipped 10%, a picture's own contrast came out at 6.4 sRGB levels of spread in dark mode and 0.6 in light: the same setting, and the picture was simply gone.
+The first is the mode. sRGB's curve is steep near black and flat near white, so the same alpha covers a lot of visible ground over a dark background and almost none over a light one. Measured at the shipped 10%, a picture's own contrast came out at 6.4 sRGB levels of spread in dark mode and 0.6 in light: the same setting, and the picture was simply gone.
 
 What the slider means is settled first: **this much of the picture's own contrast reaches the screen**. Over a black background a linear blend delivers exactly that, because black leaves the blend a pure scale of the encoded picture and a scale cannot touch contrast. That is why dark mode has never needed any of this, and the closed form `alpha^(1/2.4)` says how much it delivers. A dark theme whose background is not black delivers less, and the same expression says how much less.
 
@@ -411,9 +412,9 @@ A mix needs the background color, which a hardware blend cannot supply, so the w
 
 The second is the picture. At one setting a bright photo glares where a dark one is barely there, because the slider says how much of the picture to mix in rather than how far to move the background. `wallpaper.even_visibility` holds every picture to the same displacement: one further from the background than the shipped pack's median is drawn at less than the number says, and one closer at more. How bright a picture reads is its overall level and its bright end together, half each, because glare comes from the bright end - a night sky with a sun in it is not a dark picture to look at. The correction fades out as the slider rises and is gone at 100%, since that is where the picture has to be drawn as it is.
 
-It reaches dark mode too, which is the point of it: on the rig at a 10% slider the pack's brightest picture went from a mean of 58.8 to 48.3 and its darkest from 0.8 to 2.6. In light mode the rule reads from the other side, because there it is the dark picture that stands out: the same two went from 26 and 93 sRGB levels of displacement to 63 and 52. Setting it to 0 restores the old behavior exactly, which the rig confirms pixel for pixel.
+It reaches dark mode too, which is the point of it: at a 10% slider the pack's brightest picture went from a mean of 58.8 to 48.3 and its darkest from 0.8 to 2.6. In light mode the rule reads from the other side, because there it is the dark picture that stands out: the same two went from 26 and 93 sRGB levels of displacement to 63 and 52. Setting it to 0 restores the old behavior exactly, which the rig confirms pixel for pixel.
 
-The scrim's halo is the one thing here still calibrated by measurement rather than derived. It has the same asymmetry pointing the other way - in light mode it is a pale plate on a darkened field, which is the same move in the direction the eye notices most - but that composite blends against the destination through the pipeline's blend state and cannot read it, so there is nothing to solve against. Its alpha is scaled down until it covers the same ground dark mode's does, which works out at about a doubling and a half whatever the visibility is set to, and it stops at a quarter of what was asked for so the plate cannot stop doing its job. On the rig that moved 43% of the pixels around a screenful of text by an average of 10 sRGB levels, and the text still read clearly.
+The scrim's halo is the one thing here still calibrated by measurement rather than derived. It has the same asymmetry pointing the other way - in light mode it is a pale plate on a darkened field, which is the same move in the direction the eye notices most - but that composite blends against the destination through the pipeline's blend state and cannot read it, so there is nothing to solve against. Its alpha is scaled down until it covers the same ground dark mode's does, which works out at about a doubling and a half whatever the visibility is set to, and it stops at a quarter of what was asked for so the plate cannot stop doing its job. That moved 43% of the pixels around a screenful of text by an average of 10 sRGB levels, and the text still read clearly.
 
 Everything here measures with a transfer curve taken on Rec.709 luma. Luma because a linear-light alpha blend is affine in it, so one number stands in for a whole composite. A curve because linear light is not what the eye reads; the sRGB transfer tracks CIE L* closely enough for the scrim, and the pure power is what makes the mix exact. Oklab lightness was measured and rejected: it has no linear toe, so it reads a near-black background as far more separable than it is.
 
@@ -558,7 +559,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - A dialog already open follows a scale change in place, rather than being rebuilt (2026-09-19). Dragging it to a monitor at another scale, or changing the desktop's scaling under it, moves only the boundary: the text context rasterizes at the new size and the chrome is measured again, and the layout below is already in DIP, so it is the same size on screen with the clicks where they look. A rebuild would have been a few lines, since reopening was the one thing that worked before, but what a reopen carries is the tab and the scroll - so every unapplied edit would have gone the moment the window crossed a monitor edge, which is worse than the wrong size. The size kept for the rest of the session is in DIP for the same reason, so a reopen on another monitor is the same apparent size and not the same count of pixels. About and the notice follow one too (2026-09-20), by a different route: neither can be resized and neither holds a layout to adjust, so each keeps what it was built from and is laid out again from scratch at the new scale.
 
-- Neither half of the boundary moves on its own, so a scale change sets both (2026-09-20). The window toolkit keeps the LOGICAL size, which for an ordinary window means the new physical size arrives straight after - but a maximized or tiled window keeps its physical size and sends nothing at all, and the dialog would then draw at the new scale inside the size it had before. So the dialog is told what the window really measures rather than waiting to be told, and the window is asked for that size held to what the screen can still hold, since a screen holds fewer DIP at a higher scale.
+- Neither half of the boundary moves on its own, so a scale change sets both (2026-09-20). The window toolkit keeps the logical size, which for an ordinary window means the new physical size arrives straight after - but a maximized or tiled window keeps its physical size and sends nothing at all, and the dialog would then draw at the new scale inside the size it had before. So the dialog is told what the window really measures rather than waiting to be told, and the window is asked for that size held to what the screen can still hold, since a screen holds fewer DIP at a higher scale.
 
 - **A measurement TAKEN in real pixels must convert the constant beside it, not the other way about.** Text is measured against the font, which is real pixels by nature; the clear space that goes around it is written in DIP. Adding the two as they stand and dividing the sum at the dialog's boundary shrinks the constant by the scale factor - so at 2x a tab's title had half the clear space its own box allowed for and sat flush against the right edge, and above that it ran past it. Every such site converts the constant where it is used, exactly as the main window's chrome does. There is one rule for it, so the four places that size the dialog's columns cannot drift apart.
 
@@ -586,7 +587,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - A fraction stored as a decimal is shown as a whole percent. Nobody thinks in 0.35, and the file is a different audience from the dialog. The decimal is what the renderer wants and what a hand-edited config should keep. The two directions are exact inverses, so reverting one gives back its own default rather than a hair off it.
 
-- The tabs follow what a person is looking at rather than what the code calls it: Background, Text, Cursor, Movement, Themes, Window. Settings that describe one subject sit together even when they are implemented in different places. The cursor's shape, its animation and whether it joins the text halo are all "cursor" to the person changing them.
+- The tabs follow what a person is looking at rather than what the code calls it: Silk, Background, Text, Cursor, Movement, Themes, Window, Shell. Settings that describe one subject sit together even when they are implemented in different places. The cursor's shape, its animation and whether it joins the text halo are all "cursor" to the person changing them.
 
 ### The color picker (2026-09-20)
 
@@ -598,7 +599,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - The square and the strip are drawn by the renderer's own quad shader, as two modes of it. A gradient built from flat quads would be thousands of them for one square, and a picker is not worth a texture upload per hue.
 
-- The square mixes toward the hue in sRGB, not in linear light. Every other color in the program is handed to the GPU linear, and mixing toward white there gives a square nobody would recognise as a color picker: the pale half swamps everything else. So the square's quad carries its hue in sRGB and the shader encodes the result itself. That is the one exception, and it is written down where the quad is declared.
+- The square mixes toward the hue in sRGB, not in linear light. Every other color in the program is handed to the GPU linear, and mixing toward white there gives a square nobody would recognize as a color picker: the pale half swamps everything else. So the square's quad carries its hue in sRGB and the shader encodes the result itself. That is the one exception, and it is written down where the quad is declared.
 
 - Six value boxes: red, green and blue as whole percents, then brightness, saturation and a hex value. No hue box. The strip is the hue control, and the other five can already name any color between them. Percents rather than 0 to 255 because every other fraction in the dialog shows as a whole percent, and a settings dialog should not switch units halfway down.
 
@@ -632,25 +633,25 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - **The list names the default shell: its first switched-on entry.** There was a separate `shell.default` setting saying the same thing, and two places claiming to name one shell can only ever disagree; one rule that is visible in the list is worth more than a second field. A config that carried the old setting has that entry moved to the top of the list, once, and the line removed - the value was the user's own statement of which shell they meant, so it is carried rather than dropped. Finding which entry it names is the same identity question the scan asks, not a string compare: the old setting was routinely a bare name where the scan had already stored the full path to the same file, and comparing the two as text put a SECOND copy of the user's default shell at the top of their own list, where the top is what "default shell" now means. An initial population is led by the shell the user logs in with, which is what makes the default right without their having said anything.
 
-- Finding installed shells is background work that starts a few seconds after the WALLPAPER is genuinely on screen - not merely the window. Both are off-thread and both are slow in the same way, so overlapping them puts a stall in the one moment anybody is looking: the gap between the window appearing and the picture arriving in it. A wallpaper that never answers (a share on a dead mount) cannot hold the scan off forever - there is a deadline past which it runs anyway, since a terminal with no shells in its menu is worse than a terminal with no picture behind its text. It stats every directory on PATH and, on Windows, reads the registry - any of which can be a mount or a hive that answers slowly - so none of it may sit between launch and the first frame. It runs on its own thread and the result is folded in when it arrives, the same shape the wallpaper pipeline uses.
+- Finding installed shells is background work that starts a few seconds after the wallpaper is really on screen - not merely the window. Both are off-thread and both are slow in the same way, so overlapping them puts a stall in the one moment anybody is looking: the gap between the window appearing and the picture arriving in it. A wallpaper that never answers (a share on a dead mount) cannot hold the scan off forever - there is a deadline past which it runs anyway, since a terminal with no shells in its menu is worse than a terminal with no picture behind its text. It stats every directory on PATH and, on Windows, reads the registry - any of which can be a mount or a hive that answers slowly - so none of it may sit between launch and the first frame. It runs on its own thread and the result is folded in when it arrives, the same shape the wallpaper pipeline uses.
 
 - **What a scan may do to the list is deliberately lopsided.** It may add a shell it found, and it may switch off one whose program has gone - keeping the entry, its title, its flags and its place, since a shell that is merely uninstalled is not a shell the user stopped wanting. It may never switch one back on, and never rewrite a command line. A scan cannot tell a program that came back from a switch somebody turned off on purpose, and the cost of guessing wrong runs one way: quietly re-enabling something the user disabled is worse than leaving them one tick to undo.
 
 - Two shells count as one entry when they run the same program with the same arguments. Which program that is has to be resolved rather than compared as text, because the same shell is written several ways (`bash`, `/bin/bash`) and, on Windows, three environments ship a program called `bash` and they are not the same shell. Where a stored entry resolves nowhere at all, a bare name match is enough - that is what lets a reinstall re-arm the disabled entry it belongs to instead of sitting beside it as a second copy.
 
-- **The order a fresh list arrives in is stated outright, in one place, rather than falling out of the sequence the looking happens to run in.** Each find is put in a group and the whole set is sorted once at the end. On unix the user's own login shell leads - nothing may sort above it, since the top of the list is what "default shell" means - then the modern cross-platform shells, the language REPLs, and the rest of the POSIX family. Windows has no user shell, so it is stated instead: PowerShell 7, the modern shells, the WSL distributions, the three POSIX-environment bashes, PyCmd, the language REPLs, Windows Cmd, and last the two Windows PowerShell 5 entries - the ones you reach for when something needs them rather than the one you open a terminal to get. Groups that hold shells of equal standing sort alphabetically inside themselves; groups that hold one shell built several ways keep a curated order, which is why MSYS2's full bash is offered above the mini one Git ships.
+- **The order a fresh list arrives in is stated outright, in one place, rather than falling out of the sequence the looking happens to run in.** Each find is put in a group and the whole set is sorted once at the end. On unix the user's own login shell leads - nothing may sort above it, since the top of the list is what "default shell" means - then the modern cross-platform shells, the language REPLs, and the rest of the POSIX family. Windows has no user shell, so it is stated instead: PowerShell 7, the modern shells, the WSL distributions, the three POSIX-environment bashes, PyCmd, the language REPLs, Windows Cmd, and last the two Windows PowerShell 5 entries - the ones you reach for when something needs them rather than the one you open a terminal to get. Groups that hold shells of equal standing sort alphabetically inside themselves; groups that hold one shell built several ways keep a curated order, which is why MSYS2's full bash is offered above the mini one Git comes with.
 
 - The login shell's twin sits directly below it and starts without reading its startup files. Each shell spells that its own way (`--norc`, `--no-rcs`, `--no-config`, `-NoProfile`), so the flag is per shell and the twin only exists where there is one. Only the login shell gets a twin; every shell having one would double a list nobody asked to be long. It arrives switched OFF: it is what you reach for when your own rc file is the thing you are debugging, not a second copy of your shell in the menu every day. `cmd.exe` is deliberately not on that table even though it has such a flag (`/d`, no AutoRun): it is what Windows reports as the command processor, so it is the login shell on every Windows box, and a second "Command Prompt" in everyone's menu costs more than a rarely-set AutoRun key is worth.
 
 - WSL distributions are read from the registry, never by asking `wsl.exe`. A WSL2 distribution lives in a virtual disk, and listing what is installed must not be the thing that boots a virtual machine - that would be slow, surprising, and arguably a security problem for the user. Each distribution is offered whole, running its own default shell; anyone who wants a particular shell inside one edits the entry to say so. Its generation is part of its name (`WSL2; Ubuntu`), because that is the whole difference between two rows that would otherwise read identically, and the WSL2 ones are offered above the WSL1 ones. Both are offered where both exist: a WSL1 distribution is installed and usable, and hiding one because a newer-generation one sits beside it is not a call a scan gets to make. The generation is a bit in the distribution's registry flags - the `Version` value beside it is the registration format's version and reads 2 for a WSL1 distribution just as happily.
 
-- **The Shell tab is the one place allowed to write the list, and a scan that arrives while it is open is folded into it rather than fought with.** Everywhere else the dialog carries the live list through untouched on Apply: a dialog that opened before a scan arrived would otherwise write back the empty list it copied then, emptying the menu for the rest of the session while the file on disk still had every shell in it. The tab needs to write it, so instead the scan is folded into BOTH of the dialog's copies - the edited one, so the user sees what turned up, and the baseline, so the fold does not read as an edit they made. Because a scan only ever appends and switches off, folding it into work already done cannot undo any of it.
+- **The Shell tab is the one place allowed to write the list, and a scan that arrives while it is open is folded into it rather than fought with.** Everywhere else the dialog carries the live list through untouched on Apply: a dialog that opened before a scan arrived would otherwise write back the empty list it copied then, emptying the menu for the rest of the session while the file on disk still had every shell in it. The tab needs to write it, so instead the scan is folded into both of the dialog's copies - the edited one, so the user sees what turned up, and the baseline, so the fold does not read as an edit they made. Because a scan only ever appends and switches off, folding it into work already done cannot undo any of it.
 
 - The grid edits every field in the row rather than through a popup: it costs fewer clicks and reuses the field machinery the dialog already has. Four columns are fixed-width and the command takes whatever width is left, since it is the one value that is routinely too long to read at a glance. "Last seen" is read-only - it is the program's own note about the entry, and it is what makes a switched-off shell explicable. The command is required, which is enforced in the two places it can be broken: emptying the field leaves the stored command standing, and an entry that never got one is dropped on the way out of the dialog rather than written as a shell that names nothing to run.
 
 - **Reordering is a mouse gesture on a grip, not four buttons.** Every line carries a drag handle at its left edge and the list reorders under the pointer as it travels, rather than on release - the line being dragged is the line that is seen to move, which is the whole reason to prefer a grip over arrows. It costs four Tab stops per line, and that is the trade taken knowingly: reordering has no keyboard equivalent now. The grip is therefore not a stop at all, since a focus ring on a control that Space cannot work would be worse than no ring.
 
-- **Remove sits between the command and the date, and is drawn in red.** It is the one control in the dialog that destroys something, so it is deliberately kept off the right-hand edge that a pointer travels down on its way to the checkboxes. The red is chrome rather than a theme colour: "this deletes something" is a fixed meaning, and a theme whose accent happened to be red would say it about every control at once.
+- **Remove sits between the command and the date, and is drawn in red.** It is the one control in the dialog that destroys something, so it is deliberately kept off the right-hand edge that a pointer travels down on its way to the checkboxes. The red is chrome rather than a theme color: "this deletes something" is a fixed meaning, and a theme whose accent happened to be red would say it about every control at once.
 
 - **How "where is this shell now" is answered has two halves: what the OS can see, and what the shell says - and the second wins.** Unix reads the link at `/proc/<pid>/cwd`. Windows has no equivalent and no API that reports another process's directory, so it is read out of the shell's own process memory, where SetCurrentDirectory keeps it; the result is checked for still being a directory first, so a layout that ever moved would degrade to "don't know" rather than to a wrong directory. Neither can see a shell that keeps its own idea of where it is - PowerShell's `Set-Location` never tells the OS - which is why the shell is also given a way to say so directly, in the escape sequence every terminal reads for this (OSC 7, and the ConEmu OSC 9;9 spelling that Windows Terminal documents). A report is preferred to the OS answer because it comes from the one that knows; a report naming a directory that is not here, or a machine that is not this one, is dropped and the OS answer stands.
 
@@ -668,7 +669,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - A pane's shell inherits the environment SilkTerm itself was launched with. That is deliberate for anything the user set - an activated virtualenv, a PATH they added, a variable they exported before starting the terminal - and it is what makes a terminal opened from a shell behave as a continuation of that shell.
 
-- It is wrong for the bookkeeping a shell keeps for ITSELF. PowerShell 7 prepends its own module directories to the module search path that every version of PowerShell shares, so a Windows PowerShell 5.1 pane opened anywhere below one resolves PSReadLine to PowerShell 7's copy rather than its own and is not allowed to load it - the pane then starts with an error and no line editing. The execution-policy variable is the same shape: one shell sets it and everything that shell starts inherits it, so a pane can run under a policy nobody chose for it.
+- It is wrong for the bookkeeping a shell keeps for itself. PowerShell 7 prepends its own module directories to the module search path that every version of PowerShell shares, so a Windows PowerShell 5.1 pane opened anywhere below one resolves PSReadLine to PowerShell 7's copy rather than its own and is not allowed to load it - the pane then starts with an error and no line editing. The execution-policy variable is the same shape: one shell sets it and everything that shell starts inherits it, so a pane can run under a policy nobody chose for it.
 
 - So a short list of shell-private variables is put back to what a freshly launched program would see, read from the machine at startup, and everything else is passed through untouched. Among the options it was decided that a narrow list is the only one that holds up: replacing the whole environment would discard the user's own exports, which is the one thing inheriting exists for, and editing the polluted value in place - dropping the entries that belong to the other shell - would depend on where that shell happens to be installed.
 
@@ -680,7 +681,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 ### A prompt is offered to bash, never installed (2026-08-30)
 
-- SilkTerm ships x9ps1-git, a git-aware bash prompt, and hands it to the bash panes it starts. It shows the branch, whether the tree is clean, and how far ahead or behind its tracking branch it is. It was on by default until 2026-09-16, and is off now.
+- SilkTerm includes x9ps1-git, a git-aware bash prompt, and hands it to the bash panes it starts. It shows the branch, whether the tree is clean, and how far ahead or behind its tracking branch it is. It was on by default until 2026-09-16, and is off now.
 
 - Among the ways to deliver it, it was decided to set `PROMPT_COMMAND` in the pane's environment. bash picks that up as a shell variable, and the user's own rc files run afterwards. Nothing is written into anyone's `.bashrc`, there is nothing to uninstall, and it cannot follow the user into a shell SilkTerm did not start.
 
@@ -724,7 +725,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 - Measured on the Windows box, the folding costs nothing and saves a great deal: throughput is unchanged (11.8 against 11.7 MB/s over four alternating pairs) while the process burns a third less CPU and the window thread less than half - the 2.5 seconds that used to go into the operating system's message queue was more than parsing and drawing put together.
 
-- The notice is re-armed BEFORE the window acts on it, so a read cycle that arrives mid-handling posts a fresh one rather than being dropped. That ordering is the whole safety argument, and it is what a unit test pins.
+- The notice is re-armed before the window acts on it, so a read cycle that arrives mid-handling posts a fresh one rather than being dropped. That ordering is the whole safety argument, and it is what a unit test pins.
 
 ### The About box says how long the session has been up (2026-09-20)
 
@@ -744,7 +745,7 @@ The built-in stack is last for a reason. The generic monospace query below it is
 
 ### What untrusted input may not do (2026-09-09)
 
-Almost everything a terminal handles came from somewhere else. Bytes arriving from a pane's program may have travelled a long way first - a log file, a build server, a remote host over ssh - and the program printing them need not be the one that wrote them. So the rule is that nothing a pane shows may change what the terminal does, and these surfaces get held to it explicitly.
+Almost everything a terminal handles came from somewhere else. Bytes arriving from a pane's program may have traveled a long way first - a log file, a build server, a remote host over ssh - and the program printing them need not be the one that wrote them. So the rule is that nothing a pane shows may change what the terminal does, and these surfaces get held to it explicitly.
 
 - The terminal must not type on a program's behalf. A few sequences ask the terminal a question, and the answer goes back down the pty where the shell reads it as if it had been typed. An answer that could carry a line ending would submit itself, and one that could carry the program's own text would let the program choose the command. So every reply is a fixed shape built from a number, and the terminal answers no question whose answer would be somebody else's text. There is no way to read back a window title, and a request to read the clipboard is ignored rather than answered.
 
@@ -790,7 +791,7 @@ Three defects came out of building it, all fixed with it: a program could put co
 
 - Target: Debian. The primary dev/reference environment is X11 (Compiz), but one Linux binary runs native on both X11 and Wayland. winit selects the backend at runtime, and X11/Wayland/GL are all loaded on demand. Windows and macOS are targets too, all with x86_64 and ARM64 variants.
 
-	- The X11 path additionally uses a glutin GL context for per-pixel background transparency, because wgpu can't drive an ARGB surface on X11. Wayland uses the plain wgpu surface, which already does premultiplied alpha. Everything else - chrome, text, scrollback slide, background image + blur + scrim - is the shared native path on both.
+	- The X11 path also uses a glutin GL context for per-pixel background transparency, because wgpu can't drive an ARGB surface on X11. Wayland uses the plain wgpu surface, which already does premultiplied alpha. Everything else - chrome, text, scrollback slide, background image + blur + scrim - is the shared native path on both.
 	- On Windows, transparency means presenting through the desktop compositor: a DX12 swapchain on a DirectComposition visual, with no redirection surface under the window. A swapchain made straight from the window only composites opaque, and the backend picked by default varies per machine, so DX12 is pinned whenever the setting is on. Both are fixed at window creation, so the setting takes effect on the next launch there.
 
 	- Wayland coverage: smooth scrolling is identical on both engines. The scroll regression harness runs its scenes a second time under a headless `cage` kiosk (`run.bash --wayland`). Per-pixel transparency and dialog stacking on Wayland are not yet exercised (follow-ups).
@@ -1006,7 +1007,7 @@ A title the running program asks for can name the tab too (2026-09-20), which is
 
 - The title sits above the tab's ladder of shortenings rather than inside it. A program's title has no shorter forms of its own, so folding it in would have thrown away every rung longer than whatever the program happened to say, and a narrow tab would jump straight from a full title to the shell's initials. Above the ladder, a tab too narrow for the title falls through the forms it works out for itself, and the floor is still the shell's name.
 
-- Shipped on because the window title already prefers a program's title by default, and a tab that disagreed with the title bar above it would read as a bug. The switch is there for a shell that retitles on every prompt, which turns a strip of useful labels into a row of the same `user@host` text.
+- On by default because the window title already prefers a program's title by default, and a tab that disagreed with the title bar above it would read as a bug. The switch is there for a shell that retitles on every prompt, which turns a strip of useful labels into a row of the same `user@host` text.
 
 - The tab's flyover carries a "Program title" line when there is one, whatever the switch says, the same as the parts above.
 
@@ -1032,7 +1033,7 @@ The window title starts with "Administrator: " on Windows and "Root: " elsewhere
 
 A tab used to say the application's own name on Windows and the shell's process name on unix. It now reports the shell by its FRIENDLY name - the one the Shells list carries, which is the name the user gave it - followed by what that shell is doing: the command in the foreground, or the last one it ran, or, having run nothing, the directory it is in.
 
-- The shell a pane runs is resolved once, when the pane is spawned. Leaving it as "whatever the default shell is" let the answer change under a running pane, since the background scan fills the list seconds after launch and the Shells tab reorders it - so a pane could be labelled with a shell it was not running.
+- The shell a pane runs is resolved once, when the pane is spawned. Leaving it as "whatever the default shell is" let the answer change under a running pane, since the background scan fills the list seconds after launch and the Shells tab reorders it - so a pane could be labeled with a shell it was not running.
 
 - The path is shortened by an ellipsis eating the middle a directory at a time, so what is left keeps its real names. Only when that has run out do the directories above the current one drop to their initials, which on any path deeper than a couple of levels never happens - the ellipsis has already covered more ground than a column of single letters would. Two things survive every step, because they are what distinguish a location from a command - the anchor it starts from and the separator it ends with. Windows keeps its drive letter and gets no `~`, since neither shell there prints one.
 	- This reverses the original order (2026-09-20), which was PyCmd's: initials first, ellipsis only where it was shorter still. It came from nemo-anywhere, which had already been through the same argument. A middle left out reads as a place with a gap in it; a column of initials reads as neither the path nor anything else, and it gives up every name at once to save a few columns.
@@ -1063,7 +1064,7 @@ Tabs used to divide the bar evenly between a minimum and a maximum percentage of
 
 ### PowerShell gets the same prompt bash does (2026-08-21, reworked 2026-08-30)
 
-The integration block sets a prompt, but only where the prompt is still the one PowerShell ships, identified by the help link its own definition carries. Anything anybody else installed is left alone.
+The integration block sets a prompt, but only where the prompt is still the one PowerShell comes with, identified by the help link its own definition carries. Anything anybody else installed is left alone.
 
 It began as a prompt that named the version, because two PowerShells look alike at a prompt. It now reads the same as the bash prompt described above: version, time, user, host, path, and in a git working tree the remote, the branch, and two marks for committed and level with the upstream. A PowerShell pane and a bash pane should look like the same terminal.
 

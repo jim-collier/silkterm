@@ -74,14 +74,13 @@ Cross-platform. Single binary. Written in Rust. GPU accelerated if available.
 - [Wallpaper pack](#wallpaper-pack)
 - [Terminal showdown - speed and size](#terminal-showdown---speed-and-size)
 - [Getting and using](#getting-and-using)
-	- [Installing](#installing)
+	- [Installation](#installation)
 		- [Packages and installers](#packages-and-installers)
-		- [Direct](#direct)
+		- [Direct stable and dev install scripts](#direct-stable-and-dev-install-scripts)
 		- [Build it yourself](#build-it-yourself)
-	- [Setting up a development environment](#setting-up-a-development-environment)
+	- [Set up development environment](#set-up-development-environment)
 	- [Configuration](#configuration)
 	- [Shell integration](#shell-integration)
-- [Renaming the project](#renaming-the-project)
 - [Contributing](#contributing)
 - [Support SilkTerm](#support-silkterm)
 - [Legal stuff](#legal-stuff)
@@ -98,7 +97,7 @@ For output that can be sporadic - e.g. something scrolling slowly one line-at-a-
 
 One analogy is playing a video game with mouse-look at, say, 3 frames-per-second visual output. It is nearly impossible to keep your bearings, when the world view jumps wildly from frame-to-frame. But at say 240 FPS on a matching Hz monitor, it looks buttery smooth and immersive, and the subtle task of mentally maintaining where you are, becomes trivial.
 
-As the youtube video linked above goes into, jerky line-snapped output taxes mental resources - however slightly - in a way that stacks up over long sessions. At the extreme, it can contribute to headaches and fatigue. And that's brainpower that could have been used to solve whatever it is you're working on.
+As the YouTube video linked above goes into, jerky line-snapped output taxes mental resources - however slightly - in a way that stacks up over long sessions. At the extreme, it can contribute to headaches and fatigue. And that's brainpower that could have been used to solve whatever it is you're working on.
 
 The crazy thing is that **several early CRT text-mode computers offered smooth-scrolling**. (For example, many UNIX client terminal consoles of the 80s.)
 
@@ -216,19 +215,19 @@ SilkTerm ships with the 104 wallpapers it was built and tuned against, in [`file
 
 [![Wallpaper pack](assets/wallpaper-gallery.jpg)](https://yottacore.github.io/silkterm/wallpapers/)
 
-Click the sheet for the [browsable gallery](https://yottacore.github.io/silkterm/wallpapers/) - any wallpaper opens full size in place, the arrow keys page through them, and each one carries its credit and licence underneath.
+Click the sheet for the [browsable gallery](https://yottacore.github.io/silkterm/wallpapers/) - any wallpaper opens full size in place, the arrow keys page through them, and each one carries its credit and license underneath.
 
 They come to 60 MiB against a 10 MiB terminal, so no package or installer carries them - fetch the folder on its own. Bash (Linux, macOS, WSL):
 
-```bash
+~~~bash
 dir="${XDG_CONFIG_HOME:-$HOME/.config}/silkterm" && mkdir -p "$dir" && curl -fsSL https://github.com/yottacore/silkterm/archive/refs/heads/main.tar.gz | tar -xz -C "$dir" --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper
-```
+~~~
 
 PowerShell (Windows):
 
-```powershell
+~~~powershell
 $dest = "$env:LOCALAPPDATA\silkterm"; $tgz = "$env:TEMP\silkterm-main.tar.gz"; New-Item -ItemType Directory -Force $dest | Out-Null; curl.exe -fsSL https://github.com/yottacore/silkterm/archive/refs/heads/main.tar.gz -o $tgz; tar -xzf $tgz -C $dest --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper; Remove-Item $tgz
-```
+~~~
 
 Either one is a single line, so it survives a paste however your terminal handles one, and puts the images where rotation looks for them - `wallpaper/` beside the config on Linux and macOS, and under `%LOCALAPPDATA%` on Windows (see the table in [Configuration](#configuration)). Both pull the whole repository archive, since GitHub serves no smaller unit - about 67 MiB over the wire.
 
@@ -292,33 +291,33 @@ Run it yourself with [`utility/update-showdown.py`](utility/update-showdown.py) 
 
 ## Getting and using
 
-### Installing
+### Installation
 
 #### Packages and installers
 
 The primary install is a native package from the [releases page](https://github.com/yottacore/silkterm/releases): `.deb` / `.rpm` on Linux, or the NSIS setup `.exe` on Windows. (No releases published yet? Build it yourself, below.) Optional either way: copy the example config tree in [`filesystem/home/`](filesystem/home/) over your own `$HOME` for a starter config and the background image pack.
 
-#### Direct
+#### Direct stable and dev install scripts
 
 Prefer a plain binary? These one-liners work out your operating system and CPU on their own, download the release built for it, check its sha256, and install it. Once a release is signed, the checksums file has to carry a good signature from the release key or nothing is installed. Each prints what it is about to do and asks before touching anything, and does nothing at all when you are already up to date. The defaults suit most people - add `--help` for the handful of things you can change.
 
 Bash 3.2 or newer (Linux, macOS, WSL):
 
-```bash
+~~~bash
 bash <(curl -fsSL https://raw.githubusercontent.com/yottacore/silkterm/main/install.bash)
-```
+~~~
 
 PowerShell 5.1 or 7+ (Windows, Linux, macOS):
 
-```powershell
+~~~powershell
 irm https://raw.githubusercontent.com/yottacore/silkterm/main/install.ps1 | iex
-```
+~~~
 
 PowerShell needs the script-block form to pass anything, `-Help` included:
 
-```powershell
+~~~powershell
 & ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/yottacore/silkterm/main/install.ps1'))) -Help
-```
+~~~
 
 Install locations:
 
@@ -333,13 +332,13 @@ Only Linux and Windows binaries are published so far. On anything else the insta
 
 Install the per-platform prerequisites first ([prerequisites.md](prerequisites.md)), then on Linux:
 
-```bash
+~~~bash
 cargo run --release
-```
+~~~
 
 That's the whole of it for a native build. [build.md](build.md) covers the cross-builds (Windows, and ARM64 for both) which all run from an x86_64 Linux box.
 
-### Setting up a development environment
+### Set up development environment
 
 [prerequisites.md](prerequisites.md) lists what each platform needs, down to the package names and the one-time toolchain setup. [build.md](build.md) covers the build and cross-build commands, and [contributing.md](contributing.md) covers the branch and review flow.
 
@@ -347,11 +346,15 @@ The toolchain version is pinned in `rust-toolchain.toml`, so rustup picks the ri
 
 To run everything a change has to pass before it can be pushed - format, lint, regression tests, profiling, the release and cross builds, packaging, then backup and publish:
 
-```bash
+~~~bash
 cicd/cicd.bash [--quick]
-```
+~~~
 
-`--quick` skips the cross-builds and the slow stages. A fast subset of it - format check, lint, tests - also runs as a pre-push hook (`cicd/cicd.bash --gate`), so nothing reaches main unverified.
+`--quick` skips the cross-builds and the slow stages. A fast subset of it - format check, lint, tests - also runs as a pre-push hook on any push to main (`cicd/cicd.bash --gate`). Turn the hooks on once per clone:
+
+~~~bash
+git config core.hooksPath utility/git-hooks
+~~~
 
 ### Configuration
 
@@ -381,21 +384,20 @@ A new tab, split or window starts in the directory the current pane is in. For m
 
 PowerShell is the exception worth knowing about: `Set-Location` moves PowerShell's own idea of where it is and leaves the process where it was launched, so there is nothing to read and a new pane would start in the launch directory.
 
-SilkTerm handles that one for you. A few seconds after launch it adds a small directory-reporting block to each PowerShell profile - and it will not touch a profile that already reports (a Windows Terminal setup, oh-my-posh, anything else), will not rewrite what is there (it appends, after saving a copy beside it), will not change your prompt, and will not put the block back if you delete it. A shell whose execution policy would refuse to load the profile is left alone and said so, rather than being handed a file it cannot read. Clear "PowerShell integration" on the Shell tab of Settings, or set `shell.integration: false`, to switch it off before it ever runs.
+SilkTerm handles that one for you. A few seconds after launch it adds a small directory-reporting block to each PowerShell profile - and it will not touch a profile that already reports (a Windows Terminal setup, oh-my-posh, anything else), will not rewrite what is there (it appends, after saving a copy beside it), will not change your prompt, and will not put the block back if you delete it. A shell whose execution policy would refuse to load the profile is left alone and said so, rather than being handed a file it cannot read. Clear "Update PowerShell profiles" on the Shell tab of Settings, or set `shell.integration: false`, to switch it off before it ever runs.
 
 Same story for a shell running behind `ssh` or in a container - that one is yours to set up, since the shell you are typing at is not the process SilkTerm started.
 
 [shell-integration.md](shell-integration.md) covers all of it, including the snippets for bash, zsh and fish.
 
-<!--
-## Renaming the project
+<!-- ## Renaming the project
 
 The display name lives in one place (`APP_NAME` in `source/src/config.rs`); the lowercase identifier (`silkterm`) is the cargo package, binary, and config directory. To rename everything at once during development:
 
-```sh
+~~~sh
 utility/rename.bash NewName
 cargo build
-```
+~~~
 
 It rewrites every tracked text file that mentions either name - the sources, the
 docs, the pipeline, the packaging, the installers and the tests - and renames the
