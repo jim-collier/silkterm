@@ -583,6 +583,7 @@ enum MenuAction {
 	ToggleMinimap,
 	ToggleBare,
 	ToggleRemote,
+	NextWallpaper,
 	ReloadConfig,
 	Settings,
 	About,
@@ -624,6 +625,9 @@ impl MenuAction {
 			}
 			MenuAction::ToggleRemote => {
 				"Run as a plain terminal while the screen is somewhere else, since no effect survives the trip. Set for you when a remote session is noticed, and forgotten at the next launch."
+			}
+			MenuAction::NextWallpaper => {
+				"Show the next picture from the wallpaper folder now. The rotation timer starts over from it."
 			}
 			MenuAction::ReloadConfig => {
 				"Re-read the config file. Anything edited by hand since launch takes effect now."
@@ -795,12 +799,15 @@ struct ViewState {
 	minimap: bool,
 	bare: bool,
 	remote: bool,
+	// a rotation folder with something to move on to; the row is left out
+	// otherwise, like the link rows on the right-click menu
+	next_wallpaper: bool,
 }
 
 // The View menu, apart from the window it is asking about - so the labels, the
 // order and the accelerators can be held to the style guide by test.
 fn view_menu_items(on: ViewState) -> Vec<Entry> {
-	vec![
+	let mut items = vec![
 		mia(
 			'I',
 			"Increase font size (Ctrl+Plus)",
@@ -842,7 +849,17 @@ fn view_menu_items(on: ViewState) -> Vec<Entry> {
 			"Temporary remote display mode",
 			MenuAction::ToggleRemote,
 		),
-	]
+	];
+	if on.next_wallpaper {
+		items.extend([Entry::Sep, next_wallpaper_row()]);
+	}
+	items
+}
+
+// 'N' is New tab on the right-click menu and the n in Minimap on View, so both
+// menus take the x
+fn next_wallpaper_row() -> Entry {
+	mia('x', "Next wallpaper", MenuAction::NextWallpaper)
 }
 
 // The three shell rows: a new tab, and a split either way.
@@ -1424,6 +1441,12 @@ fn rating_step(bench: bool, scroll_anim: bool, pinned_fps: bool, focused: bool) 
 // here rather than waiting for the worker's answer: the answer is dropped
 // unless it is still the newest request, and a timer left in the past fires
 // again on the very next pass, so each pass started another decode thread.
+// Whether rotation has anywhere to go: not held by a command-line wallpaper,
+// and the last scan found more than the one image showing.
+fn rotation_live(locked: bool, count: usize, folder: bool) -> bool {
+	!locked && count >= 2 && folder
+}
+
 fn rotation_next(now: Instant, live: bool, interval_s: f32) -> Option<Instant> {
 	(live && interval_s > 0.0).then(|| now + Duration::from_secs_f32(interval_s))
 }
@@ -3196,6 +3219,11 @@ impl State {
 			// this menu is the only way back to it. The rest live on View.
 			Entry::Sep,
 			mta('M', self.menu_bar, "Menu bar", MenuAction::ToggleMenuBar),
+		]);
+		if self.can_rotate() {
+			entries.push(next_wallpaper_row());
+		}
+		entries.extend([
 			Entry::Sep,
 			mi("Reload config", MenuAction::ReloadConfig),
 			mi("Settings\u{2026} (Ctrl+,)", MenuAction::Settings),
@@ -3461,6 +3489,7 @@ impl State {
 				minimap: config::settings().minimap,
 				bare: self.bare,
 				remote: config::settings().remote_override,
+				next_wallpaper: self.can_rotate(),
 			}),
 			3 => {
 				let mut items = vec![mia('N', "New tab (Ctrl+Shift+T)", MenuAction::NewTab)];
@@ -3701,6 +3730,7 @@ impl State {
 				config::update(new);
 				self.relayout_all();
 			}
+			MenuAction::NextWallpaper => self.advance_wallpaper(),
 			MenuAction::ReloadConfig => self.reload_config(),
 			MenuAction::Settings => self.open_settings(),
 			MenuAction::About => self.open_about(),
@@ -4244,13 +4274,22 @@ impl State {
 		self.request_wallpaper(!lock);
 	}
 
+	fn can_rotate(&self) -> bool {
+		rotation_live(
+			self.wp_locked,
+			self.wp_count,
+			config::settings().rotation_folder().is_some(),
+		)
+	}
+
 	// Rotate to the next image. The worker re-scans, so images added to or removed
-	// from the folder since launch are picked up.
+	// from the folder since launch are picked up. Next wallpaper comes here too,
+	// so the timer starts over from the pick it asked for.
 	fn advance_wallpaper(&mut self) {
 		// locked, switched off since the timer was armed, or one image (or none):
 		// nothing to rotate to, so drop the timer
 		let settings = config::settings();
-		let live = !self.wp_locked && self.wp_count >= 2 && settings.rotation_folder().is_some();
+		let live = self.can_rotate();
 		self.wp_next = rotation_next(Instant::now(), live, settings.wallpaper_rotate_interval_s);
 		if !live {
 			return;
@@ -8673,8 +8712,8 @@ mod tests {
 		accel_at, accel_clash, close_scope, copybox_fit, copybox_place, fit_px, focus_ring,
 		is_copy_chord, key_is_typed, menu_metrics, mia, msub, mta, needs_folder_read,
 		new_window_command, notice_due, pace_frame, rating_step, release_deadline, remember_resize,
-		rotation_next, settings_after_reload, tab_close_box, tab_command_line, tab_title_w,
-		typed_title, view_menu_items, window_px,
+		rotation_live, rotation_next, settings_after_reload, tab_close_box, tab_command_line,
+		tab_title_w, typed_title, view_menu_items, window_px,
 	};
 	use crate::config;
 	use std::time::{Duration, Instant};
@@ -9684,6 +9723,7 @@ mod tests {
 			minimap: true,
 			bare: true,
 			remote: true,
+			next_wallpaper: true,
 		};
 		for entry in view_menu_items(all_on) {
 			if let Entry::Item {
@@ -9715,8 +9755,48 @@ mod tests {
 			minimap: false,
 			bare: false,
 			remote: false,
+			next_wallpaper: true,
 		};
 		assert_eq!(accel_clash(&view_menu_items(off)), None);
+	}
+
+	#[test]
+	fn next_wallpaper_shows_only_with_somewhere_to_go() {
+		let state = |next_wallpaper| ViewState {
+			read_only: false,
+			fullscreen: false,
+			window_frame: false,
+			menu_bar: false,
+			tab_strip: false,
+			minimap: false,
+			bare: false,
+			remote: false,
+			next_wallpaper,
+		};
+		let has_row = |items: Vec<Entry>| {
+			items.iter().any(|entry| {
+				matches!(
+					entry,
+					Entry::Item {
+						action: MenuAction::NextWallpaper,
+						..
+					}
+				)
+			})
+		};
+		assert!(has_row(view_menu_items(state(true))));
+		assert!(!has_row(view_menu_items(state(false))));
+
+		assert!(rotation_live(false, 2, true));
+		assert!(
+			!rotation_live(true, 2, true),
+			"a command-line wallpaper holds"
+		);
+		assert!(!rotation_live(false, 1, true), "one image has no next");
+		assert!(
+			!rotation_live(false, 5, false),
+			"no folder, nothing to rotate"
+		);
 	}
 
 	#[test]
