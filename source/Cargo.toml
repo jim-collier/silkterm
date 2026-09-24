@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.89"
 description = "Smooth-scrolling GUI terminal emulator with split panes"
 license = "GPL-2.0-or-later"
-repository = "https://github.com/jim-collier/silkterm"
+repository = "https://github.com/yottacore/silkterm"
 
 [[bin]]
 name = "silkterm"

@@ -12,7 +12,7 @@ pub const APP_NAME: &str = "SilkTerm";
 // Where Help -> Support SilkTerm sends the browser. Points at DONATE.md (the
 // canonical list of sponsor options and addresses) rather than
 // a single link baked into the binary. HEAD resolves to the repo default branch.
-pub const DONATE_URL: &str = "https://github.com/jim-collier/silkterm/blob/HEAD/DONATE.md";
+pub const DONATE_URL: &str = "https://github.com/yottacore/silkterm/blob/HEAD/DONATE.md";
 
 // The one address worth handing straight to someone who has already decided.
 // DONATE.md carries the rest; --donate prints both.
@@ -4908,6 +4908,17 @@ const SHCL_BANNER: &str = "\
 ##
 ## This config file format is SHCL.
 ## \"Simple Hierarchical Config Language\"
+##    Home     https://github.com/yottacore/shcl
+##    Syntax   https://github.com/yottacore/shcl/blob/main/project/spec.md
+##    Legal    SHCL is Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]. License: MIT. No warranty.
+##
+";
+
+// The same footer from before shcl moved to the yottacore org.
+const SHCL_BANNER_OLD_HOME: &str = "\
+##
+## This config file format is SHCL.
+## \"Simple Hierarchical Config Language\"
 ##    Home     https://github.com/jim-collier/shcl
 ##    Syntax   https://github.com/jim-collier/shcl/blob/main/project/spec.md
 ##    Legal    SHCL is Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]. License: MIT. No warranty.
@@ -4933,7 +4944,7 @@ const SHCL_BANNER_MARK: &str = "This config file format is SHCL.";
 // re-imposing our own wording over someone's would be the rude half of this.
 fn with_shcl_banner(text: &str) -> Option<String> {
 	let mut lines: Vec<&str> = text.lines().collect();
-	for spelling in [SHCL_BANNER, SHCL_BANNER_OLD] {
+	for spelling in [SHCL_BANNER, SHCL_BANNER_OLD_HOME, SHCL_BANNER_OLD] {
 		let run: Vec<&str> = spelling.trim_end_matches('\n').lines().collect();
 		while let Some(at) = run_at(&lines, &run) {
 			lines.drain(at..at + run.len());
@@ -5646,8 +5657,8 @@ shell:
 ##
 ## This config file format is SHCL.
 ## "Simple Hierarchical Config Language"
-##    Home     https://github.com/jim-collier/shcl
-##    Syntax   https://github.com/jim-collier/shcl/blob/main/project/spec.md
+##    Home     https://github.com/yottacore/shcl
+##    Syntax   https://github.com/yottacore/shcl/blob/main/project/spec.md
 ##    Legal    SHCL is Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]. License: MIT. No warranty.
 ##
 "##;
@@ -8475,6 +8486,13 @@ mod tests {
 		let fixed = with_shcl_banner(&old).expect("the old spelling is refreshed");
 		assert_eq!(fixed, added);
 		assert_eq!(fixed.matches(SHCL_BANNER_MARK).count(), 1);
+
+		// so is the one with the old shcl home
+		let moved_home = format!("font:\n\tsize: 13.0\n\n{SHCL_BANNER_OLD_HOME}");
+		assert_eq!(
+			with_shcl_banner(&moved_home).as_deref(),
+			Some(added.as_str())
+		);
 
 		// backfill appends under it; it goes back to the bottom
 		let stranded = format!("{added}\nwindow:\n\tmargin: 8.0\n");
