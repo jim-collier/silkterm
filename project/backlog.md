@@ -2241,6 +2241,13 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 #### Done - Features and enhancements
 
+- ✅ New menu item (right-click and view):
+	- Next wallpaper
+	- Shows only when the rotation folder has another image to go to. A wallpaper given on the command line hides it, since that holds for the session.
+	- The rotation timer starts over from the new pick.
+	- Opened: 20260924
+	- Closed: 20260924-154526
+
 - ✅ Demo gif:
 	- ✅ Keep the opening of panes, but don't show closing them. (That eats up time.)
 		- The panes close off camera. The demo is 5 seconds shorter.
