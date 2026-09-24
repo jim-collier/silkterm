@@ -60,7 +60,7 @@ ldd "$(command -v xfce4-terminal)" | awk '/=>/ {print $3}' | sort -u | xargs -r 
 
 On a typical desktop the shared-library side of a GTK terminal adds up to well over 10 MiB (VTE + GTK + Pango + Cairo + GLib together), and that's *before* the Python interpreter for `terminator`. So the effective footprint of a GTK terminal is comparable to - frequently larger than - SilkTerm's, except SilkTerm carries all of it in one file with nothing to satisfy first.
 
-For reference, SilkTerm's release binary is about **10.3 MiB** (Linux x86_64), already built with fat LTO, `panic = "abort"`, and symbol stripping. A default `cargo build --release` of the same code comes out noticeably larger; the size-tuned release profile is what keeps it there.
+For reference, SilkTerm's release binary is about **11 MiB** (Linux x86_64), already built with fat LTO, `panic = "abort"`, and symbol stripping. A default `cargo build --release` of the same code comes out noticeably larger; the size-tuned release profile is what keeps it there.
 
 ### Why go static at all?
 

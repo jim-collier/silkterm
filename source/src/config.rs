@@ -14,9 +14,10 @@ pub const APP_NAME: &str = "SilkTerm";
 // a single link baked into the binary. HEAD resolves to the repo default branch.
 pub const DONATE_URL: &str = "https://github.com/yottacore/silkterm/blob/HEAD/DONATE.md";
 
-// The one address worth handing straight to someone who has already decided.
-// DONATE.md carries the rest; --donate prints both.
+// The addresses worth handing straight to someone who has already decided.
+// DONATE.md carries the rest; --donate prints all three.
 pub const SPONSOR_URL: &str = "https://github.com/sponsors/jim-collier";
+pub const KOFI_URL: &str = "https://ko-fi.com/jimcollier";
 
 // Which exact build this is. The version can't say - every dogfood build of a
 // release carries the same one - so build.rs bakes in whole minutes since 2000 in
@@ -5438,7 +5439,7 @@ text:
 	## readable over a wallpaper.
 	scrim:
 		# enabled: true  ## Default
-		## Light mode quietens the patch by about a doubling and a half: a pale
+		## Light mode quiets the patch by about a doubling and a half: a pale
 		## patch on a darkened background shows more than a dark one does on a
 		## lightened background.
 		# strength: 20  ## Default

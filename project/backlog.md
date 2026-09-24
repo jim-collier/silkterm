@@ -74,7 +74,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 - 🔘 Pipeline and installer review 20260924
 	- 🔘 The one-liners run the installers on main, which still lack the 09-17 fixes and the 5.1 fix below.
-		- Note: publish both installers to main no later than RC1.
+		- Note: held for the RC1 release.
 		- Opened: 20260924-115032
 	- 🔘 `install.ps1` cannot upgrade over a running copy. The copy fails on a locked file on Windows and a busy one on Linux. `install.bash` already stages and renames.
 		- Opened: 20260924-115032
@@ -423,8 +423,9 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 - ✅ Pipeline and installer review 20260924
 	- ✅ Windows PowerShell 5.1 could not pick a release. It hands the API's list over as one object, so every tag was read at once.
+		- Checked on Windows PowerShell 5.1: the installer on main still fails, and the fixed one picks v1.0.0-beta3.
 		- Opened: 20260924-115032
-		- Closed: 20260924-115032
+		- Closed: 20260924-131246
 	- ✅ `install.bash --release` or `--target` with no value exited with no message. The tag lookup also depended on pretty-printed JSON.
 		- Opened: 20260924-115032
 		- Closed: 20260924-115032
@@ -2236,6 +2237,20 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - Features and enhancements
+
+- ✅ Docs and wallpaper pack pass 20260924
+	- ✅ Two vendor wallpapers with no redistribution license are out of the pack and the gallery. 102 remain.
+		- Opened: 20260924-115032
+		- Closed: 20260924-131246
+	- ✅ README: wrong claims fixed (blur support, how many wallpapers an install has, no releases yet, the starter config). New intro, the unmentioned features added, fewer badges, and the long Windows footnote moved to the showdown notes.
+		- Opened: 20260924-115032
+		- Closed: 20260924-131246
+	- ✅ contributing.md no longer asks for 100% authorship, and links the AI policy.
+		- Opened: 20260924-115032
+		- Closed: 20260924-131246
+	- ✅ Two old archive tags deleted. Their work was already in dev.
+		- Opened: 20260924-115032
+		- Closed: 20260924-131246
 
 - ✅ When settings are changed in one instance, the settings of another instance shows what it loaded with, not the updated settings. Any given instance doesn't need to change itself whenever something else changes the settings - it just needs to load the latest, when Settings is opened. (And be able to apply whatever has changed, when OK is pressed.)
 	- `Fixed:` Settings reads the file each time it opens. The file gets only what was edited in the dialog, and OK or Apply puts everything that differs from what the window runs live, another window's changes included. Opening Settings changes nothing on screen, and Cancel changes nothing.

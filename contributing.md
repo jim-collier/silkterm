@@ -2,7 +2,7 @@
 <!-- markdownlint-disable MD010 -- No hard tabs -->
 <!-- markdownlint-disable MD041 -- First line in a file should be a top-level heading -->
 
-<!-- omit in toc -->
+<!-- TOC ignore:true -->
 # Contributing
 
 First off, thanks for taking the time to contribute!
@@ -15,19 +15,20 @@ All types of contributions are encouraged and valued. See the [Table of Contents
 > - Refer to it in your own project's readme
 > - Mention it to friends and colleagues
 
-<!-- omit in toc -->
+<!-- TOC ignore:true -->
 ## Table of contents
 
+<!-- TOC -->
+
 - [Code of conduct](#code-of-conduct)
-
 - [I have a question](#i-have-a-question)
-
 - [I want to contribute](#i-want-to-contribute)
 	- [Reporting bugs](#reporting-bugs)
 	- [Suggesting enhancements](#suggesting-enhancements)
 	- [Your first code contribution](#your-first-code-contribution)
-
 - [Style guides](#style-guides)
+
+<!-- /TOC -->
 
 ## Code of conduct
 
@@ -47,12 +48,12 @@ If you still need clarification:
 
 ## I want to contribute
 
-> ### Legal notice <!-- omit in toc -->
-> When contributing to this project, you must agree that you have authored 100% of the content, that you have the necessary rights to it, and that it may be provided under the project license.
+> ### Legal notice
+> When contributing to this project, you must agree that you have the necessary rights to the content, and that it may be provided under the project license. Work done with AI tools is covered by the [AI policy](ai_policy.md).
 
 ### Reporting bugs
 
-<!-- omit in toc -->
+<!-- TOC ignore:true -->
 #### Before submitting a bug report
 
 A good bug report should not leave others chasing you for more information. Please investigate, gather what you can, and describe the issue in detail.
@@ -72,7 +73,7 @@ A good bug report should not leave others chasing you for more information. Plea
 	- Whether you can reliably reproduce it, and whether older versions also reproduce it.
 	- Clean, from-scratch reproduction steps.
 
-<!-- omit in toc -->
+<!-- TOC ignore:true -->
 #### How do I submit a good bug report?
 
 > Never report security issues, vulnerabilities, or bugs that include sensitive information in the public tracker. Send those by email to silktermⒶyottacore.com instead.
@@ -93,7 +94,7 @@ Once filed, the issue will be triaged, someone will try to reproduce it from you
 
 This section covers submitting an enhancement suggestion for SilkTerm, from brand-new features to small improvements. Following it helps the maintainer and the community understand your idea and find related ones.
 
-<!-- omit in toc -->
+<!-- TOC ignore:true -->
 #### Before submitting an enhancement
 
 - Make sure you are on the latest version.
@@ -104,7 +105,7 @@ This section covers submitting an enhancement suggestion for SilkTerm, from bran
 
 - Consider whether it fits the scope and aims of the project. Make the case for why it would be useful to most users, not just a small subset.
 
-<!-- omit in toc -->
+<!-- TOC ignore:true -->
 #### How do I submit a good enhancement suggestion?
 
 Enhancement suggestions are tracked as [GitHub issues](https://github.com/yottacore/silkterm/issues).
@@ -129,7 +130,7 @@ Enhancement suggestions are tracked as [GitHub issues](https://github.com/yottac
 
 The canonical style reference is [style-guide.md](style-guide.md). It covers prose, comments, naming, Rust conventions, formatting, and commit messages.
 
-<!-- omit in toc -->
+<!-- TOC ignore:true -->
 ### Commit messages
 
 Keep them brief and high-level - a short summary of what changed. Put real detail in the issue, the pull request, or the code. See the [commit messages](style-guide.md#commit-messages) section of the style guide.

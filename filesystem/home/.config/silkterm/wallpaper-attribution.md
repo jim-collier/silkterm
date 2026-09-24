@@ -144,8 +144,6 @@ Most of the non-'@' branded images are 2 stars. For the majority of these files 
 | 85 | 4 (75%) | @tt; win; 2001; XP; grass at night.jpg | @t00mietum; sw; os; win; 2001; XP; 050; v1-1-1.jpg | 2022-04-18 | - | Copyright © 2022 t00mietum (CryptogID: ปʬϝღถɔ4რఠΔթะ9ƾǝu) | CC BY-SA 4.0 | Y | N | N | zoom | Carries the Windows XP logo. |
 | 85 | 5 (95%) | Unsplash; Daniele Levis Pelusi; Rainbow_1.jpg | daniele-levis-pelusi-UUjxTEET0c0-unsplash.jpg | 2017-07-14 | <https://unsplash.com/photos/multicolored-rainbow-artwork-UUjxTEET0c0> | (c) Daniele Levis Pelusi | Unsplash License | Y | Y | N | stretch | Wallpaperscraft carried the photographer's name, which led to the Unsplash original. Cropped by the aggregator. |
 | 80 | 2 (40%) | Ubuntu; 8.04 Hardy Heron; r3mix.jpg | - | 2008-04-24 | <https://wiki.ubuntu.com/Artwork/Incoming/Hardy> | (c) Canonical Ltd / respective Ubuntu artwork contributors | Ubuntu artwork is generally CC BY-SA 3.0 (not confirmed for this file) | ? | N | N | zoom | Recognisably Hardy Heron artwork, but a third-party remix then rescaled, so the licence chain is unverified. |
-| 80 | 2 (35%) | vivo; V9; gradient abstract.jpg | - | 2018-04-25 | - | (c) vivo Communication Technology Co., Ltd. | Bundled device wallpaper; no redistribution licence | N | N | N | stretch | EXIF date sits at the V9 launch window. Vendor wallpapers carry no redistribution licence. |
-| 80 | 2 (35%) | Xiaomi; MIUI 9; material.jpg | - | 2018-04-25 | - | (c) Xiaomi Inc. | Bundled device wallpaper; no redistribution licence | N | N | N | zoom | Filename states MIUI 9. EXIF date is the extraction date, not authored. |
 | 75 | 5 (95%) | Blue Marble; astro; Earth, South America closer; @jc enhance.jpg | - | - | - | Public domain (NASA Blue Marble); enhancement (c) @jc | NASA media usage policy - public domain | Y | Y | Y | zoom | Closer crop of the same source. Blue Marble identification comes from the folder naming, not an independent match. |
 | 75 | 5 (95%) | Blue Marble; astro; Earth, South America; @jc enhance.jpg | - | - | - | Public domain (NASA Blue Marble); enhancement (c) @jc | NASA media usage policy - public domain | Y | Y | Y | zoom | Earth centred on South America. Blue Marble identification comes from the folder naming, not an independent match. |
 | 55 | 2 (35%) | Marina Dolgopolova; autumn lake shore.jpg | lake_shore_stones_152083_3840x2400.jpg | - | - | (c) Marina Dolgopolova | - | ? | ? | N | zoom | Credit comes from Wallpaperscraft, not the artist, so it is reported rather than verified. |
@@ -196,7 +194,7 @@ Most of the non-'@' branded images are 2 stars. For the majority of these files 
 
 No 1-star files remain here - all four have been moved out. The floor is 2 stars.
 
-Vendor and brand assets (Razer, vivo, Xiaomi) sit at 2 stars rather than 1: the scale reserves 1 star for material that is explicitly prohibited or carries a third-party mark, while an unlicensed vendor asset is only unestablished. That distinction is what kept them here.
+Vendor and brand assets (Razer) sit at 2 stars rather than 1: the scale reserves 1 star for material that is explicitly prohibited or carries a third-party mark, while an unlicensed vendor asset is only unestablished. That distinction is what kept them here.
 
 The 2-star `@jc` files are a different case again - the composition is Author's work and the licence is real, but each is built over material someone else owns, so the grant does not reach the whole image.
 
@@ -262,7 +260,7 @@ The 2-star `@jc` files are a different case again - the composition is Author's 
 
 ## Moved out
 
-Nineteen files were removed as legally problematic and their rows dropped from the table above. Each still carries its own provenance metadata, so nothing was lost.
+Twenty-one files were removed as legally problematic and their rows dropped from the table above. Each still carries its own provenance metadata, so nothing was lost.
 
 - Eleven DeviantArt all-rights-reserved entries.
 
@@ -271,5 +269,7 @@ Nineteen files were removed as legally problematic and their rows dropped from t
 - `Microsoft; Office; world map, orange`, `Microsoft; Windows Vista; Grass`, `Microsoft; Plus 95; Science, lunar surface with splatter` - bundled or promotional Microsoft assets, no redistribution licence.
 
 - `Razer; Chroma Crystals` - brand asset carrying an aggregator watermark.
+
+- `vivo; V9; gradient abstract`, `Xiaomi; MIUI 9; material` - bundled device wallpapers, no redistribution license.
 
 - `WallpaperFlare; Windows 95 logo`, `unknown; win; Windows 8 logo, red`, `unknown; win; Windows logo, sepia 3D relief` - third-party marks.

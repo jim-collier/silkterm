@@ -738,12 +738,14 @@ you use it often, or it saves you time, sponsoring it keeps it moving.
 Even a few dollars a month is meaningful.
 
   Sponsor:  {sponsor}
+  Ko-fi:    {kofi}
   Details:  {details}
 
 It helps just as much to star the repo, file good bug reports, and tell
 other terminal nerds it exists.",
 		app = config::APP_NAME,
 		sponsor = config::SPONSOR_URL,
+		kofi = config::KOFI_URL,
 		details = config::DONATE_URL,
 	)
 }
@@ -903,6 +905,7 @@ mod tests {
 	fn donate_names_the_address() {
 		let text = donate();
 		assert!(text.contains(config::SPONSOR_URL));
+		assert!(text.contains(config::KOFI_URL));
 		assert!(text.contains(config::DONATE_URL));
 	}
 
