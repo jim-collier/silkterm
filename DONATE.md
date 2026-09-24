@@ -8,6 +8,8 @@ Even a few dollars a month is meaningful. Or just buy me a coffee.
 
 - [GitHub Sponsors](https://github.com/sponsors/jim-collier)
 
+- [Ko-fi](https://ko-fi.com/jimcollier)
+
 **Indirect support**
 
 - Star the repo.
