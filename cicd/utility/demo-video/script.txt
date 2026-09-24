@@ -92,7 +92,7 @@ cd projects/pulsar
 
 @ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 @ Scene: scrolling back
-@ banner: "Scroll back just as smoothly"
+@ banner: "Scroll back just as smoothly. Minimap at the right."
 
 @ move the pointer to the middle of the window
 @ three wheel clicks upward, about 3 per second
@@ -120,14 +120,12 @@ cd projects/pulsar
 	@ pane resizes, and each pane eases that reprint in - two panes sliding a
 	@ row a beat after they appear, on an otherwise empty screen, which read as
 	@ glitching. Both directions also shows the split tree does both.
-@ about 1.1 seconds between splits
+@ about 1.1 seconds between splits, then hold 0.6 seconds
 
-exit
-exit
-	@ Each pane is an ordinary shell, so `exit` is what closes it. Nothing else
-	@ is typed - the point is the auto-sizing, not a pane API.
-
-@ clear the screen
+@ CUT - none of this is in the finished take:
+	@ `exit` twice closes the two new panes, cursor animation back on (pulse),
+	@ clear the screen, and wait for the pulse to show.
+	@ Closing panes shows nothing the opening did not, and it took seconds.
 
 
 @ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
@@ -137,13 +135,10 @@ exit
 @ through the control socket - a setting should be seen changing like a setting,
 @ with nothing typed.
 
-@ 1. animation back on (pulse) - hold 2.8 seconds
-	@ Order matters. The previous scene stilled the cursor, so pulsing has to
-	@ come back FIRST and settle. The reload takes ~1.2s to reach the screen, so
-	@ most of this dwell is spent waiting for the pulse to appear at all.
-@ 2. shape: full block -> thin bar - hold 2.6 seconds
-	@ The animation is identical either side of this, so the shape is the only
-	@ thing the eye can attribute the change to.
+@ 1. opens on the pulsing block - hold 1.6 seconds
+@ 2. full block -> thin bar, and pulse -> phase, together - hold 3.2 seconds
+	@ The new animation starts about a second after the switch, so this hold
+	@ is the longer one.
 
 @ do NOT clear - the closing scenes build up the frame the demo ends on
 

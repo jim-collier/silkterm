@@ -210,6 +210,7 @@ class Rec:
 		self.keep     = args.keep_work
 		self.events   = []      # (epoch, kind) kind: key:NAME / mouse:NAME
 		self.banners  = []      # (epoch_start, epoch_end, text)
+		self.cuts     = []      # (epoch_start, epoch_end) left out of the finished take
 		self.app      = None
 		self.ff       = None
 		self.flash_e  = 0.0     # wall-clock epoch of the white sync flash
@@ -226,6 +227,20 @@ class Rec:
 		for k in ("WAYLAND_DISPLAY", "XDG_SESSION_TYPE"):
 			e.pop(k, None)
 		return e
+
+	def cut_s(self):
+		return sum(e - s for s, e in self.cuts)
+
+	# an epoch as it falls in the finished take, with every cut before it taken
+	# out. One inside a cut lands on the cut's start.
+	def net(self, epoch):
+		gone = 0.0
+		for s, e in self.cuts:
+			if epoch >= e:
+				gone += e - s
+			elif epoch > s:
+				gone += epoch - s
+		return epoch - gone
 
 	def xdo(self, *a):
 		subprocess.run(["xdotool", *a], env=self.env(), check=False,
@@ -673,6 +688,19 @@ class Banner:
 	def __exit__(self, *exc):
 		self.rec.banners.append((self.start, time.time(), self.text))
 
+# housekeeping between scenes that the finished take leaves out: it is recorded
+# like anything else, then dropped at encode, sound included
+class Cut:
+	def __init__(self, rec):
+		self.rec = rec
+
+	def __enter__(self):
+		self.start = time.time()
+		return self
+
+	def __exit__(self, *exc):
+		self.rec.cuts.append((self.start, time.time()))
+
 
 ##•••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 ##	Scene content: recording fonts, config, the synthetic desktop, home tree
@@ -1046,7 +1074,7 @@ def seg_wheel(r, t, m):
 	# direction only: coming back down says nothing going up has not already said,
 	# and a full-width listing in motion is the costliest thing in the gif. The
 	# screen is then just cleared, with no remark - the scene is over at the top.
-	with Banner(r, "Scroll back just as smoothly"):
+	with Banner(r, "Scroll back just as smoothly. Minimap at the right."):
 		m.move(r.size[0] // 2, r.band + (r.size[1] - r.band) // 2, dur=0.5)
 		m.wheel(True, 3, hz=3.2)
 		time.sleep(0.9)
@@ -1058,8 +1086,8 @@ def seg_panes(r, t, m):
 	# pull the eye off the split, and every pulse is motion the gif pays for.
 	# Two splits straight off the menu bar (Alt+P opens Panes, then the item's own
 	# accelerator letter - V for vertical), all keyboard, no menu coordinates to
-	# guess at. Splitting twice is what shows the auto-sizing; each new pane is a
-	# shell like any other, so `exit` is what leaves it - nothing else is typed.
+	# guess at. Splitting twice is what shows the auto-sizing. Closing them again
+	# shows nothing new and took seconds, so that happens in a cut.
 	set_cfg(r, {"cursor.animation": "none"})
 	with Banner(r, "Split panes, sized for you"):
 		r.xdo("windowactivate", r.win)
@@ -1077,29 +1105,30 @@ def seg_panes(r, t, m):
 			time.sleep(0.55)
 			t.key(accel, sound=key_sound(accel))
 			time.sleep(1.1)
-		t.cmd("exit", settle=1.2, typos=0.0)
-		t.cmd("exit", settle=1.2, typos=0.0)
-	wipe(r, t)
+		time.sleep(0.6)
+	# each pane is a shell like any other, so `exit` is what leaves it. The pulse
+	# comes back in here too: the reload takes ~1.2s to reach the screen, which
+	# was most of the cursor scene's opening dwell when it happened on camera.
+	with Cut(r):
+		t.cmd("exit", settle=0.8, typos=0.0)
+		t.cmd("exit", settle=0.8, typos=0.0)
+		set_cfg(r, {"cursor.animation": "pulse_vertical"})
+		wipe(r, t, settle=1.8)
 
 def seg_cursor(r, t, m):
 	# the cursor is a setting, so switch it the way a setting switches - live,
 	# through the control socket, with nothing typed on camera. An empty screen:
 	# the cursor is the only thing moving on it.
 	#
-	# Two steps, and the order is the point. The panes scene stilled the cursor,
-	# so pulsing has to come back first and settle - THEN the shape changes on its
-	# own. The animation is identical either side of that switch, so the only
-	# thing the eye can attribute the change to is the shape.
+	# The scene opens on the pulsing block, already back on in the panes scene's
+	# cut. Then shape and animation change together, block and pulse to a thin bar
+	# that fades. The new animation waits out cursor.animation_resume_s before it
+	# starts, so the second hold is the longer one.
 	with Banner(r, "Cursor shape and animation, your pick"):
 		r.xdo("windowactivate", r.win)
-		set_cfg(r, {"cursor.animation": "pulse_vertical"})
-		# the reload is not instant (~1.2s from the call to the first pulse on
-		# screen), so this dwell is mostly spent waiting for the pulse to show up
-		# at all - measured at 1.6s it left 0.4s of pulsing block before the shape
-		# changed, which is too brief to read as two separate events.
-		time.sleep(2.8)
-		set_cfg(r, {"cursor.size.width": 25})
-		time.sleep(2.6)
+		time.sleep(1.6)
+		set_cfg(r, {"cursor.size.width": 25, "cursor.animation": "phase"})
+		time.sleep(3.2)
 
 def seg_wallpaper(r, t, m):
 	# the image is the app's own baked-in default, copied into the fake config
@@ -1229,7 +1258,9 @@ def build_audio(rec, work, duration, rng):
 	cache = load_samples(work)
 	mix = np.zeros((int(duration * SR) + SR, 2), dtype=np.float32)
 	for epoch, kind in rec.events:
-		t_rel = epoch - rec.t0_e + FOLEY_LAG
+		if any(s <= epoch < e for s, e in rec.cuts):
+			continue
+		t_rel = rec.net(epoch) - rec.t0_e + FOLEY_LAG
 		if t_rel < -0.5 or t_rel > duration:
 			continue
 		s = cache.get(kind)
@@ -1309,13 +1340,19 @@ def vf_chain(rec, work, trim, dur, tail=False):
 	# the GPU source is genuinely smooth, so just pin CFR at the delivery rate -
 	# no frame-averaging needed (and none to fake, the frames are real)
 	filters = [f"fps={rec.out_fps}"]
+	if rec.cuts:
+		gone = "+".join(f"between(t,{to_vt(s) - trim:.3f},{to_vt(e) - trim:.3f})"
+			for s, e in rec.cuts)
+		# select leaves the rate unset, and the tail's tpad then adds nothing
+		filters.append(f"select='not({gone})',setpts=N/({rec.out_fps}*TB),"
+			f"fps={rec.out_fps}")
 	# resolve each banner's [s,e]; then clamp every end to the next banner's start
 	# minus a gap, so only ONE banner is ever on screen (consecutive banners were
 	# crossfading into an overlapping smear)
 	spans = []
 	for s_e, e_e, text in rec.banners:
-		s = max(0.0, to_vt(s_e) - trim)
-		e = max(s + p["banner_min"], to_vt(e_e) - trim)
+		s = max(0.0, to_vt(rec.net(s_e)) - trim)
+		e = max(s + p["banner_min"], to_vt(rec.net(e_e)) - trim)
 		spans.append([s, e, text])
 	spans.sort(key=lambda b: b[0])
 	GAP = 0.4
@@ -1350,7 +1387,7 @@ def encode_video(rec, work, out_mp4, video_end_e):
 	log(f"sync flash at video t={rec.flash_vt:.3f}s")
 	check_drift(rec, video_end_e)
 	trim = rec.flash_vt + (rec.t0_e - rec.flash_e)
-	dur = video_end_e - rec.t0_e
+	dur = video_end_e - rec.t0_e - rec.cut_s()
 	vf = vf_chain(rec, work, trim, dur, tail=True)
 	rng = random.Random(1)
 	audio = build_audio(rec, work, dur, rng)   # tail is silent (freeze + black)
@@ -1530,6 +1567,9 @@ if __name__ == "__main__":
 
 
 ##	Script history:
+##		- 20260924: closing the panes happens in a cut, which the encode drops
+##		  along with its sound. The cursor turns to a bar and a phase fade in one
+##		  step. The wheel caption names the minimap.
 ##		- 20260917: the WM session keeps every XDG folder inside its own HOME, so
 ##		  xfconfd no longer writes the demo theme over the desktop's, and ends
 ##		  with its bus and xfconfd; USER may be unset; the default binary follows

@@ -2241,6 +2241,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 #### Done - Features and enhancements
 
+- ✅ Demo gif:
+	- ✅ Keep the opening of panes, but don't show closing them. (That eats up time.)
+		- The panes close off camera. The demo is 5 seconds shorter.
+	- ✅ Call out the minimap in the yellow text.
+		- The scroll-back caption now names the minimap.
+	- ✅ Cursor animation: When changing to thinner cursor, also make it "Phase" effect.
+	- Opened: 20260924
+	- Closed: 20260924-144310
+
 - ✅ Integrate and test with the latest shcl from the online dev branch.
 	- It says "v2.0.0" because a new release hasn't been cut yet, but it's actually 'v3.0.0-beta.1'.
 	- Has some breaking changes to the API.
