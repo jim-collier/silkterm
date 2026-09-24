@@ -41,7 +41,7 @@
 
 </div>
 
-SilkTerm™ is a GPU terminal for Linux and Windows that scrolls new output smoothly, a pixel at a time, instead of jumping whole lines. Fast output isn't held back; the scroll speeds up to keep pace. It also has an animated cursor, a text halo that keeps text readable over a wallpaper or a see-through window, a scrollback minimap, tabs and split panes. One file, written in Rust on Alacritty's terminal core.
+SilkTerm™ is a hardware-accelerated terminal for Linux and Windows that scrolls new output smoothly, a pixel at a time, instead of jumping whole lines. Fast output isn't held back; the scroll speeds up to keep pace. It also has an animated cursor, a text halo that keeps text readable over a wallpaper or a see-through window, a scrollback minimap, tabs and split panes. One executable, written in Rust.
 
 <!--
 <table style="border: none; border-collapse: collapse;">
@@ -84,7 +84,7 @@ SilkTerm™ is a GPU terminal for Linux and Windows that scrolls new output smoo
 
 ### Why smooth-scrolling output
 
-Literally *all* other terminal emulators in existence at the time this was written, currently snap scrolling output to fixed lines. Nothing can appear in-between those lines (except when mouse-scrolling on some terminals).
+All other terminal emulators in existence at the time this was written, currently snap scrolling output to fixed lines. Nothing can appear in-between those lines (except when mouse-scrolling on some terminals).
 
 For output that can be sporadic - e.g. something scrolling slowly one line at a time sometimes, then jumping several lines at once other times (e.g. while watching a live log file with `tail -f`) - [the eye/brain combo can struggle to track the output](https://www.youtube.com/watch?v=yQaC-ZzTf78), and you get "lost" trying to follow it.
 
@@ -92,13 +92,13 @@ One analogy is playing a video game with mouse-look at, say, 3 frames-per-second
 
 As the YouTube video linked above goes into, jerky line-snapped output taxes mental resources - however slightly - in a way that stacks up over long sessions. At the extreme, it can contribute to headaches and fatigue. And that's brainpower that could have been used to solve whatever it is you're working on.
 
-The crazy thing is that **several early CRT text-mode computers offered smooth-scrolling**. (For example, many UNIX client terminal consoles of the 80s.)
+The crazy thing is that several early CRT text-mode computers offered smooth-scrolling. (For example, many UNIX client terminal consoles of the 1980s.)
 
 The smooth-scrolling output concept was completely abandoned in the 80s and 90s, because:
 
 - Rate-limited output scrolling would cap fast output, and possibly overflow the scrollback buffers resulting in lost output.
 
-	- *SilkTerm solves this problem by automatically ramping up the scroll speed, smoothly, as needed to keep up with output speed.*
+	- SilkTerm solves this problem by automatically ramping up the scroll speed, smoothly, as needed to keep up with output speed.
 
 - Smooth scroll solved the same "tracking-a-moving-line" problem that scrollback buffers + pagers (such as `more`, `less`) later solved better, with the technology available at the time.
 
@@ -112,7 +112,9 @@ SilkTerm's smooth-scrolling output is a joy to work with. You really have to try
 
 ### Why text scrim
 
-A text *scrim* is a subtle halo drawn behind each glyph - usually of the opposite luminosity to the text - purely as a readability aid. It's the same technique graphic designers reach for as "outer glow" (and distinctly *not* an angled "drop-shadow", which is a creative effect). SilkTerm calls it a scrim because that's its whole job: keeping text legible, not decoration. (Though this isn't a hard-and-fast graphic design "rule" - there's lots of overlap in both directions.)
+A text *scrim* is a subtle halo drawn behind each glyph - usually of the opposite luminosity to the text - purely as a readability aid. It's the same technique graphic designers use, sometimes called as "outer glow". (And is different from angled "drop-shadow", which is a creative effect.)
+
+SilkTerm calls it a "scrim" because that's its whole job: keeping text legible, not decoration. (Though this isn't a hard-and-fast graphic design "rule" - there's lots of overlap in both directions.)
 
 If you've ever used a terminal that supports background transparency, and/or background images (both of which SilkTerm offers), that novelty can quickly wear off. You'll notice that the text might be too hard to read, particularly in a long computing session.
 
@@ -124,45 +126,43 @@ Text can be particularly hard to read, for example when using light text on a no
 
 (*Or vice-versa for dark text on a normally light background, with dark elements under the text.*)
 
-"Drop-shadow" is a feature available on at least a half-dozen other terminal emulators, but mostly for looks. Because if you use it for very long, it can make your mental workload subtly higher, and your visual cortex tires faster - or something.
-
-A scrim like this - "outer glow" or similar techniques by other names (and distinctly *not* angled "drop-shadow") - is used often in graphic design and advertising to aid readability on backgrounds of varying brightness and color. (And some closed-captioning systems use it as an alternative to black bars as a background.)
-
 ## Features
 
 - **Smooth pixel-at-a-time scrolling on terminal output**.
 
 	- *You have to see how gorgeous it looks on a high-refresh rate monitor. No animated gif reproduction can do it justice*.
 
-	- It works inside `less`, `vim` and other full-screen programs too.
+	- It even works inside `less`, `vim` and other full-screen TUIs.
 
 - Smooth mouse wheel scrolling. Several other terminals offer this feature.
 
 - **Smooth cursor movement**. This is the cherry on top of "smooth".
 
-- **Text scrim (readability backing)**. This optional feature helps keep text readable even when the text is on top of similar-colored backgrounds and/or when using high background transparency. This is the only known terminal to offer it, though there are several terminals that offer angled *drop-shadow*. A scrim is conceptually similar - but improves, rather than reduces, readability.
+- **Text scrim (readability backing)**. As mentioned in the section above, this optional feature helps keep text readable even when the text is on top of similar-colored backgrounds and/or when using high background transparency. It's the only known terminal to offer it, though there are several terminals that offer angled *drop-shadow*. (A scrim is conceptually similar - but improves, rather than reduces, readability.)
 
 	- A contrast floor and a text outline are separate settings that do the same job in other ways.
 
-- Cursor size and animation options. Phased blinking, or smoothly pulsing in size. (Or just regular.) Adjustable rate.
+- **Scroll buffer Minimap**. A column beside the text shows the whole scrollback in miniature. Click or drag it to jump. Switch it off to get more space back.
 
-- Background transparency. The background (with adjustable %) becomes see-through, but not the text.
+- **Cursor size and animation options**. Phased blinking, or smoothly pulsing in size. (Or just regular.) Adjustable rate.
 
-- Background transparency blur. If using background transparency and this is enabled, everything behind the terminal is blurred. Currently supported on X11 with KWin or picom. (But limited to the compositor's options. SilkTerm just talks to the WM to enable it.)
+- **Background transparency**. The background (with adjustable %) becomes see-through, but not the text.
 
-- **User-selectable background image**. One is built in. A pack of 102 more wallpapers is a separate download, or point it at a folder of your own.
+- **Background transparency blur**. If using background transparency and this is enabled, everything behind the terminal is blurred. Currently supported on X11 with KWin or picom. (But limited to the compositor's options. SilkTerm just talks to the WM to enable it.)
+
+- **User-selectable background image**. One is built in. A pack of >100 more carefully created or curated wallpapers is a separate download, or point it at a folder of your own. All with open licenses.
 
 	- The background image can be dimmed with adjustable %, relative to the background color - and independent of main background transparency.
 
 	- `silkterm --wallpaper PATH` switches the running window's wallpaper from inside a pane.
 
-- Text colors from the wallpaper. The text and cursor take a hue that suits the picture and stays readable on it.
+- **Automatic text colors based on the wallpaper**. The text and cursor take a hue that suits the picture based on color theory, and stays readable on it.
 
-- Background image blur, with an optional Gaussian blur radius (without altering the source image), also independent of transparency blur.
+- **Background image blur**. With an optional Gaussian blur radius (without altering the source image), also independent of transparency blur.
 
-- Background image contrast mask. Flattens the image's local contrast so it stops competing with the text on top of it, again without altering the source image. The flatten scale and strength are adjustable, and can be blended with values derived from the image itself.
+- **Background image contrast mask**. Flattens the image's local contrast so it stops competing with the text on top of it, again without altering the source image. The flatten scale and strength are adjustable, and can be blended with values derived from the image itself.
 
-- Background image fit. Stretch to fill the window, or zoom to cover it while keeping the aspect ratio.
+- **Background image fit**. Stretch to fill the window, or zoom to cover it while keeping the aspect ratio.
 
 	- An image can also carry its own fit in its XMP metadata (`wallpaper:Fit`, plus a `wallpaper:Anchor` that picks which part of it a zoom crop keeps), overriding the default per image - so a photo isn't squashed while a gradient still fills the window. Read straight from the image file, and switchable off.
 
@@ -170,67 +170,65 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 - **Split panes**: A native feature to arbitrarily split any pane in either direction. Panes can be freely drag-n-dropped to change locations. Panes split in successive directions are automatically evenly distributed, unless adjusted (with the mouse).
 
-- Tabs that name themselves from the shell, program or folder.
+- **Tabs that name themselves** from the shell, program and/or folder.
 
-- Minimap. A column beside the text shows the whole scrollback in miniature. Click or drag it to jump. Switch it off to get the columns back.
+	- Accepts custom tab names from the user (double-click to rename), and/or from some programs that like to rename the tab they're in.
 
-- Finds your shells. bash, zsh, fish, PowerShell, cmd, Nushell, WSL distributions and more show up under New tab with shell.
+- **Automatically finds your system's shells**. bash, zsh, fish, PowerShell, cmd, Nushell, WSL distributions and more show up under New tab with shell.
 
-- Window decorations and/or the menu can be disabled, for "nothing but terminal". Fullscreen can also be toggled.
+- **Window decorations and/or the menu can be disabled**, for "nothing but terminal". Fullscreen can also be toggled.
 
-- Robust Unicode and emoji support. With internal Unicode fallback rendering for the glyphs that the chosen display font can't display.
+- **Robust Unicode and emoji support**. With internal Unicode fallback rendering for the glyphs that the chosen display font can't display.
 
-- Text brightens on "bell". (An idea borrowed from Windows Terminal, and surely others.)
+- **Text brightens on "bell"**. (An idea borrowed from Windows Terminal, and surely others.)
 
-- True-color, 256-color, and 16-color text support, as well as standard bold & italic.
+- **True-color, 256-color, and 16-color text support**, as well as standard bold & italic.
 
-- Read-only output toggle. Typing and paste stop reaching the program. Select and copy still work.
+- **Read-only output toggle**. Typing and paste stop reaching the program. Select and copy still work.
 
-- Clickable links. Hover a URL to underline it, Ctrl+click to open it, or use the right-click menu. Only known-safe schemes are ever treated as links, and an app that has taken over the mouse keeps it.
+- **Clickable links**. Hover a URL to underline it, Ctrl+click to open it, or use the right-click menu. Only known-safe schemes are ever treated as links, and an app that has taken over the mouse keeps it.
 
-- Double-click selects a whole URL, path or git remote.
+- **Smart double-click text selection**. Recognizes paths, URL, git remotes, quoted text, bracketed text, etc.
 
-- Copy on select, and copy on output. Both optional, both per-pane. Copy-on-output grabs what a command printed without the prompt around it. A program in the pane you're using can set the clipboard too, the way tmux and editors over ssh do.
+- **Copy on select, and/or copy on output**. Both optional, both per-pane. Copy-on-output grabs what a command printed without the prompt around it. A program in the pane you're using can set the clipboard too, the way tmux and editors over ssh do.
 
-- Overlay scrollbar. Thick enough to grab, fades out when you're at the bottom, and takes no columns away from the text.
+- **Themes**. Comes with four color themes - each with a dark and a light variant. Or create and save your own.
 
-- Settings dialog with themes. Every setting has a control, a flyover explaining it, and a revert arrow back to its default. Four color themes ship, each with a dark and a light variant - edit any color and save the result as a theme of your own. Dark, Light or System mode works with every theme.
+- **Performance profiles**. SilkTerm measures performance on the first run, and picks a performance profile. If the display can't keep up, it steps down on its own.
 
-- Performance profiles. SilkTerm rates the graphics card on first run and picks how much smoothing to use. If the display can't keep up, it steps down on its own.
+- **Remote access profile**. When SilkTerm is used over a low-speed RDP or VNC (etc.) graphical connection, SilkTerm applies a temporary lower-animation profile.
 
-- Simple and sane configuration. No pages of nested tabs representing multiple settings metaphors. (E.g. no separate "Profiles" and "Layouts".) If you want to get fancy with multiple sets of wildly different options - that's easy with alternate config files, and/or scripted launch-time arguments.
+- **Simple and sane configuration**. No pages of nested tabs representing multiple settings metaphors. But if you need to get fancy with multiple sets of wildly different options - that's easy with alternate config files, and/or scripted launch-time arguments.
 
-- Rich command-line syntax. A simple yet (optionally) powerful CLI syntax, that allows creating multiple tabs and/or complex pane structure(s) at launch time.
+- **Rich command-line syntax**. A simple yet (optionally) powerful CLI syntax, that allows creating multiple tabs and/or complex pane structure(s) at launch time.
 
-	<!-- - This can be very useful for creating one-line shell scripts that launch custom SilkTerm instances with specific size, background, color, opacity, text and cursor style, and unique shells per window, tab, and/or pane. (Without overwriting the main config file.) -->
+- **Arbitrary alternate config files**, another way to launch SilkTerm with wildly different options, without overwriting the main config file.
 
-	- `--keep-open` leaves a pane open after its program exits, and `--reload-settings` makes a running window read its config again.
+- **Written in Rust as a single self-contained binary**. No runtime dependencies. Fast. The one binary bundles the entire GPU and text-rendering stack, which is why it's about 11 MiB; [the FAQ explains how that *actually* compares to a GTK terminal's few-hundred-KiB launcher](FAQ.md).
 
-- Arbitrary alternate config files, another way to launch SilkTerm with wildly different options, without overwriting the main config file.
+- **One codebase for Linux + Windows, both with x86_64 and ARM builds**. The Windows and ARM versions all build in one pass on x86_64 Linux. *macOS builds from the same codebase on a Mac, but no releases target it yet*.
 
-- Written in Rust as a single self-contained binary - no runtime dependencies - and fast. The one binary bundles the entire GPU and text-rendering stack, which is why it's about 11 MiB; [the FAQ explains how that actually compares to a GTK terminal's few-hundred-KiB launcher](FAQ.md).
+- **Native X11 and Wayland on Linux** from one binary. The display backend is chosen at runtime, with no separate build or wrapper.
 
-- One codebase for Linux + Windows, both with x86_64 and ARM builds. The Windows and ARM versions all build in one pass on x86_64 Linux. *macOS should build from the same codebase on a Mac, but is untested and no releases target it yet*.
+- **GPU-accelerated with software fallback**. An idle window can also give its GPU memory back.
 
-- Native X11 and Wayland on Linux from one binary - the display backend is chosen at runtime, with no separate build or wrapper.
+- **Releases memory, CPU, and GPU resources when idle**. Without affecting running programs. The timeouts are tunable. The only way you even knew something happened, is the wallpaper reloads in about a quarter second, and "... (resources restored)" appears for a few seconds in the window title.
 
-- Loosely based on [Alacritty](https://github.com/alacritty/alacritty) (not a fork), just for the basement plumbing - to avoid rewriting the complex but solved problems of terminal emulation. Alacritty is also a high-performance, open-source terminal written in Rust.
+- Loosely based on [Alacritty](https://github.com/alacritty/alacritty), for the basement plumbing - to avoid rewriting the complex but solved problems of terminal emulation. (Alacritty is also a high-performance, open-source terminal written in Rust.)
 
-	- *Fun fact: SilkTerm is about five times the size of the Alacritty terminal core it sits on. That core solves a thoroughly-and-repeatedly-solved problem, so there was no reason to write another one.*
-
-- GPU-accelerated with software fallback. An idle window can also give its GPU memory back.
+	- *SilkTerm's codebase is about five times the size of the Alacritty terminal core it sits on. That core solves a thoroughly and repeatedly solved problem; there was no reason to write another one.*
 
 SilkTerm is free, and one person builds it. If it earns a place on your screen, [sponsoring](https://github.com/sponsors/jim-collier) keeps it going.
 
 ## Wallpaper pack
 
-The 102 wallpapers SilkTerm was built and tuned against are in [`filesystem/home/.config/silkterm/wallpaper/`](filesystem/home/.config/silkterm/wallpaper/). Put them next to your config and rotation picks one each launch, favoring whatever it hasn't shown lately. Each image carries its own fit and anchor in its metadata, so a photo is cropped rather than squashed while a gradient still stretches edge to edge. Provenance for every one of them is in [wallpaper-attribution.md](filesystem/home/.config/silkterm/wallpaper-attribution.md).
+The 102 wallpapers SilkTerm was built and tuned against are in [`filesystem/home/.config/silkterm/wallpaper/`](filesystem/home/.config/silkterm/wallpaper/). Put them next to your config and rotation picks one each launch, favoring whatever it hasn't shown lately. Each image carries its own fit and anchor in its metadata, so a photo is cropped rather than squashed - while a gradient stretches edge to edge. Provenance for every one of them is in [wallpaper-attribution.md](filesystem/home/.config/silkterm/wallpaper-attribution.md).
 
 [![Wallpaper pack](assets/wallpaper-gallery.jpg)](https://yottacore.github.io/silkterm/wallpapers/)
 
 Click the sheet for the [browsable gallery](https://yottacore.github.io/silkterm/wallpapers/) - any wallpaper opens full size in place, the arrow keys page through them, and each one carries its credit and license underneath.
 
-They come to 58 MiB against an 11 MiB terminal, so no package or installer carries them - fetch the folder on its own. Bash (Linux, macOS, WSL):
+They come to 58 MiB against an 11 MiB terminal, so no package or installer includes them - fetch the folder on its own. Bash (Linux, macOS, WSL):
 
 ~~~bash
 dir="${XDG_CONFIG_HOME:-$HOME/.config}/silkterm" && mkdir -p "$dir" && curl -fsSL https://github.com/yottacore/silkterm/archive/refs/heads/main.tar.gz | tar -xz -C "$dir" --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper
@@ -244,11 +242,11 @@ $dest = "$env:LOCALAPPDATA\silkterm"; $tgz = "$env:TEMP\silkterm-main.tar.gz"; N
 
 Either one is a single line, so it survives a paste however your terminal handles one, and puts the images where rotation looks for them - `wallpaper/` beside the config on Linux and macOS, and under `%LOCALAPPDATA%` on Windows (see the table in [Configuration](#configuration)). Both pull the whole repository archive, since GitHub serves no smaller unit - about 67 MiB over the wire.
 
-The gallery carries thumbnails only; it fetches each full image from the pack in this repository, so nothing is stored twice.
-
 ## Terminal showdown - speed and size
 
-Smooth scrolling counts for nothing if the terminal falls behind the moment something dumps a lot of text, so throughput is measured rather than asserted. In testing, each terminal is fed byte-identical, deterministic streams of one UTF-8 width class at a time - plain ASCII, then 2-byte, 3-byte and 4-byte characters, then a mix - and timed to a device-attributes reply, so the clock stops when the terminal has consumed the stream rather than when the pipe accepted it. Speed is measured at a 160x42 grid.
+Smooth scrolling isn't useful if the terminal falls behind the moment something dumps a lot of text, so throughput is measured and reported below.
+
+In testing, each terminal is fed byte-identical, deterministic streams of one UTF-8 width class at a time - plain ASCII, then 2-byte, 3-byte and 4-byte characters, then a mix - and timed to a device-attributes reply, so the clock stops when the terminal has consumed the stream rather than when the pipe accepted it. Speed is measured at a 160x42 grid.
 
 A terminal is also the program that is always open, usually several times over, so what it costs while doing nothing matters. Size and memory are measured separately, with each terminal at a 100x30 grid and its own defaults.
 
@@ -402,22 +400,6 @@ SilkTerm handles that one for you. A few seconds after launch it adds a small di
 Same story for a shell running behind `ssh` or in a container - that one is yours to set up, since the shell you are typing at is not the process SilkTerm started.
 
 [shell-integration.md](shell-integration.md) covers all of it, including the snippets for bash, zsh and fish.
-
-<!-- ## Renaming the project
-
-The display name lives in one place (`APP_NAME` in `source/src/config.rs`); the lowercase identifier (`silkterm`) is the cargo package, binary, and config directory. To rename everything at once during development:
-
-~~~sh
-utility/rename.bash NewName
-cargo build
-~~~
-
-It rewrites every tracked text file that mentions either name - the sources, the
-docs, the pipeline, the packaging, the installers and the tests - and renames the
-files and directories carrying the lowercase identifier, among them the Windows
-resource template a build reads by name. Binaries are left alone. Review
-`git diff` and `git status` afterwards; `cargo build` regenerates `Cargo.lock`.
--->
 
 ## Contributing
 
