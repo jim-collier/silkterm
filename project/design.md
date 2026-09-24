@@ -845,6 +845,8 @@ Three defects came out of building it, all fixed with it: a program could put co
 
 - Values are typed by the reader, not the file, so there is nothing to get wrong in the syntax and a value is stored back exactly as written.
 
+- shcl 3.0 reads a backslash outside double quotes as itself, where 2.x read it as an escape, and 2.x wrote Windows paths that way (2026-09-24). A file whose footer has no `Format` line is taken as 2.x, and the launch has shcl rewrite it to read the same before any other step parses it. The new footer carries that line, so it happens once. A footer somebody rewrote keeps their wording, and shcl's own stamp goes under it.
+
 - With `remember_size` on, the size written down is an ordinary window's. A fullscreen or maximized window is not a size to come back to, so neither is remembered: unfullscreening would otherwise leave every later launch opening at the size of the screen. The window's own columns and rows stay as they were, and a resize by hand still replaces them.
 
 - A number given on the command line is held to the range of the setting it stands for, the same range the file's copy of that setting is held to. A count of rows or columns is also held to what the graphics device can draw, since the window is a texture and a refusal there ends the launch rather than the setting.
@@ -896,7 +898,7 @@ Three defects came out of building it, all fixed with it: a program could put co
 - A save writes through a temp file and a rename, never in place, so a crash mid-save cannot leave a truncated config. If Windows takes the old file off its name and then cannot put the new one there, the new settings are written at the name directly, rather than leaving no file. If loading had to drop a line it could not place, the save is refused rather than quietly deleting it. One changed setting is not worth a line someone wrote.
 	- A refused save is said on screen, since stderr reaches nobody on Windows and nobody who started SilkTerm from a menu (2026-09-18). Windows shows its own message box. Elsewhere a small window drawn like About stands in for one, since Linux has no message box every desktop carries. It names the file and the lines, and says changes are used now but not kept.
 	- Saves nobody asked for, such as a resize, a menu switch or shells found at launch, are said once a session for each file, or every resize would raise it again. An OK or Apply in Settings is answered every time, and OK then closes, since trying again cannot help. A file open in another program still keeps Settings open, because trying again can.
-	- Editing only the lines a save changes, the way the rating does, would let most saves through. That is held for shcl 3.0, which is expected to change how a file with such a line is read and written.
+	- Editing only the lines a save changes, the way the rating does, would let most saves through. That was held for shcl 3.0, which did not change it: a line it cannot place still counts as lost, so the save is still refused (2026-09-24).
 
 - Settings opens on the file as it is now, not on what the window loaded (2026-09-22). Several windows share one file, and one that saved after this window loaded would otherwise not show here. The file then gets only what was edited in the dialog, and the window takes everything that differs from what it runs, so OK is also when another window's change arrives.
 	- The file is read when the dialog opens, not watched. Opening Settings changes nothing on screen, and Cancel leaves the window as it was.
