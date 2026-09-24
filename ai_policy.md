@@ -5,7 +5,7 @@
 <!-- markdownlint-disable MD041 -- First line in a file should be a top-level heading -->
 
 <!-- TOC ignore:true -->
-# AI acceptability guidelines
+# Human-Accountable AI: Guidelines for Software Projects
 
 Where AI is allowed near this project, where it isn't, and who is accountable either way.
 
@@ -54,7 +54,7 @@ This project's original author has decades of programming experience. Hobby, the
 
 When AI started becoming a "thing" in programming, I (the original author) was against it. Which was convenient, because it sucked at it.
 
-That view has softened with the emergence of frontier models like Claude Fable. (Again convenient now that it's pretty cabable.) I've been running large AI-led experiments under an alt GitHub account, mostly to find where these tools break and where they hold up.
+That view has softened with the emergence of frontier models like Claude Fable. (Again convenient now that it's pretty capable.) I've been running large AI-led experiments under an alt GitHub account, mostly to find where these tools break and where they hold up.
 
 One outcome is that this nearly decade-old main account no longer has a blanket "no-AI" policy; but allowed only under strict, human-driven constraints.
 
@@ -88,7 +88,7 @@ A model trained on copyleft code can emit something very close to it with none o
 
 Whether that holds up in court is unsettled, and probably will be for years. The question for a maintainer is more immediate. If a generated block is close enough to some GPL original that a person copying it by hand would have been obligated, then merging it puts the project somewhere it never agreed to go, and nobody in the review chain saw it happen.
 
-Unfortunately there's currently no tooling answer to this, and the even human-driven solutions may inadequately address this risk.
+Unfortunately there's currently no tooling answer to this, and even the human-driven solutions may inadequately address this risk.
 
 ### Code quality
 
@@ -354,7 +354,7 @@ The curl project frames it bluntly: Code written with AI help "must still follow
 
 ### The test suite
 
-A test suite is with AI-written is crucial. As in, never do it without a rigorous test suite. Luckily, writing tests (as an independent effort) is also the work LLM models are very good at, such as:
+A test suite is not optional with AI-written code. As in, never do it without a rigorous test suite. Luckily, writing tests (as an independent effort) is also the work LLM models are very good at, such as:
 
 - Regression tests of the pinning kind, written after a bug is understood, so the fix cannot silently come undone later. Easy to check, too: revert the fix and watch the test fail.
 
@@ -432,4 +432,4 @@ What AI was *not* used for:
 
 Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 
-> *This document is licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Copy it, change it, use it in a commercial project. Attribution required, and say if you changed it. None of this is not legal advice, and any software this sits next to is licensed separately.*
+> *This document is licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Copy it, change it, use it in a commercial project. Attribution required, and say if you changed it. None of this is legal advice, and any software this sits next to is licensed separately.*
