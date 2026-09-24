@@ -221,7 +221,7 @@ rows:
 		whole: true
 		indent: 1
 		setting: text.scrim.strength
-		help: "How solid the halo gets. High values close the gaps between glyphs into a plate. Light mode quietens it, since a pale patch shows more against a darkened background than a dark one does."
+		help: "How solid the halo gets. High values close the gaps between glyphs into a plate. Light mode quiets it, since a pale patch shows more against a darkened background than a dark one does."
 
 	ScrimRadius:
 		label: Scrim radius px

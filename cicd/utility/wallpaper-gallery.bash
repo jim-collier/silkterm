@@ -129,15 +129,18 @@ if ((doCheck)); then
 			bad=1
 		fi
 	fi
-	## README names the pack's size in a sentence, which goes stale the same way.
-	said="$(grep -oE 'ships with the [0-9]+ wallpapers' "${repoDir}/README.md" 2>/dev/null | grep -oE '[0-9]+' || true)"
+	## README names the pack's size in sentences, which go stale the same way.
+	said="$(grep -oE '[0-9]+ (more )?wallpapers' "${repoDir}/README.md" 2>/dev/null | grep -oE '[0-9]+' || true)"
 	if [[ -z "$said" ]]; then
-		echo "wallpaper-gallery: README.md no longer says 'ships with the N wallpapers', so its count goes unchecked" >&2
-		exit 1
-	elif [[ "$said" != "$count" ]]; then
-		echo "wallpaper-gallery: README.md says ${said} wallpapers, and the pack has ${count}" >&2
+		echo "wallpaper-gallery: README.md no longer says 'N wallpapers', so its count goes unchecked" >&2
 		exit 1
 	fi
+	for n in ${said}; do
+		if [[ "$n" != "$count" ]]; then
+			echo "wallpaper-gallery: README.md says ${n} wallpapers, and the pack has ${count}" >&2
+			exit 1
+		fi
+	done
 	((bad)) && { echo "wallpaper-gallery: re-run cicd/utility/wallpaper-gallery.bash and commit what it writes" >&2; exit 1; }
 	echo "wallpaper-gallery: the gallery matches the pack (${count} images)"
 	exit 0

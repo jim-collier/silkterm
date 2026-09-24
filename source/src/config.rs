@@ -5439,7 +5439,7 @@ text:
 	## readable over a wallpaper.
 	scrim:
 		# enabled: true  ## Default
-		## Light mode quietens the patch by about a doubling and a half: a pale
+		## Light mode quiets the patch by about a doubling and a half: a pale
 		## patch on a darkened background shows more than a dark one does on a
 		## lightened background.
 		# strength: 20  ## Default
