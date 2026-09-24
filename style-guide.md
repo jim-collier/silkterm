@@ -9,6 +9,7 @@ The canonical style reference for SilkTerm. It covers prose, comments, naming, R
 
 <!-- TOC ignore:true -->
 ## Table of contents
+
 <!-- TOC -->
 
 - [Comments](#comments)
@@ -38,10 +39,10 @@ The canonical style reference for SilkTerm. It covers prose, comments, naming, R
 
 - Every source file carries an SPDX identifier and a copyright line at the top:
 
-	```rust
+	~~~rust
 	// SPDX-License-Identifier: GPL-2.0-or-later
 	// Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
-	```
+	~~~
 
 - The project itself is licensed GPL-2.0-or-later.
 
@@ -72,7 +73,7 @@ Edition 2024. The guiding aim is code that is consistent within and across files
 
 - Borrow first. Do not use `.clone()` to satisfy the borrow checker - restructure, borrow, or take a reference instead.
 
-- If a clone is genuinely needed, add a comment saying why.
+- If a clone is really needed, add a comment saying why.
 
 - Avoid gratuitous `Rc<RefCell<...>>`.
 

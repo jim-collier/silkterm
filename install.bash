@@ -17,6 +17,9 @@
 ##	  - 20260723 JC: Created.
 ##	  - 20260806 JC: Made project-agnostic; dropped --arch for autodetection;
 ##	                 added --version; targets bash 3.2.
+##	  - 20260924 JC: --release or --target with no value says so rather than
+##	                 exiting silently; the tag lookup no longer needs the API's
+##	                 pretty-printed layout.
 
 ##	Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 ##	Licensed under The MIT License (MIT). Full text at:
@@ -26,7 +29,7 @@
 
 ##	•••••••••••••••••••  Per-project settings - edit only these  ••••••••••••••••••
 
-installerVersion="1.1.0"
+installerVersion="1.2.0"
 ownerRepo="yottacore/silkterm"
 appName="SilkTerm"
 exeName="silkterm"
@@ -207,9 +210,12 @@ function fSha256() {
 	fi
 }
 
-##	First "tag_name" in a GitHub API body, without depending on jq.
+##	First "tag_name" in a GitHub API body, without depending on jq. Each one gets
+##	its own line first, so minified JSON works too. No head, since its early exit
+##	would kill the writer and pipefail would then end the script.
 function fFirstTag() {
-	sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+	sed 's/"tag_name"/\
+"tag_name"/g' | sed -n 's/^"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | sed -n 1p
 }
 
 ##	True when the deepest existing parent of $1 is writable by us.
@@ -283,9 +289,9 @@ function fMain() {
 	##	Parse arguments
 	local release="stable" target="user" assumeYes=0
 	while [ "$#" -gt 0 ]; do case "$1" in
-		--release)   release="${2:-}"; shift 2 ;;
+		--release)   [ "$#" -ge 2 ] || fFail "--release needs a value: stable or dev"; release="$2"; shift 2 ;;
 		--release=*) release="${1#*=}"; shift ;;
-		--target)    target="${2:-}"; shift 2 ;;
+		--target)    [ "$#" -ge 2 ] || fFail "--target needs a value: user or system"; target="$2"; shift 2 ;;
 		--target=*)  target="${1#*=}"; shift ;;
 		--yes|-y)    assumeYes=1; shift ;;
 		--version)   echo "${appName} installer ${installerVersion}"; echo; exit 0 ;;

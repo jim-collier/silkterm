@@ -390,7 +390,7 @@ A pull request that takes longer to review than it took to generate is the thing
 
 The position stated here is conditional. Things that would tighten it:
 
-- Evidence that AI cost more in defects than they catch.
+- Evidence that AI costs more in defects than it catches.
 
 - Contribution volume that makes the review load unsustainable. Codeberg names this as one of their reasons, so it isn't a hypothetical.
 

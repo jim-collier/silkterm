@@ -72,16 +72,16 @@ trap cleanup EXIT INT TERM
 ##	Every entry launches its terminal with SCENE as the shell/command, unstyled and
 ##	on a throwaway account (fPrivateAccount), so nothing personal reaches a published
 ##	run and nothing under the measuring account's home changes. Keys marked awkward
-##	need a hook the terminal does not offer directly - see showdown-README.md.
+##	need a hook the terminal does not offer directly - see showdown-readme.md.
 list_terms(){
 	fEcho_Clean "  silkterm    this tree's release build, as shipped"
 	fEcho_Clean "  silkplain   same binary, every optional effect off"
 	fEcho_Clean "  alacritty   the VT core SilkTerm builds on, as its own terminal"
-	fEcho_Clean "  kitty       needs terms/bin/kitty       (see showdown-README.md)"
-	fEcho_Clean "  wezterm     needs the AppImage extracted (see showdown-README.md)"
+	fEcho_Clean "  kitty       needs terms/bin/kitty       (see showdown-readme.md)"
+	fEcho_Clean "  wezterm     needs the AppImage extracted (see showdown-readme.md)"
 	fEcho_Clean "  xfce4 gnome terminator                  (distro packages)"
-	fEcho_Clean "  xterm       X11 only - runs via Xwayland, see showdown-README.md"
-	fEcho_Clean "  hyper tabby awkward, see showdown-README.md"
+	fEcho_Clean "  xterm       X11 only - runs via Xwayland, see showdown-readme.md"
+	fEcho_Clean "  hyper tabby awkward, see showdown-readme.md"
 }
 
 ##	Resolve a terminal binary: PATH first, then the kept artifact dir, so a re-run does
@@ -134,7 +134,7 @@ launch(){
 ##	whatever is on the actual desktop, while still handing the client a native Vulkan
 ##	context on the discrete GPU - which is the whole point over Xvfb software GL.
 start_rig(){
-	command -v sway >/dev/null 2>&1 || fDie "sway is not installed - see showdown-README.md"
+	command -v sway >/dev/null 2>&1 || fDie "sway is not installed - see showdown-readme.md"
 	printf 'default_border none\ndefault_floating_border none\ngaps inner 0\ngaps outer 0\n' > "${_work}/sway.cfg"
 
 	local runtimeDir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
@@ -297,12 +297,12 @@ case "${termKey}" in
 		launch "${silkBin}" --config "${_work}/plain.shcl" --shell "${sceneCmd}" ;;
 	alacritty)
 		write_alacritty_config
-		launch "$(find_bin alacritty || fDie "alacritty not found - see showdown-README.md")" \
+		launch "$(find_bin alacritty || fDie "alacritty not found - see showdown-readme.md")" \
 			--config-file "${_work}/alacritty.toml" -e ${sceneCmd} ;;
 	kitty)
-		launch "$(find_bin kitty || fDie "kitty not found - see showdown-README.md")" ${sceneCmd} ;;
+		launch "$(find_bin kitty || fDie "kitty not found - see showdown-readme.md")" ${sceneCmd} ;;
 	wezterm)
-		launch "$(find_bin wezterm || fDie "wezterm not found - see showdown-README.md")" \
+		launch "$(find_bin wezterm || fDie "wezterm not found - see showdown-readme.md")" \
 			--config enable_wayland=true start --always-new-process -- ${sceneCmd} ;;
 	xfce4)
 		launch xfce4-terminal --disable-server -x ${sceneCmd} ;;

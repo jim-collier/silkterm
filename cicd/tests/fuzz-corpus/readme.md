@@ -14,8 +14,8 @@ The engine and the targets are described at the top of `source/src/fuzz.rs`. The
 
 To reproduce one case, take the seed from the failure and run that alone:
 
-```sh
+~~~sh
 SILK_FUZZ_SEED=1234 cargo test <target name>
-```
+~~~
 
 `SILK_FUZZ_SECS` sets how long each target gets. A plain `cargo test` leaves it unset and every target takes a fraction of a second; the pipeline sets it for a real soak. Whatever the budget, a target always runs its first ten seeds, so a busy box covers the same ground as an idle one.

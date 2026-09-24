@@ -181,7 +181,7 @@ kill_ours(){
 	local exe; exe="$(realpath -e "/proc/${pid}/exe" 2>/dev/null || true)"
 	if [[ -n "$want" && "$exe" == "$want" ]]; then
 		kill "$pid" 2>/dev/null || true
-		local i; for i in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+		local _; for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
 		kill -9 "$pid" 2>/dev/null || true
 	fi
 }
@@ -215,7 +215,7 @@ stop_silk(){
 	local pid="$1"
 	if ((wayland)); then
 		kill "$pid" 2>/dev/null || true
-		local i; for i in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+		local _; for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
 		kill -9 "$pid" 2>/dev/null || true
 	else
 		kill_ours "$pid" "$bin"

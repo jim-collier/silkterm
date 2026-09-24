@@ -13,6 +13,7 @@ Terminal jargon that any terminal shares is left out unless SilkTerm gives it a 
 
 <!-- TOC ignore:true -->
 ## Table of contents
+
 <!-- TOC -->
 
 - [Alt screen](#alt-screen)
@@ -95,7 +96,7 @@ The box a color chip opens on the Themes tab. A square sets saturation and brigh
 
 ## Contrast mask
 
-A wallpaper treatment that quietens the image only where it would fight the text, leaving the rest of it alone. Its three settings are Size (how large an area each point is judged against), Strength (how far it may push the image down) and Automask mix.
+A wallpaper treatment that quiets the image only where it would fight the text, leaving the rest of it alone. Its three settings are Size (how large an area each point is judged against), Strength (how far it may push the image down) and Automask mix.
 
 The term itself comes from the early days of photography, and involves applying a blurred and inverted image as a luminosity mask, to reduce contrast.
 
@@ -237,7 +238,7 @@ The row of tabs under the menu bar. Each tab is as wide as its own label needs, 
 
 ## Text colors from the wallpaper
 
-A switch on the Themes tab that takes the text and cursor colors from the picture behind them rather than from the theme. The text goes as far from the picture's brightest areas as the screen allows, in a hue complementary to the picture's own, and the cursor follows it a third of the color circle round. While it is on, the Foreground and Cursor rows gray out and keep showing the colors that come back when it goes off. Nothing picked this way is saved: it follows whatever picture is up.
+A switch on the Themes tab that takes the text and cursor colors from the picture behind them rather than from the theme. The text goes as far from the picture's brightest areas as the screen allows, in a hue complementary to the picture's own, and the cursor follows it a third of the way around the color circle. While it is on, the Foreground and Cursor rows gray out and keep showing the colors that come back when it goes off. Nothing picked this way is saved: it follows whatever picture is up.
 
 ## Text outline
 
