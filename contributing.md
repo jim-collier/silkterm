@@ -28,11 +28,11 @@ This project and everyone in it is governed by the [Code of Conduct](code_of_con
 
 ## I have a question
 
-Before asking, search the existing [issues](https://github.com/jim-collier/silkterm/issues) - your question may already be answered. It is also worth a quick web search first.
+Before asking, search the existing [issues](https://github.com/yottacore/silkterm/issues) - your question may already be answered. It is also worth a quick web search first.
 
 If you still need clarification:
 
-- Open an [issue](https://github.com/jim-collier/silkterm/issues/new).
+- Open an [issue](https://github.com/yottacore/silkterm/issues/new).
 - Provide as much context as you can about what you are running into.
 - Provide project and platform versions where they seem relevant.
 
@@ -50,7 +50,7 @@ A good bug report should not leave others chasing you for more information. Plea
 
 - Make sure you are on the latest version.
 - Confirm it is really a bug and not a local misconfiguration or an incompatible environment. Re-read the [documentation](README.md); for support questions see [I have a question](#i-have-a-question).
-- Check the [bug tracker](https://github.com/jim-collier/silkterm/issues?q=label%3Abug) to see if it has already been reported.
+- Check the [bug tracker](https://github.com/yottacore/silkterm/issues?q=label%3Abug) to see if it has already been reported.
 - Search the web to see if others outside this repo have discussed it.
 - Collect the relevant details:
 	- OS, platform, and version (Windows, Linux, macOS; x86, ARM).
@@ -66,7 +66,7 @@ A good bug report should not leave others chasing you for more information. Plea
 
 Bugs and errors are tracked as GitHub issues. When you hit one:
 
-- Open an [issue](https://github.com/jim-collier/silkterm/issues/new).
+- Open an [issue](https://github.com/yottacore/silkterm/issues/new).
 - Explain the behavior you expected and the behavior you actually saw.
 - Give as much context as you can, and describe the reproduction steps someone else can follow. Isolate the problem into a reduced test case where possible.
 - Include the details you collected above.
@@ -82,13 +82,13 @@ This section covers submitting an enhancement suggestion for SilkTerm, from bran
 
 - Make sure you are on the latest version.
 - Read the [documentation](README.md) to see whether the functionality already exists, perhaps via configuration.
-- Search the [issues](https://github.com/jim-collier/silkterm/issues) to see whether it has already been suggested. If so, comment on the existing issue instead of opening a new one.
+- Search the [issues](https://github.com/yottacore/silkterm/issues) to see whether it has already been suggested. If so, comment on the existing issue instead of opening a new one.
 - Consider whether it fits the scope and aims of the project. Make the case for why it would be useful to most users, not just a small subset.
 
 <!-- omit in toc -->
 #### How do I submit a good enhancement suggestion?
 
-Enhancement suggestions are tracked as [GitHub issues](https://github.com/jim-collier/silkterm/issues).
+Enhancement suggestions are tracked as [GitHub issues](https://github.com/yottacore/silkterm/issues).
 
 - Use a clear and descriptive title.
 - Give a step-by-step description of the suggested enhancement.

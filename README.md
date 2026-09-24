@@ -5,7 +5,7 @@
 <!-- markdownlint-disable MD041 -- First line in a file should be a top-level heading -->
 <div align="center">
 
-[![Release](https://img.shields.io/badge/Release-1.0.0--beta3-blue)](https://github.com/jim-collier/silkterm/releases)
+[![Release](https://img.shields.io/badge/Release-1.0.0--beta3-blue)](https://github.com/yottacore/silkterm/releases)
 [![made-with-rust](https://img.shields.io/badge/Made%20with-Rust-1f425f.svg)](https://www.rust-lang.org/)
 ![Rust: 1.89+](https://img.shields.io/badge/Rust-1.89%2B-orange)
 [![License: GPL v2+](https://img.shields.io/badge/License-GPLv2%2B-blue.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
@@ -210,20 +210,20 @@ A scrim like this - "outer glow" or similar techniques by other names (and disti
 
 SilkTerm ships with the 113 wallpapers it was built and tuned against, in [`filesystem/home/.config/silkterm/wallpaper/`](filesystem/home/.config/silkterm/wallpaper/). Put them next to your config and rotation picks one each launch, favoring whatever it hasn't shown lately. Each image carries its own fit and anchor in its metadata, so a photo is cropped rather than squashed while a gradient still stretches edge to edge. Provenance for every one of them is in [wallpaper-attribution.md](filesystem/home/.config/silkterm/wallpaper-attribution.md).
 
-[![Wallpaper pack](assets/wallpaper-gallery.jpg)](https://jim-collier.github.io/silkterm/wallpapers/)
+[![Wallpaper pack](assets/wallpaper-gallery.jpg)](https://yottacore.github.io/silkterm/wallpapers/)
 
-Click the sheet for the [browsable gallery](https://jim-collier.github.io/silkterm/wallpapers/) - any wallpaper opens full size in place, the arrow keys page through them, and each one carries its credit and licence underneath.
+Click the sheet for the [browsable gallery](https://yottacore.github.io/silkterm/wallpapers/) - any wallpaper opens full size in place, the arrow keys page through them, and each one carries its credit and licence underneath.
 
 They come to 60 MiB against a 10 MiB terminal, so no package or installer carries them - fetch the folder on its own. Bash (Linux, macOS, WSL):
 
 ```bash
-dir="${XDG_CONFIG_HOME:-$HOME/.config}/silkterm" && mkdir -p "$dir" && curl -fsSL https://github.com/jim-collier/silkterm/archive/refs/heads/main.tar.gz | tar -xz -C "$dir" --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper
+dir="${XDG_CONFIG_HOME:-$HOME/.config}/silkterm" && mkdir -p "$dir" && curl -fsSL https://github.com/yottacore/silkterm/archive/refs/heads/main.tar.gz | tar -xz -C "$dir" --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper
 ```
 
 PowerShell (Windows):
 
 ```powershell
-$dest = "$env:LOCALAPPDATA\silkterm"; $tgz = "$env:TEMP\silkterm-main.tar.gz"; New-Item -ItemType Directory -Force $dest | Out-Null; curl.exe -fsSL https://github.com/jim-collier/silkterm/archive/refs/heads/main.tar.gz -o $tgz; tar -xzf $tgz -C $dest --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper; Remove-Item $tgz
+$dest = "$env:LOCALAPPDATA\silkterm"; $tgz = "$env:TEMP\silkterm-main.tar.gz"; New-Item -ItemType Directory -Force $dest | Out-Null; curl.exe -fsSL https://github.com/yottacore/silkterm/archive/refs/heads/main.tar.gz -o $tgz; tar -xzf $tgz -C $dest --strip-components=5 silkterm-main/filesystem/home/.config/silkterm/wallpaper; Remove-Item $tgz
 ```
 
 Either one is a single line, so it survives a paste however your terminal handles one, and lands the images where rotation looks for them - `wallpaper/` beside the config on Linux and macOS, and under `%LOCALAPPDATA%` on Windows (see the table in [Configuration](#configuration)). Both pull the whole repository archive, since GitHub serves no smaller unit - about 67 MiB over the wire.
@@ -292,7 +292,7 @@ Run it yourself with [`utility/update-showdown.py`](utility/update-showdown.py) 
 
 #### Packages and installers
 
-The primary install is a native package from the [releases page](https://github.com/jim-collier/silkterm/releases): `.deb` / `.rpm` on Linux, or the NSIS setup `.exe` on Windows. (No releases published yet? Build it yourself, below.) Optional either way: copy the example config tree in [`filesystem/home/`](filesystem/home/) over your own `$HOME` for a starter config and the background image pack.
+The primary install is a native package from the [releases page](https://github.com/yottacore/silkterm/releases): `.deb` / `.rpm` on Linux, or the NSIS setup `.exe` on Windows. (No releases published yet? Build it yourself, below.) Optional either way: copy the example config tree in [`filesystem/home/`](filesystem/home/) over your own `$HOME` for a starter config and the background image pack.
 
 #### Direct
 
@@ -301,19 +301,19 @@ Prefer a plain binary? These one-liners work out your operating system and CPU o
 Bash 3.2 or newer (Linux, macOS, WSL):
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/jim-collier/silkterm/main/install.bash)
+bash <(curl -fsSL https://raw.githubusercontent.com/yottacore/silkterm/main/install.bash)
 ```
 
 PowerShell 5.1 or 7+ (Windows, Linux, macOS):
 
 ```powershell
-irm https://raw.githubusercontent.com/jim-collier/silkterm/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/yottacore/silkterm/main/install.ps1 | iex
 ```
 
 PowerShell needs the script-block form to pass anything, `-Help` included:
 
 ```powershell
-& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/jim-collier/silkterm/main/install.ps1'))) -Help
+& ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/yottacore/silkterm/main/install.ps1'))) -Help
 ```
 
 Install locations:
