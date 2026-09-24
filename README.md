@@ -12,6 +12,7 @@
 ![Lifecycle: Beta](https://img.shields.io/badge/Lifecycle-Beta-yellow)
 ![Support](https://img.shields.io/badge/Support-Maintained-brightgreen)
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-ff69b4)](https://github.com/sponsors/jim-collier)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-%E2%98%95-ff5e5b)](https://ko-fi.com/jimcollier)
 
 <!--
 ![Go](https://img.shields.io/badge/Go-00ADD8?logo=go&logoColor=white)
@@ -419,6 +420,8 @@ Even a few dollars a month is meaningful. Or just buy me a coffee.
 **Direct support**
 
 - [GitHub Sponsors](https://github.com/sponsors/jim-collier)
+
+- [Ko-fi](https://ko-fi.com/jimcollier)
 
 **Indirect support**
 
