@@ -182,7 +182,7 @@ showcase
 
 @ •••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••
 @ Scene: sign-off
-@ banner: "github.com/jim-collier/silkterm"
+@ banner: "github.com/yottacore/silkterm"
 
 @ press Enter on an empty prompt, so the sign-off sits on its own
 

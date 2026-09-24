@@ -46,7 +46,7 @@ attrib="${repoDir}/filesystem/home/.config/silkterm/wallpaper-attribution.md"
 out="${repoDir}/assets/wallpaper-gallery.jpg"
 docs="${repoDir}/docs"
 template="${meDir}/wallpaper-gallery.html"
-rawBase="https://raw.githubusercontent.com/jim-collier/silkterm/main/filesystem/home/.config/silkterm/wallpaper/"
+rawBase="https://raw.githubusercontent.com/yottacore/silkterm/main/filesystem/home/.config/silkterm/wallpaper/"
 declare -i cols=9 quality=4 thumbQuality=5
 declare -i doSheet=1 doPage=1 doCheck=0
 tile="160x100"

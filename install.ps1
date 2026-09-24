@@ -9,9 +9,9 @@
 ##	- Runs on Windows PowerShell 5.1 and on PowerShell 7+ (pwsh) on any platform
 ##	  it supports - Windows, Linux and macOS.
 ##	- Syntax:
-##	  irm https://raw.githubusercontent.com/jim-collier/silkterm/main/install.ps1 | iex
+##	  irm https://raw.githubusercontent.com/yottacore/silkterm/main/install.ps1 | iex
 ##	  or, to pass options:
-##	  & ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/jim-collier/silkterm/main/install.ps1'))) -Release dev
+##	  & ([scriptblock]::Create((irm 'https://raw.githubusercontent.com/yottacore/silkterm/main/install.ps1'))) -Release dev
 ##	- Options: -Release stable|dev, -Target user|system, -Yes, -Version, -Help.
 ##	  The OS, the CPU architecture and the asset name are all detected.
 ##	- History:
@@ -44,7 +44,7 @@ param(
 ##	•••••••••••••••••••  Per-project settings - edit only these  ••••••••••••••••••
 
 $installerVersion = '1.1.0'
-$ownerRepo        = 'jim-collier/silkterm'
+$ownerRepo        = 'yottacore/silkterm'
 $appName          = 'SilkTerm'
 $exeName          = 'silkterm'
 $appComment       = 'Smooth-scrolling GPU terminal with split panes'

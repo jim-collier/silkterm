@@ -1126,7 +1126,7 @@ def seg_outro(r, t, m):
 	# the prompt grays whatever is typed after it while the flag file exists, so
 	# the comment goes gray from the '#' on, as if ble.sh were installed - but with
 	# plain reliable bash typing.
-	with Banner(r, "github.com/jim-collier/silkterm"):
+	with Banner(r, "github.com/yottacore/silkterm"):
 		r.xdo("windowactivate", r.win)
 		time.sleep(0.5)
 		# a bare prompt above the sign-off and another below it (the one the Return

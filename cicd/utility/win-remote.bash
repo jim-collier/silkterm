@@ -157,7 +157,7 @@ $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\_env.ps1"
 if (-not (Test-Path (Join-Path $RepoDir ".git"))) {
 	New-Item -ItemType Directory -Force -Path $RepoDir | Out-Null
-	git clone --branch dev https://github.com/jim-collier/silkterm.git $RepoDir 2>&1 | Out-Null
+	git clone --branch dev https://github.com/yottacore/silkterm.git $RepoDir 2>&1 | Out-Null
 }
 git -C $RepoDir fetch --prune origin 2>&1 | Out-Null
 git -C $RepoDir reset --hard "origin/$ref" 2>&1 | Out-Null

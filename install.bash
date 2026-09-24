@@ -8,7 +8,7 @@
 ##	  installed binary is already current.
 ##	- Reusable: everything project-specific lives in the settings block below.
 ##	- Syntax:
-##	  bash <(curl -fsSL https://raw.githubusercontent.com/jim-collier/silkterm/main/install.bash) [options]
+##	  bash <(curl -fsSL https://raw.githubusercontent.com/yottacore/silkterm/main/install.bash) [options]
 ##	- Options: --release stable|dev, --target user|system, --yes, --version, --help.
 ##	  The OS, the CPU architecture and the asset name are all detected.
 ##	- Needs: bash >= 3.2 (the macOS system bash), curl or wget, and one of
@@ -27,7 +27,7 @@
 ##	•••••••••••••••••••  Per-project settings - edit only these  ••••••••••••••••••
 
 installerVersion="1.1.0"
-ownerRepo="jim-collier/silkterm"
+ownerRepo="yottacore/silkterm"
 appName="SilkTerm"
 exeName="silkterm"
 appComment="Smooth-scrolling GPU terminal with split panes"
