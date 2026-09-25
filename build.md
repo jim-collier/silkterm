@@ -49,7 +49,7 @@ The linker and a static-CRT flag are set in `.cargo/config.toml`, so the resulti
 ./utility/run-windows-build-via-wine.bash --attach     # foreground, output on this terminal
 ~~~
 
-It stages a private wineprefix, the exe, and its own `config.shcl` under `cicd/artifacts/win-run/` (gitignored), so `~/.wine` and the real `~/.config/silkterm` are untouched. Needs `wine`; mingw is used for a small shim (see below) and is already a prerequisite for the cross-build.
+It stages a private wineprefix, the exe, and its own `config.shcl` under `cicd/artifacts/win-run/` (gitignored), so `~/.wine` and the real `~/.config/silkterm` are untouched. Needs `wine`; mingw is used for a small shim (see below) and is already a prerequisite for the cross-build. Wine's menu builder is turned off for these runs, so nothing gets registered on the desktop.
 
 One consequence: a wineprefix maps `Z:` to `/` (and further drives to raw `/dev` nodes) as symlinks under `prefix/dosdevices/`. Anything that walks the tree following symlinks therefore climbs out of the repo and into the whole filesystem. `cicd/config.bash` excludes `cicd/artifacts` from the backup for that reason - keep any new tree-walker off it too, or point it at `--exclude`.
 

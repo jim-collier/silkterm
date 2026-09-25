@@ -52,6 +52,9 @@
 ##		  which just makes the shim redundant. To try another wine put it first on PATH
 ##		  (wine/wineboot are called unqualified) and pass --restage for its own prefix.
 ##		- Only the x86_64 build runs; wine on x86_64 cannot execute the ARM64 exe.
+##		- Wine's menu builder is turned off for every wine call here. Left on, it
+##		  registers file types and menu entries on the desktop that point into the
+##		  staged prefix, and they go dead when the prefix is rebuilt.
 ##	Syntax:
 ##		run-windows-build-via-wine.bash [OPTIONS] [-- ARGS...]
 ##		  --restage        Rebuild the wineprefix from scratch, then run.
@@ -349,6 +352,9 @@ fMain(){
 
 	command -v wine >/dev/null 2>&1 || fDie "wine is not installed"
 
+	## Before wineboot as well as the run, since a new prefix registers its own set.
+	export WINEDLLOVERRIDES="${WINEDLLOVERRIDES:+${WINEDLLOVERRIDES};}winemenubuilder.exe=d"
+
 	local -r sourceExe="$(fResolveExe)"
 
 	mkdir -p "${stageDir}/app"
@@ -386,3 +392,4 @@ fMain  "${@}"
 
 ##	History:
 ##		- 2026-07-25: Created.
+##		- 2026-09-24: Menu builder off.

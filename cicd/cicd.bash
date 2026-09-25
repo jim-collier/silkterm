@@ -678,6 +678,12 @@ if [[ -x "${root}/cicd/tests/wingui/harness-test.bash" ]]; then
 	"${root}/cicd/tests/wingui/harness-test.bash" >/dev/null || fDie "windows scenario harness test failed"
 	fEcho "OK: windows scenario harness"
 fi
+## The wine launcher, which once left dead file types on the desktop.
+if [[ -x "${root}/cicd/tests/wine/run.bash" ]]; then
+	fEcho_Clean "wine launcher ..."
+	"${root}/cicd/tests/wine/run.bash" >/dev/null || fDie "wine launcher test failed"
+	fEcho "OK: wine launcher"
+fi
 ## The wallpaper gallery and contact sheet are rendered, so they go stale in
 ## silence when the pack changes. Nine removed images sat in both for a month.
 if [[ -f "${root}/cicd/utility/wallpaper-gallery.bash" ]]; then
