@@ -22,6 +22,7 @@ rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=-Wl,--no-insert
 rustflags = ["-C", "target-feature=+crt-static"]
 
 # Windows ARM64, cross-built with zig. Its linker writes the link time into the
-# PE header too, so the same commit built twice differed in that one field.
+# PE header too, so the same commit built twice differed in that one field. zig
+# refuses --no-insert-timestamp, and -Brepro puts a hash of the contents there.
 [target.aarch64-pc-windows-gnullvm]
-rustflags = ["-C", "link-arg=-Wl,--no-insert-timestamp"]
+rustflags = ["-C", "link-arg=-Wl,-Brepro"]
