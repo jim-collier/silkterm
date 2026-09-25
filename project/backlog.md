@@ -82,20 +82,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Covers the Settings dialog, maximized as well, and the About and notice boxes. The fixes are under Done.
 	- Opened: 20260919-153000
 
-- ✋ A short settings file can get one section's commented defaults filed under another.
-	- Seen on a hand-written file: the Performance defaults were written under Transparency, and the next launch added them again where they belong.
-	- Same cause as the dotted-line config item below. The launch step that adds missing settings picks their place from a file with too few lines to go on. That step is SilkTerm's own, so a new shcl release is unlikely to fix either one.
-	- ✋ Held with that item.
-	- Note: 20260925, still seen on the latest shcl build. An eight-line file got the text defaults under `colors`, and the next launch added them again. It settles on the third launch.
-	- Opened: 20260910-230211
-
-- ✋ A config written as single dotted lines grows on every launch, with settings added under the wrong sections.
-	- From nine lines such as `window.columns: 100`, one launch put the scroll settings under `performance` and `margin` under the wallpaper's `rotate` block.
-	- The next launch added them again in the right places, so the file keeps growing.
-	- ✋ The next shcl release may fix this. Check again once it is out.
-	- Note: 20260924, shcl 3.0 gives the same file as 2.0.0 here, so the fix is SilkTerm's own, as with the item above.
-	- Opened: 20260915
-
 - 🔘 A line the parse drops can make the whole settings file convert as the old flat layout.
 	- The line is tab-indented, steps back to a depth nothing uses, and is named like an old flat setting such as `margin`. SilkTerm's own reader takes it as a top-level setting, so the file is moved aside to `.bak` and written fresh.
 	- Opened: 20260925-073415
@@ -390,6 +376,24 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ A short settings file can get one section's commented defaults filed under another.
+	- Seen on a hand-written file: the Performance defaults were written under Transparency, and the next launch added them again where they belong.
+	- Note: 20260925, still seen on the latest shcl build. An eight-line file got the text defaults under `colors`, and the next launch added them again. It settles on the third launch.
+	- Cause: a missing section went in above the next one, past any comment lines there. A commented-out default counts as a comment line, so a section added a moment before was split, and `font:` went in under `contrast_mask:`.
+	- Fixed: a section only moves up past plain comments at its own depth. A line added by the launch is kept only where it reads as the setting it is for, so a heading holding a value, a heading indented unlike the template's, or a line moved out from under it no longer leaves lines that the next launch adds again.
+	- Pinned by: `backfill_puts_each_group_in_its_own_section`, with this file and the dotted one below, and `backfill_settles_in_one_pass`, a check over random files that a second pass adds nothing. Both fail on the old code.
+	- Verified: three launches of the real program on each file. The file changes on the first and not after.
+	- Opened: 20260910-230211
+	- Closed: 20260925-114115
+
+- ✅ A config written as single dotted lines grows on every launch, with settings added under the wrong sections.
+	- From nine lines such as `window.columns: 100`, one launch put the scroll settings under `performance` and `margin` under the wallpaper's `rotate` block.
+	- The next launch added them again in the right places, so the file keeps growing.
+	- Note: 20260924, shcl 3.0 gives the same file as 2.0.0 here, so the fix is SilkTerm's own, as with the item above.
+	- Fixed: with the item above. A section the file already sets through dotted lines gets no second heading, and a missing section is added whole at the end.
+	- Opened: 20260915
+	- Closed: 20260925-114115
 
 - ✅ A wine run of the Windows build registers file types on the desktop. Six menu entries were left pointing at a wine folder that no longer exists, so those types open nothing. Wine runs should turn off its menu builder.
 	- Fixed: the wine launcher turns the menu builder off for the prefix boot and the run, and keeps any override already set.
