@@ -420,12 +420,15 @@ function fBuildPackages {
 	foreach ($b in $Built) {
 		$out = Join-Path $ReleaseArtifactDir "$ExeName-$Ver-$($b.OsArch)-setup.exe"
 		$nsi = [System.IO.Path]::GetTempFileName() + ".nsi"
+		## Four numbers for the version block: the release, less any pre-release tag.
 		(Get-Content -Raw -LiteralPath $NsisTemplate).
 			Replace("@VERSION@", $Ver).
 			Replace("@ARCH@",    $b.OsArch).
 			Replace("@SRCEXE@",  $b.Exe).
-			Replace("@OUTFILE@", $out) | Set-Content -LiteralPath $nsi -Encoding utf8
-		& $makensis -V2 $nsi | Out-Null
+			Replace("@OUTFILE@", $out).
+			Replace("@ICON@",    (Join-Path $Root "source\assets\icon.ico")).
+			Replace("@VERNUM@",  (($Ver -replace '[-+].*$', '') + ".0")) | Set-Content -LiteralPath $nsi -Encoding utf8
+		& $makensis -INPUTCHARSET UTF8 -V2 $nsi | Out-Null
 		$rc = $LASTEXITCODE
 		Remove-Item -LiteralPath $nsi -Force -ErrorAction SilentlyContinue
 		if ($rc -eq 0 -and (Test-Path -LiteralPath $out)) { fEcho "OK: installer ($($b.OsArch))"; $made++ }
@@ -469,6 +472,15 @@ function fDogfood {
 	fEcho "OK: dogfood ($($pick.Tk); $why) -> $dst"
 }
 
+## git calls that reach the git host go through gitsby where its executable is on
+## PATH, so they act as the account this folder belongs to, the same as cicd.bash.
+## Only the executable: the script and cmd forms do not pass arguments through
+## intact. Plain git otherwise.
+function fRemoteGit {
+	if (Get-Command gitsby -CommandType Application -ErrorAction SilentlyContinue) { & gitsby raw git @args }
+	else { & git @args }
+}
+
 ## Stage 0: make sure the local branch can be safely refreshed from its upstream
 ## BEFORE spending the build - what stage 7 pushes should be what got built and
 ## tested here, not an untested post-build merge. Behind-only is safe (fast-
@@ -481,7 +493,7 @@ function fRemoteSync {
 		fNote "no upstream for ${branch}; nothing to sync"
 		return
 	}
-	& git fetch --quiet 2>$null
+	fRemoteGit fetch --quiet 2>$null
 	if ($LASTEXITCODE -ne 0) { fWarn "git fetch failed (offline?); continuing with the local tree"; return }
 	$ahead  = [int](& git rev-list --count '@{u}..HEAD')
 	$behind = [int](& git rev-list --count 'HEAD..@{u}')
@@ -505,7 +517,7 @@ function fRemoteSync {
 		$didStash = ($after -gt $before)
 	}
 	fEcho_Clean "git pull --ff-only ..."
-	fExec "git pull" "git" @("pull", "--ff-only")
+	fExec "git pull" "fRemoteGit" @("pull", "--ff-only")
 	if ($didStash) {
 		fEcho_Clean "git stash pop ..."
 		fExec "git stash pop" "git" @("stash", "pop")
@@ -541,7 +553,7 @@ function fPublish {
 	$hasUpstream = ($LASTEXITCODE -eq 0)
 	if ($hasUpstream) {
 		fEcho_Clean "git pull --ff-only ..."
-		fExec "git pull" "git" @("pull", "--ff-only")
+		fExec "git pull" "fRemoteGit" @("pull", "--ff-only")
 	}
 	if ($didStash) {
 		fEcho_Clean "git stash pop ..."
@@ -569,13 +581,13 @@ function fPublish {
 	## Push: set upstream on first publish, else push only when ahead.
 	if (-not $hasUpstream) {
 		fEcho_Clean "git push -u origin HEAD ..."
-		fExec "git push" "git" @("push", "-u", "origin", "HEAD")
+		fExec "git push" "fRemoteGit" @("push", "-u", "origin", "HEAD")
 		fEcho "OK: pushed $branch (upstream set)"
 	} else {
 		$ahead = (& git log '@{u}..' --oneline)
 		if ($ahead) {
 			fEcho_Clean "git push origin ..."
-			fExec "git push" "git" @("push", "origin")
+			fExec "git push" "fRemoteGit" @("push", "origin")
 			fEcho "OK: pushed $branch"
 		} else {
 			fNote "up to date with upstream; nothing to push"
@@ -896,7 +908,9 @@ try {
 ##	History:
 ##		- 2026-09-25 JC: Release builds map the box's paths away and fail if one
 ##		  is left; tool pins come from tool-pins.txt; old run logs are pruned;
-##		  PowerShell scripts are linted when PSScriptAnalyzer is installed.
+##		  PowerShell scripts are linted when PSScriptAnalyzer is installed;
+##		  fetch, pull and push go through gitsby where it is installed; the
+##		  installer carries the program's icon and a version block.
 ##		- 2026-08-24 JC: -Wsl runs the Linux half (cicd.bash --no-windows) in WSL2
 ##		  against this same tree, so one box covers both platforms; stages
 ##		  renumbered to 8.

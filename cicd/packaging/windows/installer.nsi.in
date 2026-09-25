@@ -2,6 +2,7 @@
 ; the @TOKENS@ below are substituted, then makensis compiles a single self-contained
 ; setup .exe. The app binary links only system DLLs, so nothing else is bundled.
 ; Upgrade-in-place: an existing install's uninstaller is run silently first.
+; Holds non-ASCII text, so makensis is run with -INPUTCHARSET UTF8.
 
 Unicode true
 SetCompressor /SOLID lzma
@@ -26,6 +27,19 @@ SetCompressor /SOLID lzma
 !include "MultiUser.nsh"
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
+
+; The program's own icon, and Properties > Details to match its. VIProductVersion
+; takes four numbers only, so a pre-release tag lives in the strings.
+!define MUI_ICON   "@ICON@"
+!define MUI_UNICON "@ICON@"
+VIProductVersion "@VERNUM@"
+VIFileVersion    "@VERNUM@"
+VIAddVersionKey "ProductName"     "${APPNAME}"
+VIAddVersionKey "CompanyName"     "${COMPANY}"
+VIAddVersionKey "LegalCopyright"  "© 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ] - GPL-2.0-or-later"
+VIAddVersionKey "FileDescription" "${APPNAME} installer"
+VIAddVersionKey "FileVersion"     "${VERSION}"
+VIAddVersionKey "ProductVersion"  "${VERSION}"
 
 Name "${APPNAME} ${VERSION}"
 OutFile "@OUTFILE@"

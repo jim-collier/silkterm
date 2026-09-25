@@ -111,6 +111,23 @@ else
 	echo "  skip reading the build number (no built binary)"
 fi
 
+## Remote git and gh go through gitsby where it is on PATH, and plain git and gh
+## where it is not. Stand-ins that print what they were asked.
+stubs="${work}/stubs"; plain="${work}/plain"
+mkdir -p "${stubs}" "${plain}"
+for tool in gitsby git gh; do
+	printf '#!/bin/sh\necho "%s $*"\n' "${tool}" > "${stubs}/${tool}"
+	chmod +x "${stubs}/${tool}"
+done
+cp "${stubs}/git" "${stubs}/gh" "${plain}/"
+helper="${root}/utility/include/remote-git.bash"
+got="$(PATH="${stubs}:/usr/bin:/bin" bash -c 'source "$1"; fRemoteGit push origin main; fRemoteGh release view' _ "${helper}")"
+fCheck "remote git and gh go through gitsby when it is there" \
+	test "${got}" = $'gitsby raw git push origin main\ngitsby raw gh release view'
+got="$(PATH="${plain}:/usr/bin:/bin" bash -c 'source "$1"; fRemoteGit push origin main; fRemoteGh release view' _ "${helper}")"
+fCheck "and plain git and gh when it is not" \
+	test "${got}" = $'git push origin main\ngh release view'
+
 ## Signing. The checksums file says the download was not corrupted; the signature
 ## is what says it came from here. Driven with a throwaway key: signed the way
 ## release.bash signs, and checked by each installer's OWN verify function, so a

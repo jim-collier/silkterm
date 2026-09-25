@@ -72,6 +72,7 @@ root="$(cd "${here}/.." && pwd)"   # the git repo root (cicd/..)
 export PATH="${HOME}/.cargo/bin:${HOME}/.local/bin:${PATH}"       ## rustup toolchain (cross targets, edition 2024) + zig must beat system rust.
 source "${here}/config.bash"
 source "${here}/utility/include/gfs-rotate.bash"                  ## gfs_rotate() for the profiler artifacts
+source "${here}/utility/include/remote-git.bash"                  ## fRemoteGit / fRemoteGh, as the folder's own account
 ##  shellcheck source=cicd/utility/built-from.bash
 source "${here}/utility/built-from.bash"                          ## the artifacts' provenance note
 declare -p FMT_CMD &>/dev/null || FMT_CMD=()                      ## tolerate a config without the fmt stage
@@ -463,7 +464,7 @@ if ((! sync)); then
 	fEcho_Clean "remote sync skipped"
 elif ! git rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
 	fEcho_Clean "no upstream for $(git rev-parse --abbrev-ref HEAD); nothing to sync"
-elif ! git fetch --quiet 2>/dev/null; then
+elif ! fRemoteGit fetch --quiet 2>/dev/null; then
 	fEcho "WARNING: git fetch failed (offline?); continuing with the local tree"
 else
 	ahead="$(git rev-list --count '@{u}..HEAD')"
@@ -487,7 +488,7 @@ else
 			((stashesAfter > stashesBefore)) && didStash=1
 		fi
 		fEcho_Clean "git pull --ff-only ..."
-		git pull --ff-only
+		fRemoteGit pull --ff-only
 		if ((didStash)); then
 			fEcho_Clean "git stash pop ..."
 			git stash pop
@@ -922,10 +923,13 @@ build_packages(){
 				## prefixing the repo root then names a file that was never there.
 				srcexe="${bin}"
 				[[ "$srcexe" = /* ]] || srcexe="${root}/${srcexe}"
+				## Four numbers for the version block: the release, less any pre-release tag.
+				vernum="${ver%%[-+]*}.0"
 				sed -e "s|@VERSION@|${ver}|g" -e "s|@ARCH@|${osarch}|g" \
 					-e "s|@SRCEXE@|${srcexe}|g" -e "s|@OUTFILE@|${out}|g" \
+					-e "s|@ICON@|${root}/source/assets/icon.ico|g" -e "s|@VERNUM@|${vernum}|g" \
 					"${root}/${NSIS_TEMPLATE}" > "${nsi}"
-				rc=0; makensis -V2 "${nsi}" >/dev/null || rc=$?
+				rc=0; makensis -INPUTCHARSET UTF8 -V2 "${nsi}" >/dev/null || rc=$?
 				rm -f "${nsi}"
 				if ((rc == 0)) && [[ -f "$out" ]]; then fEcho "OK: installer (${osarch})"; made=$((made+1))
 				else fEcho "WARNING: NSIS installer failed (${osarch})"; fi
