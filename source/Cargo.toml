@@ -36,6 +36,13 @@ priority = "optional"
 assets = [
 	["target/release/silkterm", "usr/bin/", "755"],
 	["../cicd/packaging/linux/silkterm.desktop", "usr/share/applications/", "644"],
+	["../cicd/packaging/linux/icons/16x16/silkterm.png", "usr/share/icons/hicolor/16x16/apps/", "644"],
+	["../cicd/packaging/linux/icons/24x24/silkterm.png", "usr/share/icons/hicolor/24x24/apps/", "644"],
+	["../cicd/packaging/linux/icons/32x32/silkterm.png", "usr/share/icons/hicolor/32x32/apps/", "644"],
+	["../cicd/packaging/linux/icons/48x48/silkterm.png", "usr/share/icons/hicolor/48x48/apps/", "644"],
+	["../cicd/packaging/linux/icons/64x64/silkterm.png", "usr/share/icons/hicolor/64x64/apps/", "644"],
+	["../cicd/packaging/linux/icons/128x128/silkterm.png", "usr/share/icons/hicolor/128x128/apps/", "644"],
+	["../cicd/packaging/linux/icons/256x256/silkterm.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
 ]
 
 [package.metadata.generate-rpm]
@@ -43,6 +50,13 @@ summary = "Smooth-scrolling GUI terminal emulator with split panes"
 assets = [
 	{ source = "target/release/silkterm", dest = "/usr/bin/silkterm", mode = "755" },
 	{ source = "../cicd/packaging/linux/silkterm.desktop", dest = "/usr/share/applications/silkterm.desktop", mode = "644" },
+	{ source = "../cicd/packaging/linux/icons/16x16/silkterm.png", dest = "/usr/share/icons/hicolor/16x16/apps/silkterm.png", mode = "644" },
+	{ source = "../cicd/packaging/linux/icons/24x24/silkterm.png", dest = "/usr/share/icons/hicolor/24x24/apps/silkterm.png", mode = "644" },
+	{ source = "../cicd/packaging/linux/icons/32x32/silkterm.png", dest = "/usr/share/icons/hicolor/32x32/apps/silkterm.png", mode = "644" },
+	{ source = "../cicd/packaging/linux/icons/48x48/silkterm.png", dest = "/usr/share/icons/hicolor/48x48/apps/silkterm.png", mode = "644" },
+	{ source = "../cicd/packaging/linux/icons/64x64/silkterm.png", dest = "/usr/share/icons/hicolor/64x64/apps/silkterm.png", mode = "644" },
+	{ source = "../cicd/packaging/linux/icons/128x128/silkterm.png", dest = "/usr/share/icons/hicolor/128x128/apps/silkterm.png", mode = "644" },
+	{ source = "../cicd/packaging/linux/icons/256x256/silkterm.png", dest = "/usr/share/icons/hicolor/256x256/apps/silkterm.png", mode = "644" },
 ]
 
 [dependencies]

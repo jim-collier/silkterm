@@ -26,17 +26,18 @@ else
 	work="$(mktemp -d)"
 	trap 'rm -rf "${work}"' EXIT
 
-	## A stand-in repository holding nothing but the template the step reads.
+	## A stand-in repository holding nothing but the template and icon the step reads.
 	fakeRoot="${work}/repo"
-	mkdir -p "${fakeRoot}/cicd/packaging/windows"
+	mkdir -p "${fakeRoot}/cicd/packaging/windows" "${fakeRoot}/source/assets"
 	cp "${realRoot}/cicd/packaging/windows/installer.nsi.in" "${fakeRoot}/cicd/packaging/windows/"
+	cp "${realRoot}/source/assets/icon.ico" "${fakeRoot}/source/assets/"
 
 	## The step's world, as cicd.bash sets it up around the call.
 	PACKAGE_ENABLE=1
 	EXE_NAME="silkterm"
 	NSIS_TEMPLATE="cicd/packaging/windows/installer.nsi.in"
 	RELEASE_ARTIFACT_DIR="cicd/artifacts/release"   ## only ever printed
-	ver="0.0.1"
+	ver="0.0.1-beta2"
 	root="${fakeRoot}"
 	write_sums(){ :; }
 	fEcho(){ echo "    $*"; }
@@ -57,17 +58,52 @@ else
 		build_packages > "${work}/step.log" 2>&1 || true
 	}
 
+	setup="${work}/art-rel/silkterm-${ver}-windows-x86_64-setup.exe"
 	fRunStep "target/x86_64-pc-windows-gnu/release/silkterm.exe" "${work}/art-rel"
-	fCheck "a relative target dir still makes the installer" \
-		test -f "${work}/art-rel/silkterm-0.0.1-windows-x86_64-setup.exe"
+	fCheck "a relative target dir still makes the installer" test -f "${setup}"
+
+	## It carries the program's icon, not the stock one, and a version block.
+	fHasIcon(){ python3 - "$1" "${realRoot}/source/assets/icon.ico" <<'PY'
+import struct, sys
+exe, ico = (open(p, "rb").read() for p in sys.argv[1:3])
+size, off = struct.unpack_from("<II", ico, 6 + 16 * 2 + 8)
+sys.exit(0 if ico[off:off + size] in exe else 1)
+PY
+	}
+	fCheck "and it carries the program's icon" fHasIcon "${setup}"
+	fCheck "and a version block" python3 "${realRoot}/cicd/utility/pe-resources.py" --require icon,version "${setup}"
+	fCheck "naming the release, pre-release tag and all" \
+		python3 -c 'import sys; sys.exit(sys.argv[1].encode("utf-16-le") not in open(sys.argv[2], "rb").read())' "${ver}" "${setup}"
 
 	fRunStep "${work}/elsewhere/x86_64-pc-windows-gnu/release/silkterm.exe" "${work}/art-abs"
 	fCheck "an absolute target dir makes it too" \
-		test -f "${work}/art-abs/silkterm-0.0.1-windows-x86_64-setup.exe"
-	if [[ ! -f "${work}/art-abs/silkterm-0.0.1-windows-x86_64-setup.exe" ]]; then
+		test -f "${work}/art-abs/silkterm-${ver}-windows-x86_64-setup.exe"
+	if [[ ! -f "${work}/art-abs/silkterm-${ver}-windows-x86_64-setup.exe" ]]; then
 		sed -n '1,20p' "${work}/step.log" | sed 's/^/    /'
 	fi
 fi
+
+## The Linux packages' icons are the program's own, the images inside icon.ico,
+## so the two cannot drift apart.
+fIconsMatch(){ python3 - "${realRoot}" <<'PY'
+import struct, sys
+root = sys.argv[1]
+ico = open(f"{root}/source/assets/icon.ico", "rb").read()
+bad = 0
+for i in range(struct.unpack_from("<H", ico, 4)[0]):
+	size, off = struct.unpack_from("<II", ico, 6 + 16 * i + 8)
+	side = ico[6 + 16 * i] or 256
+	try:
+		png = open(f"{root}/cicd/packaging/linux/icons/{side}x{side}/silkterm.png", "rb").read()
+	except OSError:
+		png = b""
+	if png != ico[off:off + size]:
+		print(f"    {side}x{side} differs from icon.ico")
+		bad += 1
+sys.exit(1 if bad else 0)
+PY
+}
+fCheck "the Linux icons are the ones in icon.ico" fIconsMatch
 
 ## The Windows pipeline looks for the same binaries and has the same rule.
 if command -v pwsh >/dev/null 2>&1; then
@@ -83,3 +119,4 @@ echo "all passed"
 
 ##	History:
 ##		- 20260917 JC: Created.
+##		- 20260925 JC: The installer's icon and version block, and the Linux icons.

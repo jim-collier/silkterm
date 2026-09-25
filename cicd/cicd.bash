@@ -923,10 +923,13 @@ build_packages(){
 				## prefixing the repo root then names a file that was never there.
 				srcexe="${bin}"
 				[[ "$srcexe" = /* ]] || srcexe="${root}/${srcexe}"
+				## Four numbers for the version block: the release, less any pre-release tag.
+				vernum="${ver%%[-+]*}.0"
 				sed -e "s|@VERSION@|${ver}|g" -e "s|@ARCH@|${osarch}|g" \
 					-e "s|@SRCEXE@|${srcexe}|g" -e "s|@OUTFILE@|${out}|g" \
+					-e "s|@ICON@|${root}/source/assets/icon.ico|g" -e "s|@VERNUM@|${vernum}|g" \
 					"${root}/${NSIS_TEMPLATE}" > "${nsi}"
-				rc=0; makensis -V2 "${nsi}" >/dev/null || rc=$?
+				rc=0; makensis -INPUTCHARSET UTF8 -V2 "${nsi}" >/dev/null || rc=$?
 				rm -f "${nsi}"
 				if ((rc == 0)) && [[ -f "$out" ]]; then fEcho "OK: installer (${osarch})"; made=$((made+1))
 				else fEcho "WARNING: NSIS installer failed (${osarch})"; fi
