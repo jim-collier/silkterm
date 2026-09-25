@@ -76,9 +76,25 @@ def bench(*args):
 		tb.main(["--scene", "ascii", "--label", "XTerm/999-rc1+20260917", *args])
 	return out.getvalue()
 
+mdtable = load("mdtable", UTILITY / "include/mdtable.py")
+
+def xterm_cells():
+	return next((c for c in map(mdtable.split_row, readme.read_text(encoding="utf-8").splitlines())
+	             if len(c) > 1 and c[1] == "XTerm"), [])
+
 def xterm_row():
-	return next((ln for ln in readme.read_text(encoding="utf-8").splitlines()
-	             if "| XTerm |" in ln), "")
+	return " | ".join(xterm_cells())
+
+## Every line of the table has a leading pipe and no trailing one, the columns
+## line up, and each column's alignment is spelled out.
+def table_is_tidy():
+	text = readme.read_text(encoding="utf-8")
+	block = text.split(tb.README_BEGIN, 1)[1].split(tb.README_END, 1)[0]
+	lines = [ln for ln in block.splitlines() if ln.startswith("|")]
+	pipes = {tuple(i for i, ch in enumerate(ln) if ch == "|") for ln in lines}
+	rule = mdtable.split_row(lines[1])
+	return (len(lines) > 2 and not any(ln.rstrip().endswith("|") for ln in lines)
+	        and len(pipes) == 1 and all(c.startswith(":") or c.endswith(":") for c in rule))
 
 before = xterm_row()
 out = bench("--quick")
@@ -94,8 +110,16 @@ grid[0] = (160, 42)
 bench("--history", "--quick")
 check("a quick history refresh leaves the table alone", xterm_row() == before, xterm_row())
 bench()
-check("a full run at the table's grid still writes its row", "| 999" in xterm_row(), xterm_row())
-check("and its version keeps the prerelease tag, not the stamp", "| 999-rc1 |" in xterm_row(), xterm_row())
+check("a full run at the table's grid still writes its row", "999-rc1" in xterm_cells(), xterm_row())
+check("and its version keeps the prerelease tag, not the stamp", "999-rc1" in xterm_cells(), xterm_row())
+check("and the table it writes lines up, with no trailing pipes", table_is_tidy())
+
+## showdown-readme.py writes the size cells into the same table the same way.
+sr = load("showdown_readme", UTILITY / "include/showdown-readme.py")
+text, err = sr.update(readme, "XTerm", 123456.7, 8.9)
+readme.write_text(text or "", encoding="utf-8")
+check("the size writer updates its row", not err and "123456.7" in xterm_cells() and "8.9" in xterm_cells(), err or xterm_row())
+check("and lays the table out again for the wider cell", table_is_tidy())
 
 ## The writer puts back a table it has nothing new for exactly as it was.
 block = original.split(tb.README_BEGIN, 1)[1].split(tb.README_END, 1)[0]

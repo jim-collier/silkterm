@@ -104,8 +104,9 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Opened: 20260924-115032
 	- 🔘 Route remote `git` and `gh` calls in the pipeline through `gitsby raw`, with plain `git` and `gh` where it is missing.
 		- Opened: 20260924-115032
-	- 🔘 The showdown table generators write trailing pipes, `---` rows and unpadded columns.
-		- Opened: 20260924-115032
+
+- 🔘 Hand-written tables still use trailing pipes and unpadded columns: other tables in `README.md`, `cicd/tests/scroll/README.md`, `utility/include/showdown-readme.md`, and `wallpaper-attribution.md`, which `wallpaper-gallery.bash` writes.
+	- Opened: 20260924-175940
 
 - 🔘 t2nsn - old stray versions of executables and launchers: Find and move old GFS versions, and trash any out-of-place stray executables and scripts. Update '.desktop' files to run the correct bash script, launcher chain minimized or hidden, and use the icon from the 'latest version' symlink.
 	- Note: the launcher copies outside the repo are older than the ones in `utility/`, and nothing copies them over.
@@ -2247,6 +2248,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 #### Done - Features and enhancements
 
 - ✅ Pipeline and installer review 20260924
+	- ✅ The showdown table generators write trailing pipes, `---` rows and unpadded columns.
+		- Done: both writers lay the table out through one shared module. Number columns stay right-aligned, and the README table was laid out again once.
+		- Verified: the showdown test checks the layout after each writer, and fails on the old ones.
+		- Opened: 20260924-115032
+		- Closed: 20260924-175940
 	- ✅ `--version` prints `SilkTerm 1.0.0-beta3 (build xxxxx)`. Make it `SilkTerm v1.0.0-beta3 build xxxxx` with the copyright line under it.
 		- Note: `release.bash` and anything else that reads the second field has to follow.
 		- Decided: 20260924, no copyright line. `--version` prints the name, version and build on one line, with no blank lines around it.

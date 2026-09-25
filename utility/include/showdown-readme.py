@@ -10,9 +10,13 @@ it belongs in the ordering, and the speed tool makes that call.
 """
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import mdtable  # noqa: E402
 
 BEGIN, END = "<!-- termbench:begin -->", "<!-- termbench:end -->"
 
@@ -22,10 +26,6 @@ def norm(cell):
 	cell = re.sub(r"<sup>.*?</sup>", "", cell)
 	cell = re.sub(r"\$\\textcolor\{[^}]*\}\{(?:\\textbf\{)?([^}]*)\}+\$", r"\1", cell)
 	return re.sub(r"[^a-z0-9]", "", cell.lower())
-
-
-def split_row(line):
-	return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
 def update(readme, terminal, file_deps, mem):
@@ -43,7 +43,7 @@ def update(readme, terminal, file_deps, mem):
 	if len(rows) < 2:
 		return None, "no table rows"
 
-	header = split_row(lines[rows[0]])
+	header = mdtable.split_row(lines[rows[0]])
 	want = {"filedeps": None, "mem": None}
 	for i, cell in enumerate(header):
 		key = norm(cell)
@@ -57,7 +57,7 @@ def update(readme, terminal, file_deps, mem):
 
 	target = norm(terminal)
 	for idx in rows[2:]:
-		cells = split_row(lines[idx])
+		cells = mdtable.split_row(lines[idx])
 		if len(cells) != len(header):
 			continue
 		# Column 1 is the terminal name; column 0 is the platform.
@@ -67,7 +67,11 @@ def update(readme, terminal, file_deps, mem):
 		wrap = (lambda v: f"**{v}**") if bold else (lambda v: v)
 		cells[want["filedeps"]] = wrap(f"{file_deps:.1f}")
 		cells[want["mem"]] = wrap(f"{mem:.1f}")
-		lines[idx] = "| " + " | ".join(cells) + " |"
+		#	The whole table is laid out again, since one wider cell moves every
+		#	column after it.
+		grid = [mdtable.split_row(lines[i]) for i in rows]
+		grid[rows.index(idx)] = cells
+		lines[rows[0]:rows[-1] + 1] = mdtable.render(grid[0], grid[1], grid[2:])
 		return head + BEGIN + "\n".join(lines) + END + tail, None
 
 	return None, f"no row named '{terminal}' in the table"
