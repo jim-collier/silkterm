@@ -123,7 +123,7 @@ Full commands in [build.md](build.md).
 
 ### Pipeline helpers (optional)
 
-For the full `cicd/cicd.bash` run (packages, deps check): `cargo install cargo-deny cargo-deb cargo-generate-rpm cargo-zigbuild` and `makensis` (for the Windows installer). Versions are pinned in `cicd/config.bash` (`TOOL_PINS`).
+For the full `cicd/cicd.bash` run (packages, deps check): `cargo install cargo-deny cargo-deb cargo-generate-rpm cargo-zigbuild` and `makensis` (for the Windows installer). Versions are pinned in `cicd/tool-pins.txt`. The PowerShell lint needs `pwsh` with the PSScriptAnalyzer module.
 
 ## macOS (native)
 

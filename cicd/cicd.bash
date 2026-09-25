@@ -564,6 +564,18 @@ if command -v shellcheck >/dev/null 2>&1; then
 else
 	fEcho "WARNING: shellcheck not installed; shell scripts not linted"
 fi
+## First-party PowerShell scripts, at warning level too.
+if command -v pwsh >/dev/null 2>&1; then
+	psRc=0
+	pwsh -NoProfile -NonInteractive -File "${root}/cicd/utility/ps-lint.ps1" || psRc=$?
+	case "${psRc}" in
+		0) fEcho "OK: PowerShell scripts clean" ;;
+		2) fEcho "WARNING: PSScriptAnalyzer not installed; PowerShell scripts not linted" ;;
+		*) fDie "PSScriptAnalyzer found problems" ;;
+	esac
+else
+	fEcho "WARNING: pwsh not installed; PowerShell scripts not linted"
+fi
 ## Private content scrub, when this machine has the private tree. A clone without
 ## it builds as before.
 if [[ -x "${root}/../private/hooks/scrub.bash" ]]; then

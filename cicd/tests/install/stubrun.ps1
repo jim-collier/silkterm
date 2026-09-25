@@ -11,6 +11,7 @@
 ##	Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 ##	SPDX-License-Identifier: GPL-2.0-or-later
 
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'the stand-ins replace them on purpose')]
 param(
 	[Parameter(Mandatory)][string]$Installer,
 	[Parameter(ValueFromRemainingArguments)][string[]]$Rest
@@ -36,8 +37,11 @@ function Invoke-WebRequest {
 	Copy-Item -LiteralPath (Join-Path $env:STUB_DIR ($Uri -replace '^.*/', '')) -Destination $OutFile -ErrorAction Stop
 }
 
+##	A stub that breaks has to show as a failed run, not a line of noise.
+$ErrorActionPreference = 'Stop'
+
 $options = @{ Yes = $true }
-for ($i = 0; $i -lt @($Rest).Count; $i += 2) { $options[$Rest[$i].TrimStart('-')] = $Rest[$i + 1] }
+if ($Rest) { for ($i = 0; $i -lt $Rest.Count; $i += 2) { $options[$Rest[$i].TrimStart('-')] = $Rest[$i + 1] } }
 & ([scriptblock]::Create([System.IO.File]::ReadAllText($Installer))) @options
 
 ##	History:

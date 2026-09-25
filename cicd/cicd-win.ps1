@@ -166,14 +166,14 @@ $DogfoodFixedExe = "silkterm.exe"
 ## since a cross-build says nothing about the box that later reads it.
 $DogfoodIcon     = "source\assets\logo.png"
 
-## Pinned helper-tool versions (the Windows-relevant subset of config.bash's
-## TOOL_PINS). Warn (non-gating) when an installed tool has drifted, so a box
-## update can't silently change results. "name|version|command args...".
-$ToolPins = @(
-	"cargo-zigbuild|0.23.0|cargo-zigbuild --version"
-	"cargo-deny|0.19.9|cargo-deny --version"
-	"makensis|3.12|MAKENSIS"          # special-cased: resolve via fFindMakensis
-)
+## Pinned helper-tool versions, shared with cicd.bash: the lines of
+## tool-pins.txt marked windows or both. Warn (non-gating) when an installed tool
+## has drifted, so a box update can't silently change results.
+$ToolPinsFile = Join-Path $PSScriptRoot "tool-pins.txt"
+
+## Full-run transcripts kept in $LogDir. Nothing reads the old ones, so the
+## newest few are enough.
+$LogKeep = 30
 
 ## Cap compile/test parallelism to half the cores so a run stays usable.
 $Cores       = [Environment]::ProcessorCount
@@ -256,17 +256,20 @@ function fFindMakensis {
 ## pin. Mirrors cicd.bash's TOOL_PINS loop. makensis is special-cased because it
 ## isn't on PATH by default (resolved via fFindMakensis).
 function fCheckToolPins {
-	foreach ($pin in $ToolPins) {
-		$parts   = $pin -split '\|', 3
-		$name    = $parts[0]; $want = $parts[1]; $cmd = $parts[2]
+	if (-not (Test-Path -LiteralPath $ToolPinsFile)) { fWarn "no $ToolPinsFile; tool versions not checked"; return }
+	foreach ($pin in (Get-Content -LiteralPath $ToolPinsFile)) {
+		if (-not $pin -or $pin.StartsWith("#")) { continue }
+		$parts   = $pin -split '\|', 4
+		if ($parts.Count -ne 4 -or $parts[2] -eq "linux") { continue }
+		$name    = $parts[0]; $want = $parts[1]; $cmd = $parts[3]
 		$found   = $false; $verLine = $null
 		try {
-			if ($cmd -eq "MAKENSIS") {
+			$exe  = ($cmd -split '\s+')[0]
+			$rest = @(($cmd -split '\s+') | Select-Object -Skip 1)
+			if ($exe -eq "makensis") {
 				$mk = fFindMakensis
-				if ($mk) { $found = $true; $out = & $mk -VERSION 2>$null; $verLine = $out | Select-Object -First 1 }
+				if ($mk) { $found = $true; $out = & $mk @rest 2>$null; $verLine = $out | Select-Object -First 1 }
 			} else {
-				$exe  = ($cmd -split '\s+')[0]
-				$rest = @(($cmd -split '\s+') | Select-Object -Skip 1)
 				if (Get-Command $exe -ErrorAction SilentlyContinue) {
 					## Collect the whole output FIRST, then take the first line. Piping a
 					## native command straight into `Select-Object -First 1` races: the
@@ -312,6 +315,37 @@ function fTargetDir {
 	return (Join-Path $Root $td)
 }
 
+## Panic locations and generated bindings carry the build box's paths, which put
+## the profile folder and account name into every binary and made builds differ
+## between boxes. The same remap cicd.bash writes: a cfg(all()) entry is joined
+## with the per-target flags in .cargo/config.toml, where RUSTFLAGS would replace
+## them, and later entries win, so the target dir comes after the root it
+## usually sits in. Basic TOML strings, since a profile folder can hold a quote.
+function fRemapConfig {
+	$targetDir = fTargetDir
+	New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+	$cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { [System.IO.Path]::Combine($env:USERPROFILE, ".cargo") }
+	$flags = foreach ($pair in @("$cargoHome=/cargo", "$Root=/silkterm", "$targetDir=/target")) {
+		'"--remap-path-prefix=' + ($pair -replace '\\', '\\' -replace '"', '\"') + '"'
+	}
+	$cfg = Join-Path $targetDir "remap-paths.toml"
+	Set-Content -LiteralPath $cfg -Encoding utf8 -Value @("[target.'cfg(all())']", "rustflags = [$($flags -join ', ')]")
+	return $cfg
+}
+
+## True when a built file still names this box's profile folder or checkout, with
+## either slash.
+function fHasLocalPaths {
+	param([Parameter(Mandatory)][string]$Path)
+	$text = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($Path))
+	foreach ($dir in @($env:USERPROFILE, $Root)) {
+		foreach ($form in @("$dir\", ("$dir/" -replace '\\', '/'))) {
+			if ($text.IndexOf($form, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+		}
+	}
+	return $false
+}
+
 ## Build one release target. Returns a result object on success, or $null when an
 ## ARM target is skipped (x86_64 failures abort - house rule: always build both).
 function fBuildTarget {
@@ -332,6 +366,7 @@ function fBuildTarget {
 	} else {
 		@("build", "--release", "--target", $Target.Triple)
 	}
+	$cargoArgs += @("--config", $script:RemapConfig)
 
 	if ($Target.Arm) {
 		## Non-gating: an ARM toolchain hiccup warns and skips, never aborts.
@@ -568,6 +603,19 @@ function fLintAdvisory {
 		if ($LASTEXITCODE -ne 0) { fWarn "cargo-deny reported findings (advisory)" }
 		else { fEcho "OK: deps clean (cargo-deny)" }
 	} else { fNote "cargo-deny skipped (not installed)" }
+
+	fLintPowerShell
+}
+
+## PowerShell scripts, through the same script cicd.bash runs. Advisory like the
+## rest of the lints here.
+function fLintPowerShell {
+	& (Join-Path $PSScriptRoot "utility\ps-lint.ps1")
+	switch ($LASTEXITCODE) {
+		0       { fEcho "OK: PowerShell scripts clean" }
+		2       { fNote "PowerShell lint skipped (PSScriptAnalyzer not installed)" }
+		default { fWarn "PSScriptAnalyzer reported findings (advisory)" }
+	}
 }
 
 
@@ -743,8 +791,11 @@ function fMain {
 		if ($m) { $publishMsg = $m }
 	}
 
-	## Start the transcript once past the preflight.
+	## Start the transcript once past the preflight, dropping all but the newest
+	## few from earlier runs. The names sort by time.
 	New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
+	Get-ChildItem -LiteralPath $LogDir -Filter "run_*.log" -File | Sort-Object Name -Descending |
+		Select-Object -Skip ($LogKeep - 1) | Remove-Item -Force -ErrorAction SilentlyContinue
 	try { Start-Transcript -LiteralPath (Join-Path $LogDir "run_$stamp.log") | Out-Null } catch {}
 
 	## Stage 0: remote sync.
@@ -785,17 +836,29 @@ function fMain {
 	## ...and its temp folder step, where the shared temp folder is the one it guards against.
 	fExec "installer temp folder" (Join-Path $Root "cicd\tests\install\tempdir.ps1")
 	fEcho "OK: installer temp folder"
+	## ...and a real install, upgrade and repair, under both PowerShells. Called
+	## directly, since fExec's array would reach -Shell as a plain value.
+	foreach ($shell in @("pwsh", "powershell")) {
+		& (Join-Path $Root "cicd\tests\install\windows.ps1") -Shell $shell
+		if ($LASTEXITCODE -ne 0) { fDie "installer on Windows ($shell) failed" }
+	}
+	fEcho "OK: installer on Windows"
 	fLintAdvisory
 
 	## Stage 4: release builds (x86_64 msvc + gnu always; ARM64 when ready).
 	## (No profiler stage here: pprof's SIGPROF sampler is Unix-only - the
 	## profiling feature can't even compile for a Windows target.)
+	$script:RemapConfig = fRemapConfig
 	$built = @()
 	foreach ($t in $Targets) {
 		$r = fBuildTarget $t
 		if ($r) { $built += $r }
 	}
 	if (-not $built) { fDie "no release binaries were produced" }
+	foreach ($b in $built) {
+		if (fHasLocalPaths $b.Exe) { fDie "$($b.Exe) still holds a local path ($env:USERPROFILE or $Root)" }
+	}
+	fEcho "OK: no local paths in $($built.Count) binary(s)"
 	$ver = fVersion
 	fCollectArtifacts -Built $built -Ver $ver
 
@@ -831,6 +894,9 @@ try {
 
 
 ##	History:
+##		- 2026-09-25 JC: Release builds map the box's paths away and fail if one
+##		  is left; tool pins come from tool-pins.txt; old run logs are pruned;
+##		  PowerShell scripts are linted when PSScriptAnalyzer is installed.
 ##		- 2026-08-24 JC: -Wsl runs the Linux half (cicd.bash --no-windows) in WSL2
 ##		  against this same tree, so one box covers both platforms; stages
 ##		  renumbered to 8.

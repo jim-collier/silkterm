@@ -959,7 +959,7 @@ Guiding constraint: GitHub is dumb git hosting plus optional release storage, no
 
 - Artifact naming (stable; download links depend on it): `<exe>-<version>-<os-arch>[.exe]` for binaries, `<exe>-<version>-<os-arch>.{deb,rpm}` and `<exe>-<version>-<os-arch>-setup.exe` for packages, plus `<exe>-<version>-sha256sums.txt` (covers binaries and packages), all collected into `cicd/artifacts/release/`.
 
-- Pinning: `rust-toolchain.toml` pins rustc/clippy/rustfmt and the cross targets. The cargo-installed helpers (cargo-deny, cargo-zigbuild, cargo-deb, cargo-generate-rpm) and makensis are pinned in `cicd/config.bash` (`TOOL_PINS`) with a non-gating drift warning. Dependency freshness is a periodic local `cargo update` pass, and cargo-deny advisories flag anything urgent in every run.
+- Pinning: `rust-toolchain.toml` pins rustc/clippy/rustfmt and the cross targets. The cargo-installed helpers (cargo-deny, cargo-zigbuild, cargo-deb, cargo-generate-rpm) and makensis are pinned in `cicd/tool-pins.txt`, which both pipelines read, with a non-gating drift warning. Dependency freshness is a periodic local `cargo update` pass, and cargo-deny advisories flag anything urgent in every run.
 
 - README badges: static shields only (release, license, minimum Rust). No CI badge, since there is no hosted workflow to point one at.
 
