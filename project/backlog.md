@@ -99,9 +99,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 - 🔘 Pipeline and installer review 20260924
 	- 🔘 Prove the builds are reproducible: two checkouts in different places, same checksum. Then say so in the README.
 		- Opened: 20260924-115032
-	- 🔘 `--version` prints `SilkTerm 1.0.0-beta3 (build xxxxx)`. Make it `SilkTerm v1.0.0-beta3 build xxxxx` with the copyright line under it.
-		- Note: `release.bash` and anything else that reads the second field has to follow.
-		- Opened: 20260924-115032
 	- 🔘 Package icons. The setup `.exe` has the stock NSIS icon and no version details. The `.deb` and `.rpm` launcher uses a generic terminal icon.
 		- Note: also settle whether packages carry the wallpaper pack.
 		- Opened: 20260924-115032
@@ -2250,6 +2247,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 #### Done - Features and enhancements
 
 - ✅ Pipeline and installer review 20260924
+	- ✅ `--version` prints `SilkTerm 1.0.0-beta3 (build xxxxx)`. Make it `SilkTerm v1.0.0-beta3 build xxxxx` with the copyright line under it.
+		- Note: `release.bash` and anything else that reads the second field has to follow.
+		- Decided: 20260924, no copyright line. `--version` prints the name, version and build on one line, with no blank lines around it.
+		- Done: `release.bash` reads the build number the new way, and a release test checks it against a real binary.
+		- Opened: 20260924-115032
+		- Closed: 20260924-175734
 	- ✅ One tool-pin list read by both `cicd.bash` and `cicd-win.ps1`.
 		- Done: `cicd/tool-pins.txt`, where each tool is marked linux, windows or both.
 		- Verified: both pipelines read the same list, and on vm925w a wrong pin and a missing tool each warn.
