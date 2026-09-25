@@ -11,6 +11,7 @@
 ##	Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 ##	SPDX-License-Identifier: GPL-2.0-or-later
 
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '', Justification = 'the stand-ins replace them on purpose')]
 param(
 	[Parameter(Mandatory)][string]$Installer,
 	[Parameter(ValueFromRemainingArguments)][string[]]$Rest
@@ -21,9 +22,13 @@ function Invoke-RestMethod {
 	$code = if ($env:STUB_API_CODE) { [int]$env:STUB_API_CODE } else { 200 }
 	$body = [System.IO.File]::ReadAllText((Join-Path $env:STUB_DIR 'releases.json'))
 	if ($code -ge 300) {
-		##	What pwsh 7 throws for an HTTP error, body in ErrorDetails.
-		$resp = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]$code)
-		$ex = [Microsoft.PowerShell.Commands.HttpResponseException]::new("Response status code does not indicate success: $code.", $resp)
+		##	What each PowerShell throws for an HTTP error, body in ErrorDetails.
+		if ($PSVersionTable.PSVersion.Major -ge 6) {
+			$resp = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]$code)
+			$ex = [Microsoft.PowerShell.Commands.HttpResponseException]::new("Response status code does not indicate success: $code.", $resp)
+		} else {
+			$ex = New-Object System.Net.WebException "The remote server returned an error: ($code)."
+		}
 		$err = [System.Management.Automation.ErrorRecord]::new($ex, 'WebCmdletWebResponseException', 'InvalidOperation', $Uri)
 		$err.ErrorDetails = [System.Management.Automation.ErrorDetails]::new($body)
 		throw $err
@@ -36,8 +41,11 @@ function Invoke-WebRequest {
 	Copy-Item -LiteralPath (Join-Path $env:STUB_DIR ($Uri -replace '^.*/', '')) -Destination $OutFile -ErrorAction Stop
 }
 
+##	A stub that breaks has to show as a failed run, not a line of noise.
+$ErrorActionPreference = 'Stop'
+
 $options = @{ Yes = $true }
-for ($i = 0; $i -lt @($Rest).Count; $i += 2) { $options[$Rest[$i].TrimStart('-')] = $Rest[$i + 1] }
+if ($Rest) { for ($i = 0; $i -lt $Rest.Count; $i += 2) { $options[$Rest[$i].TrimStart('-')] = $Rest[$i + 1] } }
 & ([scriptblock]::Create([System.IO.File]::ReadAllText($Installer))) @options
 
 ##	History:

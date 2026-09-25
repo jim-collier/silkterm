@@ -76,25 +76,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- 🔘 The one-liners run the installers on main, which still lack the 09-17 fixes and the 5.1 fix below.
 		- Note: held for the RC1 release.
 		- Opened: 20260924-115032
-	- 🔬 `install.ps1` cannot upgrade over a running copy. The copy fails on a locked file on Windows and a busy one on Linux. `install.bash` already stages and renames.
-		- Fixed: it copies beside the program and renames into place. On Windows the running file is renamed out of the way first, and the old copy is removed on the next run.
-		- Verified: on Linux, an upgrade over a running copy installs and leaves nothing staged. The old installer fails the same test.
-		- Note: not yet run on Windows.
-		- Opened: 20260924-115032
-	- 🔬 Both installers fall back from stable to the newest pre-release on any API failure, not only when no release exists. A network blip or a bad token prints "No full release published yet". The bash rate-limit hint never shows, since `curl -f` drops the error body.
-		- Fixed: both read the release list once. A failed call stops with its status, and a rate limit gets the token hint. The fallback runs only when the list holds no full release.
-		- Verified: on Linux, for both installers, with a 500 and a rate-limited 403.
-		- Note: `install.ps1` not yet run on Windows.
-		- Opened: 20260924-115032
-	- 🔬 A re-run with the binary already current stops before it checks the launcher, the Start Menu shortcut and PATH, so a missing piece is not put back.
-		- Fixed: a re-run puts back only what is missing, after the same plan and prompt. A piece that exists is left alone, since it may have been edited.
-		- Verified: on Linux, for both installers, with the launcher removed.
-		- Note: the shortcut and PATH halves are not yet run on Windows.
-		- Opened: 20260924-115032
-	- 🔘 Windows cicd run logs in `cicd/artifacts/lint-win` are never rotated.
-		- Opened: 20260924-115032
-	- 🔘 Release builds made by `cicd-win.ps1` still carry the build box's paths. Published releases are built by `cicd.bash`, which strips them now.
-		- Opened: 20260924-115032
 
 - 🔬 Check the display-scale fixes on two monitors at different scales.
 	- Covers the Settings dialog, maximized as well, and the About and notice boxes. The fixes are under Done.
@@ -125,10 +106,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Note: also settle whether packages carry the wallpaper pack.
 		- Opened: 20260924-115032
 	- 🔘 Route remote `git` and `gh` calls in the pipeline through `gitsby raw`, with plain `git` and `gh` where it is missing.
-		- Opened: 20260924-115032
-	- 🔘 One tool-pin list read by both `cicd.bash` and `cicd-win.ps1`.
-		- Opened: 20260924-115032
-	- 🔘 Lint the PowerShell scripts in the pipeline too.
 		- Opened: 20260924-115032
 	- 🔘 The showdown table generators write trailing pipes, `---` rows and unpadded columns.
 		- Opened: 20260924-115032
@@ -427,6 +404,34 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260924-141949
 
 - ✅ Pipeline and installer review 20260924
+	- ✅ Windows cicd run logs in `cicd/artifacts/lint-win` are never rotated.
+		- Fixed: each run keeps the newest 30. Linux spreads its logs over time instead, but nothing reads the old Windows ones.
+		- Verified: on vm925w, 35 seeded logs came down to 30 with the new run's.
+		- Opened: 20260924-115032
+		- Closed: 20260924-175509
+	- ✅ Release builds made by `cicd-win.ps1` still carry the build box's paths. Published releases are built by `cicd.bash`, which strips them now.
+		- Fixed: the same path map as `cicd.bash`, and the run fails if a release binary still names the profile folder or the checkout.
+		- Verified: on vm925w, both x86_64 release builds come out clean, and the check finds the paths in a debug build made without the map.
+		- Opened: 20260924-115032
+		- Closed: 20260924-175509
+	- ✅ `install.ps1` cannot upgrade over a running copy. The copy fails on a locked file on Windows and a busy one on Linux. `install.bash` already stages and renames.
+		- Fixed: it copies beside the program and renames into place. On Windows the running file is renamed out of the way first, and the next upgrade removes it.
+		- Verified: on Linux, an upgrade over a running copy installs and leaves nothing staged. The old installer fails the same test.
+		- Verified: on Windows under pwsh 7 and Windows PowerShell 5.1, and the old installer fails there with the file in use.
+		- Opened: 20260924-115032
+		- Closed: 20260924-174243
+	- ✅ Both installers fall back from stable to the newest pre-release on any API failure, not only when no release exists. A network blip or a bad token prints "No full release published yet". The bash rate-limit hint never shows, since `curl -f` drops the error body.
+		- Fixed: both read the release list once. A failed call stops with its status, and a rate limit gets the token hint. The fallback runs only when the list holds no full release.
+		- Verified: on Linux, for both installers, with a 500 and a rate-limited 403.
+		- Verified: on Windows under pwsh 7 and Windows PowerShell 5.1, with a 500.
+		- Opened: 20260924-115032
+		- Closed: 20260924-174243
+	- ✅ A re-run with the binary already current stops before it checks the launcher, the Start Menu shortcut and PATH, so a missing piece is not put back.
+		- Fixed: a re-run puts back only what is missing, after the same plan and prompt. A piece that exists is left alone, since it may have been edited.
+		- Verified: on Linux, for both installers, with the launcher removed.
+		- Verified: on Windows under pwsh 7 and Windows PowerShell 5.1, with the shortcut and the PATH entry removed. The Start Menu folder is now made when missing.
+		- Opened: 20260924-115032
+		- Closed: 20260924-174243
 	- ✅ Windows PowerShell 5.1 could not pick a release. It hands the API's list over as one object, so every tag was read at once.
 		- Checked on Windows PowerShell 5.1: the installer on main still fails, and the fixed one picks v1.0.0-beta3.
 		- Opened: 20260924-115032
@@ -2245,6 +2250,17 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 #### Done - Features and enhancements
 
 - ✅ Pipeline and installer review 20260924
+	- ✅ One tool-pin list read by both `cicd.bash` and `cicd-win.ps1`.
+		- Done: `cicd/tool-pins.txt`, where each tool is marked linux, windows or both.
+		- Verified: both pipelines read the same list, and on vm925w a wrong pin and a missing tool each warn.
+		- Opened: 20260924-115032
+		- Closed: 20260924-175509
+	- ✅ Lint the PowerShell scripts in the pipeline too.
+		- Done: PSScriptAnalyzer at warning level. `cicd.bash` fails on a finding and `cicd-win.ps1` reports it. The rules left out are listed with reasons in `cicd/PSScriptAnalyzerSettings.psd1`, since every hit under them was a false one.
+		- Verified: clean on all 30 scripts, and an injected finding fails the run.
+		- Note: vm925w has no PSScriptAnalyzer, so the Windows half skips it there.
+		- Opened: 20260924-115032
+		- Closed: 20260924-175509
 	- ✅ The installers take the first release the API lists. Sort by version instead, with `1.0.0-alpha.2` below `1.0.0`, and skip drafts.
 		- Done: semver order, drafts skipped. A trailing number compares as a number, so beta10 is above beta3.
 		- Verified: on Linux for both installers, and live against the real release list.

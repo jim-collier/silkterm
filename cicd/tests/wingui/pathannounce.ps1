@@ -15,7 +15,7 @@ $src = Join-Path $PSScriptRoot "install.ps1"
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($src, [ref]$null, [ref]$null)
 foreach ($name in 'fAddToWindowsPath', 'fPathKey', 'fAnnounceEnvironment', 'fInnerMessage') {
 	$fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
-	if ($fn) { Invoke-Expression $fn.Extent.Text }
+	if ($fn) { . ([scriptblock]::Create($fn.Extent.Text)) }
 }
 $appName = 'SilkTerm'; $exeName = 'silkterm'
 

@@ -1,0 +1,26 @@
+#!/usr/bin/env pwsh
+
+##	- Purpose:
+##		Lint the repo's PowerShell scripts at warning level, with the rules in
+##		cicd/PSScriptAnalyzerSettings.psd1. One line per finding. cicd.bash gates
+##		on it, and cicd-win.ps1 runs it as advice.
+##	- Syntax: ps-lint.ps1 [path ...]   (default: every tracked *.ps1)
+##	- Exit: 0 clean, 1 findings, 2 PSScriptAnalyzer is not installed.
+##	- History: At bottom of file.
+
+##	Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
+##	SPDX-License-Identifier: GPL-2.0-or-later
+
+param([Parameter(ValueFromRemainingArguments)][string[]]$Paths)
+
+if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) { Write-Host 'PSScriptAnalyzer is not installed'; exit 2 }
+$root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+if (-not $Paths) { $Paths = @(& git -C $root ls-files '*.ps1' | ForEach-Object { Join-Path $root $_ }) }
+$settings = Join-Path $root 'cicd/PSScriptAnalyzerSettings.psd1'
+$found = @($Paths | ForEach-Object { Invoke-ScriptAnalyzer -Path $_ -Settings $settings })
+foreach ($f in $found) { Write-Host ('{0}:{1}: {2}: {3}' -f $f.ScriptPath, $f.Line, $f.RuleName, $f.Message) }
+if ($found.Count) { exit 1 }
+exit 0
+
+##	History:
+##		- 20260925 JC: Created.

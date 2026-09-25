@@ -47,18 +47,15 @@ FMT_CMD=(cargo fmt)
 ## Non-mutating variant for the --gate mode (fails on drift instead of rewriting).
 FMT_CHECK_CMD=(cargo fmt --check)
 
-## Pinned versions of the cargo-installed helpers the pipeline probes for; the
-## engine warns (non-gating) when an installed tool has drifted from its pin, so
-## a box update can't silently change results. Format: "name|version|command...".
-## The rustc/clippy toolchain itself is pinned by rust-toolchain.toml at repo root.
-TOOL_PINS=(
-	"cargo-deny|0.19.9|cargo deny --version"
-	"cargo-zigbuild|0.23.0|cargo-zigbuild --version"
-	"cargo-deb|3.7.0|cargo-deb --version"
-	"cargo-generate-rpm|0.21.0|cargo-generate-rpm --version"
-	"makensis|3.12|makensis -VERSION"
-	"zig|0.16.0|zig version"
-)
+## Pinned helper tools, "name|version|command..." each. The list lives in
+## tool-pins.txt beside this file, which cicd-win.ps1 reads too; the engine warns
+## (non-gating) when an installed tool has drifted from its pin.
+TOOL_PINS=()
+while IFS='|' read -r pinName pinVer pinWhere pinCmd; do
+	[[ -n "${pinName}" && "${pinName}" != \#* && "${pinWhere}" != "windows" ]] || continue
+	TOOL_PINS+=("${pinName}|${pinVer}|${pinCmd}")
+done < "$(dirname "${BASH_SOURCE[0]}")/tool-pins.txt"
+unset pinName pinVer pinWhere pinCmd
 
 ## Where cargo writes build output. CARGO_TARGET_DIR moves it, and a run driven
 ## from another host does exactly that (cicd-win.ps1 -Wsl builds this tree with
