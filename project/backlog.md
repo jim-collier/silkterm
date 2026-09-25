@@ -103,11 +103,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 - 🔘 Other tables still use trailing pipes and unpadded columns: the rest of `README.md`, `cicd/tests/scroll/README.md`, `utility/include/showdown-readme.md`, and `wallpaper-attribution.md`, which `wallpaper-gallery.bash` writes.
 	- Opened: 20260924-175940
 
-- 🔘 t2nsn - old stray versions of executables and launchers: Find and move old GFS versions, and trash any out-of-place stray executables and scripts. Update '.desktop' files to run the correct bash script, launcher chain minimized or hidden, and use the icon from the 'latest version' symlink.
-	- Note: the launcher copies outside the repo are older than the ones in `utility/`, and nothing copies them over.
-	- Note: 20260924, t2nsn itself not looked at yet. A survey of the main workstation, taken by mistake for this item, found its desktop entry and keyboard shortcut running a stale mirror copy of the launcher, plus a few strays. That list is in the private notes.
-	- Opened: 20260924-113215
-
 - 🔘 Take shcl 3.0.0-beta.1 from crates.io once it is published, and drop the git patch in `Cargo.toml`.
 	- Opened: 20260924-141949
 
@@ -250,6 +245,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Opened: 20260920-190859
 
 ### Future and/or deferred
+
+- ✋ t2nsn - old stray versions of executables and launchers: Find and move old GFS versions, and trash any out-of-place stray executables and scripts. Update '.desktop' files to run the correct bash script, launcher chain minimized or hidden, and use the icon from the 'latest version' symlink.
+	- Note: the launcher copies outside the repo are older than the ones in `utility/`, and nothing copies them over.
+	- Note: 20260924, t2nsn itself not looked at yet. A survey of the main workstation, taken by mistake for this item, found its desktop entry and keyboard shortcut running a stale mirror copy of the launcher, plus a few strays. That list is in the private notes.
+	- ✋ Deferred: 20260924, nothing is being built or tested on t2nsn for now.
+	- Opened: 20260924-113215
 
 - ✋ With two tmux panes stacked and both printing, only one pane slides at a time, and the other jumps whole lines. Each time the other pane scrolls, the slide in progress jumps the rest of the way.
 	- Side-by-side panes are not affected.
