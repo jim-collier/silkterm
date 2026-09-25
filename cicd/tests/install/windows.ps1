@@ -6,7 +6,7 @@
 ##		missing Start Menu shortcut and PATH entry. It installs into a scratch
 ##		folder, with LOCALAPPDATA and APPDATA pointed there. The user PATH in the
 ##		registry is the one real thing it changes, and it is put back as it was.
-##	- Syntax: windows.ps1 [-Shell pwsh|powershell]
+##	- Syntax: windows.ps1 [-Shell pwsh|powershell] [-Installer <path to install.ps1>]
 ##		powershell runs the installer under Windows PowerShell 5.1.
 ##	- Exit: 0 when every check passed, 1 otherwise.
 ##	- History: At bottom of file.
@@ -15,7 +15,8 @@
 ##	SPDX-License-Identifier: GPL-2.0-or-later
 
 param(
-	[ValidateSet('pwsh', 'powershell')][string]$Shell = 'pwsh'
+	[ValidateSet('pwsh', 'powershell')][string]$Shell = 'pwsh',
+	[string]$Installer = (Join-Path $PSScriptRoot '../../../install.ps1')
 )
 
 Set-StrictMode -Version 2.0
@@ -23,7 +24,7 @@ $ErrorActionPreference = 'Stop'
 
 if ($PSVersionTable.PSVersion.Major -ge 6 -and -not $IsWindows) { Write-Host '  skip installer on Windows (not Windows)'; exit 0 }
 
-$installer = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../../../install.ps1')).Path
+$installer = (Resolve-Path -LiteralPath $Installer).Path
 $stubrun = Join-Path $PSScriptRoot 'stubrun.ps1'
 
 $failures = 0
@@ -73,7 +74,7 @@ function fPathHas {
 	finally { $key.Close() }
 }
 
-$saved = @{ LOCALAPPDATA = $env:LOCALAPPDATA; APPDATA = $env:APPDATA; STUB_DIR = $env:STUB_DIR }
+$saved = @{ LOCALAPPDATA = $env:LOCALAPPDATA; APPDATA = $env:APPDATA; STUB_DIR = $env:STUB_DIR; STUB_API_CODE = $env:STUB_API_CODE }
 $key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
 $hadPath = $key.GetValue('Path', $null, 'DoNotExpandEnvironmentNames')
 $pathKind = if ($null -ne $hadPath) { $key.GetValueKind('Path') } else { $null }
@@ -115,6 +116,13 @@ try {
 	fCheck 'and says so' ($out -match 'Put back what was missing')
 	$out = fInstall
 	fCheck 'with nothing missing, a re-run does nothing' ($out -match 'Already up to date')
+
+	##	An API failure is an error, never "no full release".
+	$env:STUB_API_CODE = '500'
+	$out = fInstall
+	$env:STUB_API_CODE = $null
+	fCheck 'a failed API call stops the install' ($out -match '(?m)^Error: could not read the release list')
+	fCheck 'and is not read as no full release' ($out -notmatch 'No full release')
 } finally {
 	if ($running) { try { $running.Kill() } catch { $null = $_ } }
 	foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }

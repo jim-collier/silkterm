@@ -22,9 +22,13 @@ function Invoke-RestMethod {
 	$code = if ($env:STUB_API_CODE) { [int]$env:STUB_API_CODE } else { 200 }
 	$body = [System.IO.File]::ReadAllText((Join-Path $env:STUB_DIR 'releases.json'))
 	if ($code -ge 300) {
-		##	What pwsh 7 throws for an HTTP error, body in ErrorDetails.
-		$resp = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]$code)
-		$ex = [Microsoft.PowerShell.Commands.HttpResponseException]::new("Response status code does not indicate success: $code.", $resp)
+		##	What each PowerShell throws for an HTTP error, body in ErrorDetails.
+		if ($PSVersionTable.PSVersion.Major -ge 6) {
+			$resp = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]$code)
+			$ex = [Microsoft.PowerShell.Commands.HttpResponseException]::new("Response status code does not indicate success: $code.", $resp)
+		} else {
+			$ex = New-Object System.Net.WebException "The remote server returned an error: ($code)."
+		}
 		$err = [System.Management.Automation.ErrorRecord]::new($ex, 'WebCmdletWebResponseException', 'InvalidOperation', $Uri)
 		$err.ErrorDetails = [System.Management.Automation.ErrorDetails]::new($body)
 		throw $err
