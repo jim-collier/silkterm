@@ -2419,7 +2419,7 @@ dependencies = [
 [[package]]
 name = "shcl"
 version = "2.0.0"
-source = "git+https://github.com/yottacore/shcl?branch=dev#8711b460f51026a954c8a76bc84b05af71ae2b3e"
+source = "git+https://github.com/yottacore/shcl?branch=dev#30d367274cc835de78ac0b22c0d8342eb512dfd5"
 
 [[package]]
 name = "shlex"

@@ -86,6 +86,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Seen on a hand-written file: the Performance defaults were written under Transparency, and the next launch added them again where they belong.
 	- Same cause as the dotted-line config item below. The launch step that adds missing settings picks their place from a file with too few lines to go on. That step is SilkTerm's own, so a new shcl release is unlikely to fix either one.
 	- ✋ Held with that item.
+	- Note: 20260925, still seen on the latest shcl build. An eight-line file got the text defaults under `colors`, and the next launch added them again. It settles on the third launch.
 	- Opened: 20260910-230211
 
 - ✋ A config written as single dotted lines grows on every launch, with settings added under the wrong sections.
@@ -95,16 +96,22 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Note: 20260924, shcl 3.0 gives the same file as 2.0.0 here, so the fix is SilkTerm's own, as with the item above.
 	- Opened: 20260915
 
-### Features and enhancements
+- 🔘 A line the parse drops can make the whole settings file convert as the old flat layout.
+	- The line is tab-indented, steps back to a depth nothing uses, and is named like an old flat setting such as `margin`. SilkTerm's own reader takes it as a top-level setting, so the file is moved aside to `.bak` and written fresh.
+	- Opened: 20260925-073415
 
-- 🔘 Take shcl 3.0.0-beta.1 from crates.io once it is published, and drop the git patch in `Cargo.toml`.
-	- Opened: 20260924-141949
+- 🔘 Adding missing settings at launch can give a dropped line a place, so it starts being read.
+	- Example: `window:` with `margin` two tabs in and a stray line one tab in. The added window settings go in at one tab, and the stray line becomes a window setting.
+	- Opened: 20260925-073415
+
+### Features and enhancements
 
 - ✋ Save settings by editing only the lines that changed, so a file with a line that cannot be read still takes the window size, menu switches and new shells.
 	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
 	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
 	- Note: 20260924, shcl 3.0 still counts a line it cannot place as lost and has no save that edits single lines. So this is no longer waiting on shcl.
 	- Decided: 20260924, stays held for now.
+	- Note: 20260925, shcl now keeps a stray line indented with spaces as written, so a save goes through beside one. A tab-indented line that steps back to a depth nothing uses is still dropped, and a save still refuses over it.
 	- Opened: 20260918
 
 - **Stop here to work on releasing RC1**.
@@ -2246,6 +2253,16 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - Features and enhancements
+
+- ✅ Integrate and test the latest shcl 3.0.0-beta.1 build from shcl's dev branch.
+	- Done: now on shcl's dev at 30d3672. The settings dialog file needed no conversion.
+	- Fixed: a settings file with a stray line indented with spaces can be saved again. The line is kept as written, and the launch still says which line sets nothing.
+	- Changed: the footer links the `v3.0.0-beta1` spec. A footer with the old `v3.0.0` link, which never existed, is replaced at launch.
+	- Changed: the one-time rewrite of a 2.x file uses shcl's own call for leaving the stamp off, in place of trimming it after.
+	- Note: unchanged by this build: a save still tidies quotes, there is still no save that edits single lines, and the short-file growth under Bugs still happens.
+	- Pinned by: `a_save_keeps_a_space_indented_stray`, watched red with the new message taken out.
+	- Opened: 20260925-073415
+	- Closed: 20260925-073415
 
 - ✅ Other tables still use trailing pipes and unpadded columns: the rest of `README.md`, `cicd/tests/scroll/README.md`, `utility/include/showdown-readme.md`, and `wallpaper-attribution.md`, which `wallpaper-gallery.bash` writes.
 	- Done: all nine reformatted through the same writer as the README's generated table, and two more in the backlog's own Done section.
