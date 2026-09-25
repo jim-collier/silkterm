@@ -664,6 +664,7 @@ function fMain {
 		##	Start Menu shortcut (Windows)
 		if ($needMenu) {
 			try {
+				New-Item -ItemType Directory -Force -Path $menuDir | Out-Null
 				$shell = New-Object -ComObject WScript.Shell
 				$lnk = $shell.CreateShortcut($menuFile)
 				$lnk.TargetPath = $destFile
