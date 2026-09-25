@@ -633,7 +633,7 @@ function fMain {
 			##	Linux refuses to write over a running program ("text file busy")
 			##	but lets a rename replace it. Windows refuses both, but lets the
 			##	running file itself be renamed out of the way; the old copy is
-			##	then removed on the next run, once nothing has it open.
+			##	removed by the next upgrade, once nothing has it open.
 			Write-Host ''
 			Write-Host 'Installing ...'
 			try { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
