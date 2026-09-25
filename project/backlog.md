@@ -106,17 +106,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Features and enhancements
 
-- 🔘 Take shcl 3.0.0-beta.1 from crates.io once it is published, and drop the git patch in `Cargo.toml`.
-	- Opened: 20260924-141949
-
-- ✋ Save settings by editing only the lines that changed, so a file with a line that cannot be read still takes the window size, menu switches and new shells.
-	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
-	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
-	- Note: 20260924, shcl 3.0 still counts a line it cannot place as lost and has no save that edits single lines. So this is no longer waiting on shcl.
-	- Opened: 20260918
-
-- **Stop here to work on releasing RC1**.
-
 - 🔘 Pipeline and installer review 20260924
 	- 🔘 The installers take the first release the API lists. Sort by version instead, with `1.0.0-alpha.2` below `1.0.0`, and skip drafts.
 		- Opened: 20260924-115032
@@ -127,8 +116,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Opened: 20260924-115032
 	- 🔘 Package icons. The setup `.exe` has the stock NSIS icon and no version details. The `.deb` and `.rpm` launcher uses a generic terminal icon.
 		- Note: also settle whether packages carry the wallpaper pack.
-		- Opened: 20260924-115032
-	- 🔘 Demo tails: the gif should cut to 3 s of black with no hold first. The video should fade in over 0.5 s and out over 2 s.
 		- Opened: 20260924-115032
 	- 🔘 Route remote `git` and `gh` calls in the pipeline through `gitsby raw`, with plain `git` and `gh` where it is missing.
 		- Opened: 20260924-115032
@@ -141,14 +128,25 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- 🔘 Give the two installers matching names for the same settings, and the same spacing between sections.
 		- Opened: 20260924-115032
 
+- 🔘 t2nsn - old stray versions of executables and launchers: Find and move old GFS versions, and trash any out-of-place stray executables and scripts. Update '.desktop' files to run the correct bash script, launcher chain minimized or hidden, and use the icon from the 'latest version' symlink.
+	- Note: the launcher copies outside the repo are older than the ones in `utility/`, and nothing copies them over.
+	- Opened: 20260924-113215
+
+- 🔘 Take shcl 3.0.0-beta.1 from crates.io once it is published, and drop the git patch in `Cargo.toml`.
+	- Opened: 20260924-141949
+
+- ✋ Save settings by editing only the lines that changed, so a file with a line that cannot be read still takes the window size, menu switches and new shells.
+	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
+	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
+	- Note: 20260924, shcl 3.0 still counts a line it cannot place as lost and has no save that edits single lines. So this is no longer waiting on shcl.
+	- Opened: 20260918
+
+- **Stop here to work on releasing RC1**.
+
 - 🔘 Create another, private repo for macOS and [WinUI 3 + Windows App SDK] builds.
 	- Opened: 20260924-113215
 
 - 🔘 After October and/or when updated silkterm has run on all hosts: Remove code that migrates and/or updates old config files.
-	- Opened: 20260924-113215
-
-- 🔘 t2nsn - old stray versions of executables and launchers: Find and move old GFS versions, and trash any out-of-place stray executables and scripts. Update '.desktop' files to run the correct bash script, launcher chain minimized or hidden, and use the icon from the 'latest version' symlink.
-	- Note: the launcher copies outside the repo are older than the ones in `utility/`, and nothing copies them over.
 	- Opened: 20260924-113215
 
 - 🔘 Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
