@@ -98,6 +98,19 @@ fCheck "a set still missing one is refused" fNot
 : > art/app-windows.exe
 fCheck "a whole set is accepted" fYes
 
+## The release notes name the build, read out of the binary's --version by
+## release.bash's own pattern, lifted here so the two cannot drift apart.
+pattern="$(sed -n "s/^[[:space:]]*build_id=.*sed -n '\\(.*\\)' || true)\"$/\\1/p" "${root}/utility/release.bash")"
+built="$(ls -t "${root}/../target/debug/silkterm" "${root}/../target/release/silkterm" 2>/dev/null | head -1 || true)"
+if [[ -z "${pattern}" ]]; then
+	echo "  FAIL release.bash's build number pattern was not found"; failures=$((failures + 1))
+elif [[ -n "${built}" ]]; then
+	got="$("${built}" --version | sed -n "${pattern}")"
+	fCheck "release.bash reads the build number from --version" test -n "${got}"
+else
+	echo "  skip reading the build number (no built binary)"
+fi
+
 ## Signing. The checksums file says the download was not corrupted; the signature
 ## is what says it came from here. Driven with a throwaway key: signed the way
 ## release.bash signs, and checked by each installer's OWN verify function, so a

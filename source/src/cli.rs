@@ -681,11 +681,12 @@ fn find_pane(tab: &TabSpec, id: &str) -> Option<usize> {
 		.position(|pane| pane.id.as_deref() == Some(id))
 }
 
-// Program name, version and build, as --version prints it. The build number is
-// last so a script reading the second field still gets the version.
+// Program name, version and build, as --version prints it, and nothing else.
+// The build number is last so a script reading the second field still gets the
+// version.
 pub fn version_line() -> String {
 	format!(
-		"{} {} (build {})",
+		"{} v{} build {}",
 		config::APP_NAME,
 		env!("CARGO_PKG_VERSION"),
 		config::BUILD_ID
@@ -885,7 +886,18 @@ mod tests {
 		// One flush line: it exists to be captured by a script.
 		assert!(!line.contains('\n'));
 		// A script reading the second field still gets the version, not the build.
-		assert_eq!(line.split(' ').nth(1), Some(env!("CARGO_PKG_VERSION")));
+		// Retired 2026-09-24: the version now carries a leading "v", as release
+		// tags do, so the second field is "v<version>". The assertion below replaces it.
+		// assert_eq!(line.split(' ').nth(1), Some(env!("CARGO_PKG_VERSION")));
+		assert_eq!(
+			line,
+			format!(
+				"{} v{} build {}",
+				config::APP_NAME,
+				env!("CARGO_PKG_VERSION"),
+				config::BUILD_ID
+			)
+		);
 	}
 
 	#[test]
