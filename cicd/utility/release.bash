@@ -26,6 +26,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "${here}/../.." && pwd)"
 cd "${root}"
 source "${here}/../config.bash"
+source "${here}/include/remote-git.bash"
 
 do_push=0; do_publish=0; assume_yes=0
 while (($#)); do case "$1" in
@@ -110,8 +111,8 @@ echo "tagged ${tag}"
 
 ## 4/5. Push and publish.
 if ((do_push)); then
-	git push origin main
-	git push origin "${tag}"
+	fRemoteGit push origin main
+	fRemoteGit push origin "${tag}"
 	echo "pushed main + ${tag}"
 else
 	echo "next: git push origin main && git push origin ${tag}"
@@ -129,7 +130,7 @@ if ((do_publish)); then
 	if [[ -n "$build_id" ]]; then
 		notes+=$'\n\n'"Build ${build_id}. Every download here is that build; \`silkterm --version\` says which one you are running."
 	fi
-	gh release create "${tag}" --title "${APP_NAME} ${ver}" --notes "${notes}" \
+	fRemoteGh release create "${tag}" --title "${APP_NAME} ${ver}" --notes "${notes}" \
 		"${prerelease[@]}" "${art_dir}/${EXE_NAME}-${ver}-"*
 	echo "GitHub Release ${tag} created with artifacts${prerelease:+ (pre-release)}"
 elif ((do_push)); then

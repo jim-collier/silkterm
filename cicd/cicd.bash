@@ -72,6 +72,7 @@ root="$(cd "${here}/.." && pwd)"   # the git repo root (cicd/..)
 export PATH="${HOME}/.cargo/bin:${HOME}/.local/bin:${PATH}"       ## rustup toolchain (cross targets, edition 2024) + zig must beat system rust.
 source "${here}/config.bash"
 source "${here}/utility/include/gfs-rotate.bash"                  ## gfs_rotate() for the profiler artifacts
+source "${here}/utility/include/remote-git.bash"                  ## fRemoteGit / fRemoteGh, as the folder's own account
 ##  shellcheck source=cicd/utility/built-from.bash
 source "${here}/utility/built-from.bash"                          ## the artifacts' provenance note
 declare -p FMT_CMD &>/dev/null || FMT_CMD=()                      ## tolerate a config without the fmt stage
@@ -463,7 +464,7 @@ if ((! sync)); then
 	fEcho_Clean "remote sync skipped"
 elif ! git rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
 	fEcho_Clean "no upstream for $(git rev-parse --abbrev-ref HEAD); nothing to sync"
-elif ! git fetch --quiet 2>/dev/null; then
+elif ! fRemoteGit fetch --quiet 2>/dev/null; then
 	fEcho "WARNING: git fetch failed (offline?); continuing with the local tree"
 else
 	ahead="$(git rev-list --count '@{u}..HEAD')"
@@ -487,7 +488,7 @@ else
 			((stashesAfter > stashesBefore)) && didStash=1
 		fi
 		fEcho_Clean "git pull --ff-only ..."
-		git pull --ff-only
+		fRemoteGit pull --ff-only
 		if ((didStash)); then
 			fEcho_Clean "git stash pop ..."
 			git stash pop

@@ -105,7 +105,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- 🔘 Route remote `git` and `gh` calls in the pipeline through `gitsby raw`, with plain `git` and `gh` where it is missing.
 		- Opened: 20260924-115032
 
-- 🔘 Hand-written tables still use trailing pipes and unpadded columns: other tables in `README.md`, `cicd/tests/scroll/README.md`, `utility/include/showdown-readme.md`, and `wallpaper-attribution.md`, which `wallpaper-gallery.bash` writes.
+- 🔘 Other tables still use trailing pipes and unpadded columns: the rest of `README.md`, `cicd/tests/scroll/README.md`, `utility/include/showdown-readme.md`, and `wallpaper-attribution.md`, which `wallpaper-gallery.bash` writes.
 	- Opened: 20260924-175940
 
 - 🔘 t2nsn - old stray versions of executables and launchers: Find and move old GFS versions, and trash any out-of-place stray executables and scripts. Update '.desktop' files to run the correct bash script, launcher chain minimized or hidden, and use the icon from the 'latest version' symlink.
