@@ -332,10 +332,10 @@ PowerShell needs the script-block form to pass anything, `-Help` included:
 
 Install locations:
 
-| OS      | User install (default)                    | <- Launcher                                                     | (or) System install       | <- Launcher
-| :---    | :---                                      | :---                                                            | :---                      | :---
-| Linux   | `~/.local/bin/silkterm`                   | `~/.local/share/applications/silkterm.desktop`                  | `/usr/local/bin/silkterm` | `/usr/local/share/applications/silkterm.desktop`
-| Windows | `%LOCALAPPDATA%\Programs\SilkTerm\`       | Start Menu shortcut, and the install dir is added to `%PATH%`   | `C:\Program Files\SilkTerm\` | Common Start Menu shortcut (needs an elevated shell)
+| OS      | User install (default)              | <- Launcher                                                   | (or) System install          | <- Launcher
+| :------ | :---------------------------------- | :------------------------------------------------------------ | :--------------------------- | :---------------------------------------------------
+| Linux   | `~/.local/bin/silkterm`             | `~/.local/share/applications/silkterm.desktop`                | `/usr/local/bin/silkterm`    | `/usr/local/share/applications/silkterm.desktop`
+| Windows | `%LOCALAPPDATA%\Programs\SilkTerm\` | Start Menu shortcut, and the install dir is added to `%PATH%` | `C:\Program Files\SilkTerm\` | Common Start Menu shortcut (needs an elevated shell)
 
 Only Linux and Windows binaries are published so far. On anything else the installer says so and lists what the release does carry, so build it yourself - below.
 
@@ -373,11 +373,11 @@ git config core.hooksPath utility/git-hooks
 
 On first run SilkTerm writes a commented config file with all defaults, in the place each platform keeps settings:
 
-| OS      | Config                                          | Wallpaper folder
-| :---    | :---                                            | :---
+| OS      | Config                                            | Wallpaper folder
+| :------ | :------------------------------------------------ | :-----------------------------------
 | Linux   | `$XDG_CONFIG_HOME/silkterm/` (or `~/.config/...`) | beside the config
-| Windows | `%APPDATA%\silkterm\`                           | `%LOCALAPPDATA%\silkterm\wallpaper\`
-| macOS   | `~/Library/Application Support/silkterm/`       | beside the config
+| Windows | `%APPDATA%\silkterm\`                             | `%LOCALAPPDATA%\silkterm\wallpaper\`
+| macOS   | `~/Library/Application Support/silkterm/`         | beside the config
 
 Setting `XDG_CONFIG_HOME` overrides the platform default everywhere, and `--config PATH` overrides everything - an alternate config keeps its own wallpaper and history beside itself rather than sharing the defaults.
 

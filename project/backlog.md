@@ -97,9 +97,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Features and enhancements
 
-- 🔘 Other tables still use trailing pipes and unpadded columns: the rest of `README.md`, `cicd/tests/scroll/README.md`, `utility/include/showdown-readme.md`, and `wallpaper-attribution.md`, which `wallpaper-gallery.bash` writes.
-	- Opened: 20260924-175940
-
 - 🔘 Take shcl 3.0.0-beta.1 from crates.io once it is published, and drop the git patch in `Cargo.toml`.
 	- Opened: 20260924-141949
 
@@ -2230,25 +2227,32 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 	- Installation locations for CLI programs (in this example, a program that has multiple files and a symlinked executable):
 
-		| OS      | System multi-file path  | <- Single exe or symlink        | (or) User install path              | <- Single exe or symlink
-		| :---    | :---                    | :---                           | :---                                | :---
-		| Linux   | /opt/PROG/              | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
-		| BSD     | /usr/local/PROG/        | /usr/local/bin/PROG            | ~/.local/share/PROG/                | ~/.local/bin/PROG
-		| Windows | C:\Program Files\PROG\  | *Add install dir to `%PATH%`*  | %LOCALAPPDATA%\Programs\PROG\       | *Add install dir to `%PATH%`*
-		| macOS   | /opt/PROG/              | /usr/local/bin/PROG            | ~/Library/Application Support/PROG/ | ~/.local/bin/PROG
+		| OS      | System multi-file path | <- Single exe or symlink      | (or) User install path              | <- Single exe or symlink
+		| :------ | :--------------------- | :---------------------------- | :---------------------------------- | :----------------------------
+		| Linux   | /opt/PROG/             | /usr/local/bin/PROG           | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| BSD     | /usr/local/PROG/       | /usr/local/bin/PROG           | ~/.local/share/PROG/                | ~/.local/bin/PROG
+		| Windows | C:\Program Files\PROG\ | *Add install dir to `%PATH%`* | %LOCALAPPDATA%\Programs\PROG\       | *Add install dir to `%PATH%`*
+		| macOS   | /opt/PROG/             | /usr/local/bin/PROG           | ~/Library/Application Support/PROG/ | ~/.local/bin/PROG
 
 	- Installation locations for GUI packages (in this example, a program that has multiple files and a symlinked executable):
 
-		| OS      | System multi-file path  | <- Launcher                                                    | (or) User install path        | <- Launcher
-		| :---    | :---                    | :---                                                          | :---                          | :---
-		| Linux   | /opt/PROG/              | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
-		| BSD     | /usr/local/PROG/        | /usr/local/share/applications/PROG.desktop                    | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
-		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk  | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
-		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                             | ~/Applications/PROG.app/      | *.app bundle*
+		| OS      | System multi-file path  | <- Launcher                                                  | (or) User install path        | <- Launcher
+		| :------ | :---------------------- | :----------------------------------------------------------- | :---------------------------- | :-------------------------------------------------------
+		| Linux   | /opt/PROG/              | /usr/local/share/applications/PROG.desktop                   | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| BSD     | /usr/local/PROG/        | /usr/local/share/applications/PROG.desktop                   | ~/.local/share/PROG/          | ~/.local/share/applications/PROG.desktop
+		| Windows | C:\Program Files\PROG\  | %ProgramData%\Microsoft\Windows\Start Menu\Programs\PROG.lnk | %LOCALAPPDATA%\Programs\PROG\ | %APPDATA%\Microsoft\Windows\Start Menu\Programs\PROG.lnk
+		| macOS   | /Applications/PROG.app/ | *The .app bundle is the launcher*                            | ~/Applications/PROG.app/      | *.app bundle*
 	- Opened: 20260723-135701
 	- Closed: 20260723-190021
 
 #### Done - Features and enhancements
+
+- ✅ Other tables still use trailing pipes and unpadded columns: the rest of `README.md`, `cicd/tests/scroll/README.md`, `utility/include/showdown-readme.md`, and `wallpaper-attribution.md`, which `wallpaper-gallery.bash` writes.
+	- Done: all nine reformatted through the same writer as the README's generated table, and two more in the backlog's own Done section.
+	- Note: `wallpaper-gallery.bash` reads the attribution file rather than writing it. It reads the same 111 rows as before.
+	- Pinned by: `cicd/tests/tables/run.py`, run by cicd over every `.md`, with `--fix` to rewrite. It failed on all eleven before the fix.
+	- Opened: 20260924-175940
+	- Closed: 20260924-194939
 
 - ✅ Pipeline and installer review 20260924
 	- ✅ Prove the builds are reproducible: two checkouts in different places, same checksum. Then say so in the README.

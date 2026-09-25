@@ -671,6 +671,13 @@ if [[ -x "${root}/cicd/tests/toc/run.py" ]]; then
 	"${root}/cicd/tests/toc/run.py" >/dev/null || fDie "a table of contents is out of date - run cicd/tests/toc/run.py --fix"
 	fEcho "OK: tables of contents"
 fi
+## Every markdown table, laid out as the README's generated one is. Hand-written
+## ones had drifted to trailing pipes and ragged columns.
+if [[ -x "${root}/cicd/tests/tables/run.py" ]]; then
+	fEcho_Clean "markdown tables ..."
+	"${root}/cicd/tests/tables/run.py" >/dev/null || fDie "a markdown table is not canonical - run cicd/tests/tables/run.py --fix"
+	fEcho "OK: markdown tables"
+fi
 ## The Windows scenario harness, which once tested whatever the box last built
 ## and stopped every SilkTerm on a shared box.
 if [[ -x "${root}/cicd/tests/wingui/harness-test.bash" ]]; then
