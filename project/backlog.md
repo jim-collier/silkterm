@@ -105,7 +105,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 - 🔘 t2nsn - old stray versions of executables and launchers: Find and move old GFS versions, and trash any out-of-place stray executables and scripts. Update '.desktop' files to run the correct bash script, launcher chain minimized or hidden, and use the icon from the 'latest version' symlink.
 	- Note: the launcher copies outside the repo are older than the ones in `utility/`, and nothing copies them over.
-	- Note: 20260924, surveyed on the Linux box and nothing changed yet. The versions folder is in order. The desktop entry and the keyboard shortcut run the stale mirror copy of the launcher, and a handful of strays turned up. The list is in the private notes, waiting for a go-ahead. The Windows boxes are still to look at.
+	- Note: 20260924, t2nsn itself not looked at yet. A survey of the main workstation, taken by mistake for this item, found its desktop entry and keyboard shortcut running a stale mirror copy of the launcher, plus a few strays. That list is in the private notes.
 	- Opened: 20260924-113215
 
 - 🔘 Take shcl 3.0.0-beta.1 from crates.io once it is published, and drop the git patch in `Cargo.toml`.
