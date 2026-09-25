@@ -388,7 +388,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Fixed: the wine launcher turns the menu builder off for the prefix boot and the run, and keeps any override already set.
 	- Pinned by: `cicd/tests/wine/run.bash`, run by cicd. It fails on the old launcher.
 	- Swept: that launcher is the only script that calls wine.
-	- Note: the six stale entries from earlier runs are still on the desktop. Removing them is a desktop cleanup, not a repo change.
+	- Note: the six stale entries came from a wine 11 test prefix run by hand, not through the launcher. They and their icons were removed 20260924. A wine test run by hand needs the same override.
 	- Opened: 20260924-181200
 	- Closed: 20260924-194728
 
