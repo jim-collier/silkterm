@@ -6,8 +6,9 @@
 ##		to give the same bytes wherever it is built, or a published checksum
 ##		says nothing about the source it names.
 ##	- Syntax: repro-check.bash [--target <triple>] [--keep] [commit]
-##		The commit defaults to HEAD, and the target to this box's own. --keep
-##		leaves both clones under target/ to look into.
+##		The commit defaults to HEAD, and the target to this box's own. A target is
+##		built with the command config.bash gives it, zigbuild for the ARM ones.
+##		--keep leaves both clones under target/ to look into.
 ##	- Exit: 0 the two are identical, 1 they differ, 2 usage or a failed build.
 ##	- History: At bottom of file.
 
@@ -30,6 +31,18 @@ while (($#)); do case "$1" in
 esac; done
 commit="$(git -C "${root}" rev-parse --verify "${commit}^{commit}")" || exit 2
 
+## The build command, from the same table cicd.bash builds releases from.
+# shellcheck source=cicd/config.bash
+source "${root}/cicd/config.bash"
+buildCmd="${RELEASE_NATIVE_CMD[*]}"
+if [[ -n "${triple}" ]]; then
+	buildCmd=""
+	for row in "${CROSS_TARGETS[@]}"; do
+		[[ "${row##*|}" == *"--target ${triple}" ]] && buildCmd="${row##*|}"
+	done
+	[[ -n "${buildCmd}" ]] || { echo "config.bash builds no release for ${triple}" >&2; exit 2; }
+fi
+
 ## The build number the way cicd.bash pins it for a clean tree: the commit's time.
 SILK_BUILD_MINUTES=$(( ($(git -C "${root}" log -1 --format=%ct "${commit}") - 946684800) / 60 ))
 export SILK_BUILD_MINUTES
@@ -43,6 +56,7 @@ trap fCleanup EXIT
 ## difference rather than cancelling out.
 sides=("${work}/a" "${work}/second/checkout-b")
 jobs="$(( $(nproc) / 2 ))"; ((jobs > 0)) || jobs=1
+export CARGO_BUILD_JOBS="${jobs}"
 
 fBuild(){
 	local dir="$1" try
@@ -52,11 +66,9 @@ fBuild(){
 	## The same path map cicd.bash's release stage writes.
 	printf "[target.'cfg(all())']\nrustflags = ['--remap-path-prefix=%s=/cargo', '--remap-path-prefix=%s=/silkterm', '--remap-path-prefix=%s=/target']\n" \
 		"${CARGO_HOME:-${HOME}/.cargo}" "${dir}" "${dir}/target" > "${dir}/target/remap-paths.toml"
-	local -a cmd=(cargo build --release --jobs "${jobs}" --config "${dir}/target/remap-paths.toml")
-	[[ -z "${triple}" ]] || cmd+=(--target "${triple}")
 	## A fat-LTO rustc crash here is a known transient, so one more try.
 	for try in 1 2; do
-		if (cd "${dir}" && CARGO_TARGET_DIR="${dir}/target" "${cmd[@]}"); then return 0; fi
+		if (cd "${dir}" && CARGO_TARGET_DIR="${dir}/target" eval "${buildCmd} --config $(printf '%q' "${dir}/target/remap-paths.toml")"); then return 0; fi
 		echo "build failed in ${dir} (try ${try})" >&2
 	done
 	return 1
