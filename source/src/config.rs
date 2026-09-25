@@ -1439,12 +1439,16 @@ pub fn take_refusal() -> Option<Refusal> {
 }
 
 fn unreadable_lines(doc: &shcl::Document) -> Vec<usize> {
-	doc.diagnostics()
+	let mut lines: Vec<usize> = doc
+		.diagnostics()
 		.iter()
 		.filter(|d| matches!(d.severity, shcl::Severity::Error))
 		.map(|d| d.line)
 		.filter(|line| *line > 0)
-		.collect()
+		.collect();
+	lines.sort_unstable();
+	lines.dedup();
+	lines
 }
 
 // The same gate and text as shcl's own save, through the writer above, which
@@ -2160,10 +2164,18 @@ fn config_complaints(text: &str) -> Vec<String> {
 	let mut out = Vec::new();
 
 	let lost = doc.lost_count();
+	let lines = unreadable_lines(&doc);
 	if lost > 0 {
-		let lines = unreadable_lines(&doc);
 		out.push(format!(
 			"{lost} line(s) could not be read{} - settings cannot be saved until that is fixed",
+			line_list(&lines)
+		));
+	} else if !lines.is_empty() {
+		// shcl keeps a space-indented stray as written, so a save goes through,
+		// but it still sets nothing.
+		out.push(format!(
+			"{} line(s) could not be read{} - they are kept but set nothing",
+			lines.len(),
 			line_list(&lines)
 		));
 	}
@@ -4923,6 +4935,18 @@ fn trailing_comment(rest: &str) -> Option<&str> {
 // middle. Its Format line is also what marks a file as past shcl 2.x.
 const SHCL_BANNER: &str = shcl::GEN_BANNER;
 
+// The first 3.0 footer, whose Syntax link named a tag that was never cut.
+const SHCL_BANNER_OLD_V3: &str = "\
+##
+## This config file format is SHCL.
+## \"Simple Hierarchical Config Language\"
+##    Format   3
+##    Home     https://github.com/yottacore/shcl
+##    Syntax   https://github.com/yottacore/shcl/blob/v3.0.0/project/spec.md
+##    Legal    SHCL is Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]. License: MIT. No warranty.
+##
+";
+
 // The footer from before it carried a Format line.
 const SHCL_BANNER_OLD_MAIN: &str = "\
 ##
@@ -4966,6 +4990,7 @@ fn with_shcl_banner(text: &str) -> Option<String> {
 	let mut lines: Vec<&str> = text.lines().collect();
 	for spelling in [
 		SHCL_BANNER,
+		SHCL_BANNER_OLD_V3,
 		SHCL_BANNER_OLD_MAIN,
 		SHCL_BANNER_OLD_HOME,
 		SHCL_BANNER_OLD,
@@ -5002,21 +5027,16 @@ fn run_at(lines: &[&str], run: &[&str]) -> Option<usize> {
 // spellings differently. The one that matters here is a backslash outside
 // double quotes, which a Windows path is full of. shcl rewrites the file once
 // so it reads the same. The footer's Format line is what says it was done, so
-// migrate's own stamp at the end gives way to the footer wherever it is ours.
+// the footer goes on in place of migrate's own stamp wherever it is ours.
 fn from_shcl2_text(text: &str) -> Option<String> {
-	if text.lines().any(|l| l.starts_with(shcl::FORMAT_LINE_HEAD)) {
+	let migrated = shcl::migrate_unstamped(text, true);
+	if migrated.current {
 		return None;
 	}
-	let stamped = shcl::migrate(text, true).text;
-	let stamp = format!("{}\n", shcl::FORMAT_LINE);
-	let body = stamped
-		.strip_suffix(&format!("{stamp}{}\n", shcl::MIGRATED_LINE))
-		.or_else(|| stamped.strip_suffix(&stamp))
-		.unwrap_or(&stamped);
-	// None here is a footer somebody rewrote, which keeps migrate's stamp
-	let out = with_shcl_banner(body)
+	// None here is a footer somebody rewrote, which gets migrate's stamp
+	let out = with_shcl_banner(&migrated.text)
 		.filter(|out| out.contains(shcl::FORMAT_LINE))
-		.unwrap_or_else(|| stamped.clone());
+		.unwrap_or_else(|| shcl::migrate(text, true).text);
 	(out != text).then_some(out)
 }
 
@@ -5725,7 +5745,7 @@ shell:
 ## "Simple Hierarchical Config Language"
 ##    Format   3
 ##    Home     https://github.com/yottacore/shcl
-##    Syntax   https://github.com/yottacore/shcl/blob/v3.0.0/project/spec.md
+##    Syntax   https://github.com/yottacore/shcl/blob/v3.0.0-beta1/project/spec.md
 ##    Legal    SHCL is Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]. License: MIT. No warranty.
 ##
 "##;
@@ -6468,7 +6488,7 @@ mod tests {
 		let dir = std::env::temp_dir().join(format!("silkterm_refused_{}", std::process::id()));
 		let _ = std::fs::create_dir_all(&dir);
 		let path = dir.join("config.shcl");
-		let doc = shcl::Document::parse("window:\n\topacity: 1.0\n    margin: 4\n");
+		let doc = shcl::Document::parse("window:\n\t\tmargin: 4\n\tstray: 1\n");
 		assert_eq!(doc.lost_count(), 1);
 		// whatever another test refused before this one
 		let _ = take_refusal();
@@ -7145,7 +7165,7 @@ mod tests {
 		// A word no rating writes is refused, and the reason is true of the file:
 		// it reads clean, or it has a line the parse drops.
 		let clean = "performance:\n\trated_hardware: 0000000000000000\n";
-		let lossy = "performance:\n\trated_hardware: 0000000000000000\n    automatic: true\n";
+		let lossy = "performance:\n\t\trated_hardware: 0000000000000000\n\tautomatic: true\n";
 		assert_eq!(shcl::Document::parse(lossy).lost_count(), 1);
 		for word in [
 			"a\"b",
@@ -7191,10 +7211,10 @@ mod tests {
 	}
 
 	// A line placed in a block that already drops one can change which line the
-	// parse drops. The count stays the same, and another setting loads differently.
+	// parse drops. The count does not grow, and another setting loads differently.
 	#[test]
 	fn a_rating_changes_no_other_setting() {
-		let text = "performance:\n    # rated_hardware: \"\"  ## Default\n\tautomatic: false\n    check_hardware: false\n";
+		let text = "performance:\n\t\t# rated_hardware: \"\"  ## Default\n\t\t\tautomatic: false\n\t\tcheck_hardware: false\n";
 		let before = shcl::Document::parse(text);
 		assert_eq!(before.lost_count(), 1);
 		assert_eq!(before.get_bool("performance.automatic"), Ok(false));
@@ -7387,7 +7407,7 @@ mod tests {
 			rated_hardware: Some("0123456789abcdef"),
 			..RatingLines::default()
 		};
-		let lost = "window:\n\topacity: 1.0\n    margin: 4\n";
+		let lost = "window:\n\t\tmargin: 4\n\tstray: 1\n";
 		for (what, block, want) in [
 			(
 				"first in the block",
@@ -7404,7 +7424,7 @@ mod tests {
 			assert_eq!(
 				shcl::Document::parse(&text).lost_count(),
 				1,
-				"{what}: the space-indented line is the one the parse drops"
+				"{what}: the line stepping back to no level is the one the parse drops"
 			);
 			assert_eq!(
 				with_rating_lines(&text, &lines),
@@ -7431,8 +7451,8 @@ mod tests {
 			rating_spelling("rated_hardware", RatingValue::Word(ID)).expect("a plain id"),
 		)];
 		let written = ["performance.rated_hardware".to_string()];
-		let block = "performance:\n\trated_hardware: 0000000000000000\nperformance.rated_hardware: 1111111111111111\n    check_hardware: true\n";
-		let lost = "window:\n\topacity: 1.0\n    margin: 4\n";
+		let block = "performance:\n\t\trated_hardware: 0000000000000000\nperformance.rated_hardware: 1111111111111111\n\tcheck_hardware: true\n";
+		let lost = "window:\n\t\tmargin: 4\n\tstray: 1\n";
 		for (what, text, had) in [
 			("a file that reads clean", block.to_string(), 0),
 			(
@@ -7944,7 +7964,8 @@ mod tests {
 
 	// A line the parse cannot place made every save refuse, and the rating is a
 	// save, so the test ran at every launch. The rating goes in beside it now; the
-	// dialog's refusal to rewrite such a file stays.
+	// dialog's refusal to rewrite such a file stays. The line sits in a theme,
+	// where the reload's backfill adds nothing that could give it a level.
 	#[test]
 	fn a_rating_is_kept_beside_an_unreadable_line() {
 		const ID: &str = "0123456789abcdef";
@@ -7954,11 +7975,11 @@ mod tests {
 		let _ = std::fs::remove_dir_all(&dir);
 		std::fs::create_dir_all(&dir).unwrap();
 		let path = dir.join("config.shcl");
-		let text = "window:\n\topacity: 1.0\n    margin: 4\n\nperformance:\n\t# profile: \"max\"  ## Default\n\t# rated_hardware: \"\"  ## Default\n";
+		let text = "themes:\n\tone:\n\t\t\tname: One\n\t\tstray: 1\n\nperformance:\n\t# profile: \"max\"  ## Default\n\t# rated_hardware: \"\"  ## Default\n";
 		assert_eq!(
 			shcl::Document::parse(text).lost_count(),
 			1,
-			"the space-indented line is the one the parse drops"
+			"the line stepping back to no level is the one the parse drops"
 		);
 		std::fs::write(&path, text).unwrap();
 		set_config_override(path.clone());
@@ -7971,7 +7992,7 @@ mod tests {
 		assert_eq!(keep_rating(&lines), Kept::Written);
 		assert_eq!(
 			std::fs::read_to_string(&path).unwrap(),
-			"window:\n\topacity: 1.0\n    margin: 4\n\nperformance:\n\t# profile: \"max\"  ## Default\n\tprofile: high\n\t# rated_hardware: \"\"  ## Default\n\trated_hardware: 0123456789abcdef\n",
+			"themes:\n\tone:\n\t\t\tname: One\n\t\tstray: 1\n\nperformance:\n\t# profile: \"max\"  ## Default\n\tprofile: high\n\t# rated_hardware: \"\"  ## Default\n\trated_hardware: 0123456789abcdef\n",
 			"the unreadable line and its neighbours are as they were"
 		);
 		let reloaded = reload_from_disk();
@@ -8344,7 +8365,7 @@ mod tests {
 		assert!(typo[0].contains("font.famly"), "{typo:?}");
 
 		// a line the parser had to drop, which also disables saving
-		let lost = config_complaints("font:\n\tsize: 13.0\n   family: \"One\"\n");
+		let lost = config_complaints("font:\n\t\tsize: 13.0\n\tfamily: \"One\"\n");
 		assert!(
 			lost.iter().any(|m| m.contains("cannot be saved")),
 			"{lost:?}"
@@ -8564,6 +8585,10 @@ mod tests {
 			with_shcl_banner(&moved_home).as_deref(),
 			Some(added.as_str())
 		);
+
+		// and the first 3.0 one, whose link went nowhere
+		let first_v3 = format!("font:\n\tsize: 13.0\n\n{SHCL_BANNER_OLD_V3}");
+		assert_eq!(with_shcl_banner(&first_v3).as_deref(), Some(added.as_str()));
 
 		// backfill appends under it; it goes back to the bottom
 		let stranded = format!("{added}\nwindow:\n\tmargin: 8.0\n");
@@ -10164,13 +10189,13 @@ mod tests {
 		let dir = std::env::temp_dir().join(format!("silk-lostgate-{}", std::process::id()));
 		std::fs::create_dir_all(&dir).unwrap();
 		let path = dir.join("config.shcl");
-		let text = "window:\n\tmargin: 8.0\n  rows: 40\n";
+		let text = "window:\n\t\tmargin: 8.0\n\trows: 40\n";
 		std::fs::write(&path, text).unwrap();
 		let mut doc = shcl::Document::parse(text);
 		assert_eq!(
 			doc.lost_count(),
 			1,
-			"the space-indented line is the one dropped"
+			"the line stepping back to no level is the one dropped"
 		);
 		doc.put_float("window.margin", 4.0);
 		let _ = write_doc(&path, &doc);
@@ -10178,6 +10203,38 @@ mod tests {
 			std::fs::read_to_string(&path).unwrap(),
 			text,
 			"the file was rewritten despite the dropped line"
+		);
+		let _ = std::fs::remove_dir_all(&dir);
+	}
+
+	// A stray indented with spaces used to be dropped too, and every save of
+	// the file refused. shcl 3.0 keeps it as written, so the save goes through
+	// and the line is still there, still reported, and still sets nothing.
+	#[test]
+	fn a_save_keeps_a_space_indented_stray() {
+		let dir = std::env::temp_dir().join(format!("silk-keptstray-{}", std::process::id()));
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		let text = "window:\n\tmargin: 8.0\n  rows: 40\n";
+		std::fs::write(&path, text).unwrap();
+		let mut doc = shcl::Document::parse(text);
+		assert_eq!(doc.lost_count(), 0);
+		assert_eq!(unreadable_lines(&doc), vec![3]);
+		doc.put_float("window.margin", 4.0);
+		assert!(write_doc(&path, &doc));
+		assert_eq!(
+			std::fs::read_to_string(&path).unwrap(),
+			"window:\n\tmargin: 4\n  rows: 40\n"
+		);
+		let said = config_complaints(text);
+		assert!(
+			said.iter()
+				.any(|m| m.contains("line 3") && m.contains("set nothing")),
+			"{said:?}"
+		);
+		assert!(
+			!said.iter().any(|m| m.contains("cannot be saved")),
+			"{said:?}"
 		);
 		let _ = std::fs::remove_dir_all(&dir);
 	}
