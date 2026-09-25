@@ -14,10 +14,10 @@ utility/update-showdown.py --term kitty --size-only
 utility/update-showdown.py --all --no-readme             # measure everything, write nothing
 ~~~
 
-| | Rig | Grid | Display | Columns it owns |
-| :--- | :--- | :--- | :--- | :--- |
-| speed | `termbench-run.bash` | 160x42 | headless sway on the real GPU | the width classes and the score |
-| size | `sizebench-run.bash` | 100x30 | private Xvfb | File+deps and Mem |
+|       | Rig                  | Grid   | Display                       | Columns it owns
+| :---- | :------------------- | :----- | :---------------------------- | :------------------------------
+| speed | `termbench-run.bash` | 160x42 | headless sway on the real GPU | the width classes and the score
+| size  | `sizebench-run.bash` | 100x30 | private Xvfb                  | File+deps and Mem
 
 Naming no terminal takes the third path, which needs no rig at all: measure whatever terminal you are sitting in, from inside it. That is the only way to measure a terminal that exists solely on Windows or macOS, and the only mode that works off Linux. Both halves are available that way, but only one at a time, since the two want different window sizes.
 
@@ -39,11 +39,11 @@ A terminal that never answers cannot be timed this way. `termbench.py` records t
 
 Measured 20260730, same terminal, same grid, three rigs:
 
-| Rig | SilkTerm ascii | xterm ascii |
-| :--- | ---: | ---: |
-| Software GL (Xvfb + llvmpipe) | 45 MB/s | ~29 MB/s |
-| VirtualGL on Xvfb | 76 MB/s | ~29 MB/s |
-| Headless sway on the discrete GPU | 88 MB/s | 28.3 MB/s |
+| Rig                               | SilkTerm ascii | xterm ascii
+| :-------------------------------- | -------------: | ----------:
+| Software GL (Xvfb + llvmpipe)     |        45 MB/s |    ~29 MB/s
+| VirtualGL on Xvfb                 |        76 MB/s |    ~29 MB/s
+| Headless sway on the discrete GPU |        88 MB/s |   28.3 MB/s
 
 GPU-accelerated terminals swing by a factor of two; CPU-rendered ones do not move at all. So a table assembled from mixed rigs can rank the wrong terminal first - a VirtualGL run would have published a GTK terminal as faster than SilkTerm. **Every published row must come from one rig.** Do not assume a rig is neutral because one terminal reproduces on it.
 
@@ -91,14 +91,14 @@ The name match still has to find the graphics *roots*, and the vendor back ends 
 
 The rows in the table were measured across several sessions, so a new row is only comparable if the rig reproduces an old one. Controls re-run when the size rig was written:
 
-| Check | Published | This rig |
-| :--- | ---: | ---: |
-| xterm File+deps | 6.0 | 6.0 |
-| xterm driver excluded | 0.0 | 0.0 |
-| SilkTerm driver excluded | 108 | 108.3 |
-| SilkTerm Mem | 121.4 | 119.4 |
-| SilkTerm File+deps | 17.4 | 16.8 |
-| SilkTerm ascii throughput | 93.23 | 92.64 |
+| Check                     | Published | This rig
+| :------------------------ | --------: | -------:
+| xterm File+deps           |       6.0 |      6.0
+| xterm driver excluded     |       0.0 |      0.0
+| SilkTerm driver excluded  |       108 |    108.3
+| SilkTerm Mem              |     121.4 |    119.4
+| SilkTerm File+deps        |      17.4 |     16.8
+| SilkTerm ascii throughput |     93.23 |    92.64
 
 xterm is the useful control precisely because it draws on the CPU and should classify *nothing* as driver. SilkTerm is the other end - a third of a gigabyte of mapped graphics libraries that all has to fall on the right side of the line.
 
@@ -247,18 +247,18 @@ Windows **speed** figures are not comparable with the Linux rows, and calibratin
 
 ## Files
 
-| File | What it is |
-| :--- | :--- |
-| `../update-showdown.py` | the entry point: measures here or drives the rigs, writes the table |
-| `termbench.py` | the throughput tool itself; runs standalone on any terminal, any OS |
-| `bench-common.bash` | output helpers and pid-safe teardown, sourced by both rigs |
-| `termbench-run.bash` | speed rig: compositor bring-up, terminal launch, grid fit, teardown |
-| `termbench-scene.sh` | runs inside the terminal; reports its grid, then runs the benchmark |
-| `termbench-plain.shcl` | SilkTerm with every optional effect off, for the "plain" rows |
-| `termbench-candy.shcl` | SilkTerm as shipped with the automatic profile pinned off, for the "+candy" rows |
-| `sizebench-run.bash` | size rig: display bring-up, launch, grid sizing, process-tree collection |
-| `sizebench-classify.py` | the closure classifier and the accounting, plus a collector for each platform |
-| `showdown-readme.py` | writes the File+deps and Mem cells for one row |
-| `ancillary-notes.fods` | measurements taken but not published, and why they could not be |
+| File                    | What it is
+| :---------------------- | :-------------------------------------------------------------------------------
+| `../update-showdown.py` | the entry point: measures here or drives the rigs, writes the table
+| `termbench.py`          | the throughput tool itself; runs standalone on any terminal, any OS
+| `bench-common.bash`     | output helpers and pid-safe teardown, sourced by both rigs
+| `termbench-run.bash`    | speed rig: compositor bring-up, terminal launch, grid fit, teardown
+| `termbench-scene.sh`    | runs inside the terminal; reports its grid, then runs the benchmark
+| `termbench-plain.shcl`  | SilkTerm with every optional effect off, for the "plain" rows
+| `termbench-candy.shcl`  | SilkTerm as shipped with the automatic profile pinned off, for the "+candy" rows
+| `sizebench-run.bash`    | size rig: display bring-up, launch, grid sizing, process-tree collection
+| `sizebench-classify.py` | the closure classifier and the accounting, plus a collector for each platform
+| `showdown-readme.py`    | writes the File+deps and Mem cells for one row
+| `ancillary-notes.fods`  | measurements taken but not published, and why they could not be
 
 The entry point is Python and the rigs are shell, which is the right split: the rigs drive a Linux display and are Linux-only by nature, while the entry point has to run wherever a terminal does. It is deliberately one file rather than a shell copy plus a PowerShell copy. Two copies of one program drift, and a fix then goes into whichever copy was to hand rather than the one being run - which has happened here before, to `n8git_backup-and-publish`.
