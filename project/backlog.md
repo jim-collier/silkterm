@@ -75,6 +75,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 - 🔘 Pipeline and installer review 20260924
 	- 🔘 The one-liners run the installers on main, which still lack the 09-17 fixes and the 5.1 fix below.
 		- Note: held for the RC1 release.
+		- Note: 20260924, main also lacks the later installer fixes under Done: version order, API errors, the running-copy upgrade and the re-run repair.
 		- Opened: 20260924-115032
 
 - 🔘 A wine run of the Windows build registers file types on the desktop. Six menu entries were left pointing at a wine folder that no longer exists, so those types open nothing. Wine runs should turn off its menu builder.
@@ -114,6 +115,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- The performance rating already saves this way. The shell list and Settings Apply would still refuse.
 	- ✋ Waiting for shcl 3.0, which should change how such a file is read and written. Look again once it is out.
 	- Note: 20260924, shcl 3.0 still counts a line it cannot place as lost and has no save that edits single lines. So this is no longer waiting on shcl.
+	- Decided: 20260924, stays held for now.
 	- Opened: 20260918
 
 - **Stop here to work on releasing RC1**.
