@@ -4357,10 +4357,6 @@ fn backfilled_text(text: &str) -> Result<Option<String>, String> {
 	let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
 	// where each line came from, None for one added here
 	let mut origin: Vec<Option<usize>> = (0..lines.len()).map(Some).collect();
-	let mut insert = |lines: &mut Vec<String>, at: usize, line: String| {
-		lines.insert(at, line);
-		origin.insert(at, None);
-	};
 
 	let mut groups: Vec<Vec<(String, Vec<String>)>> = Vec::new();
 	for (p, block, new_group) in setting_groups(default_config()) {
@@ -4374,42 +4370,61 @@ fn backfilled_text(text: &str) -> Result<Option<String>, String> {
 	// template order of every path, for sibling anchoring across group bounds
 	let order: Vec<String> = groups.iter().flatten().map(|(p, _)| p.clone()).collect();
 
+	// A heading counts as there when a dotted line such as
+	// `window.rows: 34` already speaks for its block.
+	let has = |at: &std::collections::HashMap<String, usize>, p: &str| {
+		at.contains_key(p)
+			|| at
+				.keys()
+				.any(|k| k.strip_prefix(p).is_some_and(|r| r.starts_with('.')))
+	};
+
 	let mut changed = false;
 	for group in &groups {
 		// fresh view after any earlier insertion
 		let at = paths_at(&lines);
-		let present = group.iter().filter(|(p, _)| at.contains_key(p)).count();
+		let present = group.iter().filter(|(p, _)| has(&at, p)).count();
 		if present == group.len() {
 			continue;
 		}
 		if present == 0 {
 			// wholly-new group: comments and all, in template position
+			let saved = (lines.clone(), origin.clone());
 			let block: Vec<String> = group.iter().flat_map(|(_, b)| b.iter().cloned()).collect();
 			match anchor_for(&group[0].0, &order, &at, &lines, true) {
 				Anchor::Before(index) => {
-					// separate from the next group's comment block below
-					insert(&mut lines, index, String::new());
+					// separate from the next group's comment block below, and from
+					// whatever ends above
+					add_line(&mut lines, &mut origin, index, String::new());
+					let mut index = index;
+					if index > 0 && !lines[index - 1].trim().is_empty() {
+						add_line(&mut lines, &mut origin, index, String::new());
+						index += 1;
+					}
 					for (offset, line) in block.into_iter().enumerate() {
-						insert(&mut lines, index + offset, line);
+						add_line(&mut lines, &mut origin, index + offset, line);
 					}
 				}
 				Anchor::After(index) => {
 					let mut added = vec![String::new()];
 					added.extend(block);
 					for (offset, line) in added.into_iter().enumerate() {
-						insert(&mut lines, index + 1 + offset, line);
+						add_line(&mut lines, &mut origin, index + 1 + offset, line);
 					}
 				}
 				Anchor::Append => {
 					let end = lines.len();
-					insert(&mut lines, end, String::new());
+					add_line(&mut lines, &mut origin, end, String::new());
 					for line in block {
 						let end = lines.len();
-						insert(&mut lines, end, line);
+						add_line(&mut lines, &mut origin, end, line);
 					}
 				}
 			}
-			changed = true;
+			let paths: Vec<&String> = group.iter().map(|(p, _)| p).collect();
+			let mut now = (lines, origin);
+			changed |= settle(text, &mut now, saved, &paths);
+			(lines, origin) = now;
 			continue;
 		}
 		// part-present group: the comments are already in the file next to the
@@ -4417,19 +4432,22 @@ fn backfilled_text(text: &str) -> Result<Option<String>, String> {
 		// each straggler back beside its siblings, line only, template order
 		for (p, block) in group {
 			let at = paths_at(&lines);
-			if at.contains_key(p) {
+			if has(&at, p) {
 				continue;
 			}
 			let Some(line) = block.last() else { continue };
+			let saved = (lines.clone(), origin.clone());
 			match anchor_for(p, &order, &at, &lines, false) {
-				Anchor::Before(index) => insert(&mut lines, index, line.clone()),
-				Anchor::After(index) => insert(&mut lines, index + 1, line.clone()),
+				Anchor::Before(index) => add_line(&mut lines, &mut origin, index, line.clone()),
+				Anchor::After(index) => add_line(&mut lines, &mut origin, index + 1, line.clone()),
 				Anchor::Append => {
 					let end = lines.len();
-					insert(&mut lines, end, line.clone());
+					add_line(&mut lines, &mut origin, end, line.clone());
 				}
 			}
-			changed = true;
+			let mut now = (lines, origin);
+			changed |= settle(text, &mut now, saved, &[p]);
+			(lines, origin) = now;
 		}
 	}
 	if !changed {
@@ -4440,6 +4458,33 @@ fn backfilled_text(text: &str) -> Result<Option<String>, String> {
 	let mut out = lines.join("\n");
 	out.push('\n');
 	Ok((out != text).then_some(out))
+}
+
+// A backfilled file's lines, and where each came from: None for one added.
+type Backfill = (Vec<String>, Vec<Option<usize>>);
+
+fn add_line(lines: &mut Vec<String>, origin: &mut Vec<Option<usize>>, at: usize, line: String) {
+	lines.insert(at, line);
+	origin.insert(at, None);
+}
+
+// An added line is kept only where it reads as the setting it was added for,
+// once `unbury` has moved out any line it buried. Under a line that has a
+// value, as in `shell: bash`, beside a heading indented unlike the template's,
+// or above a line that `unbury` moves out, it would read as something else,
+// and every launch would find the setting still missing and add it again.
+fn settle(text: &str, now: &mut Backfill, saved: Backfill, paths: &[&String]) -> bool {
+	let mut tidied = now.0.clone();
+	let placed = unbury(text, &mut tidied, &now.1).is_ok() && {
+		let at = paths_at(&tidied);
+		paths.iter().all(|p| at.contains_key(*p))
+	};
+	if placed {
+		now.0 = tidied;
+	} else {
+		*now = saved;
+	}
+	placed
 }
 
 // A line indented deeper than its block needs still reads as that block's, until
@@ -5126,8 +5171,18 @@ fn anchor_for(
 		if let Some(next) = next {
 			let mut index = at[*next];
 			if whole_group {
-				// sit above the sibling's own comment block, not inside it
-				while index > 0 && lines[index - 1].trim_start().starts_with('#') {
+				// sit above the sibling's own comment block, not inside it. A
+				// commented-out setting is not part of that block, and neither is a
+				// comment at another depth: both belong to what comes before, often
+				// a group added a moment ago.
+				let indent_of = |line: &str| line.len() - line.trim_start().len();
+				let depth = indent_of(&lines[index]);
+				while index > 0 && {
+					let above = &lines[index - 1];
+					above.trim_start().starts_with('#')
+						&& line_setting_key(above).is_none()
+						&& indent_of(above) == depth
+				} {
 					index -= 1;
 				}
 			}
@@ -7813,6 +7868,44 @@ mod tests {
 		);
 	}
 
+	// A short file gets most of the template at its first launch, one group at a
+	// time. A group placed above the next section used to step back over the
+	// commented-out settings of the group added just before it, so `font:` went
+	// in under `contrast_mask:` and the later groups split each other. Their
+	// settings read as missing at the next launch and were added again.
+	#[test]
+	fn backfill_puts_each_group_in_its_own_section() {
+		let text = "wallpaper:\n\timage: x\nwindow:\n\tmargin: 6\nperformance:\n\tautomatic: false\n\tprofile: custom\n";
+		let text = next_launch_text(text).into_owned();
+		let out = backfilled_text(&text).unwrap().unwrap();
+		let at = paths_at(&out.lines().map(str::to_string).collect::<Vec<_>>());
+		for path in [
+			"font",
+			"wallpaper.contrast_mask.strength",
+			"wallpaper.contrast_mask.auto",
+			"text.color_emoji",
+			"text.embolden_inverse",
+		] {
+			assert!(
+				at.contains_key(path),
+				"{path} is not where it belongs\n{out}"
+			);
+		}
+		assert_eq!(backfilled_text(&out), Ok(None), "\n{out}");
+
+		// a file written with dotted keys only, like the scroll harness's
+		let dotted = "performance.automatic: false\nperformance.profile: custom\nscroll.smooth_apps: true\nscroll.minimap.enabled: false\ntransparency.enabled: false\ntext.scrim.enabled: false\nwallpaper.fallback_builtin: false\nwindow.columns: 100\nwindow.rows: 34\ncursor.animation: none\n";
+		let mut text = dotted.to_string();
+		for launch in 1..=3 {
+			let next = next_launch_text(&text).into_owned();
+			let next = backfilled_text(&next).unwrap().unwrap_or(next);
+			if launch > 1 {
+				assert_eq!(next, text, "launch {launch} changed the file");
+			}
+			text = next;
+		}
+	}
+
 	// The check compares what the next launch loads, through that launch's own
 	// rewrites. Here one of them reads the quote character, as the font list
 	// refresh once did: a value in single quotes is replaced. The only text that
@@ -9289,13 +9382,16 @@ mod tests {
 				}
 			}
 			if backfilled {
-				// the launch that converted it added the settings it then misread
-				backfill_config(&path);
-				assert_ne!(
-					std::fs::read_to_string(&path).unwrap(),
-					text,
+				// the launch that converted it added the settings it then misread,
+				// under the heading, as backfill did before it checked
+				let heading = format!("wallpaper: {a}\n");
+				let added = "\n\t# honor_xmp: true  ## Default\n\t# enabled: true  ## Default\n";
+				let text = text.replacen(&heading, &format!("{heading}{added}"), 1);
+				assert!(
+					text.contains(added),
 					"{what}: nothing was added, so the case proves nothing"
 				);
+				std::fs::write(&path, &text).unwrap();
 			}
 			set_config_override(path.clone());
 			let s = load();
@@ -10932,6 +11028,25 @@ mod tests {
 						);
 					}
 				}
+			});
+		}
+
+		// Whatever backfill adds is where the next launch looks for it, so a
+		// second pass finds nothing missing.
+		#[test]
+		fn backfill_settles_in_one_pass() {
+			use super::super::backfilled_text;
+			fuzz::soak("config-backfill-settles", |seed| {
+				let mut rng = fuzz::Rng::new(seed);
+				let text = String::from_utf8_lossy(&config(&mut rng)).into_owned();
+				let Ok(Some(out)) = backfilled_text(&text) else {
+					return;
+				};
+				assert_eq!(
+					backfilled_text(&out),
+					Ok(None),
+					"\nfile:\n{text}\nafter one pass:\n{out}"
+				);
 			});
 		}
 
