@@ -77,6 +77,9 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Note: held for the RC1 release.
 		- Opened: 20260924-115032
 
+- 🔘 A wine run of the Windows build registers file types on the desktop. Six menu entries were left pointing at a wine folder that no longer exists, so those types open nothing. Wine runs should turn off its menu builder.
+	- Opened: 20260924-181200
+
 - 🔬 Check the display-scale fixes on two monitors at different scales.
 	- Covers the Settings dialog, maximized as well, and the About and notice boxes. The fixes are under Done.
 	- Opened: 20260919-153000
@@ -96,15 +99,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Features and enhancements
 
-- 🔘 Pipeline and installer review 20260924
-	- 🔘 Prove the builds are reproducible: two checkouts in different places, same checksum. Then say so in the README.
-		- Opened: 20260924-115032
-
 - 🔘 Other tables still use trailing pipes and unpadded columns: the rest of `README.md`, `cicd/tests/scroll/README.md`, `utility/include/showdown-readme.md`, and `wallpaper-attribution.md`, which `wallpaper-gallery.bash` writes.
 	- Opened: 20260924-175940
 
 - 🔘 t2nsn - old stray versions of executables and launchers: Find and move old GFS versions, and trash any out-of-place stray executables and scripts. Update '.desktop' files to run the correct bash script, launcher chain minimized or hidden, and use the icon from the 'latest version' symlink.
 	- Note: the launcher copies outside the repo are older than the ones in `utility/`, and nothing copies them over.
+	- Note: 20260924, surveyed on the Linux box and nothing changed yet. The versions folder is in order. The desktop entry and the keyboard shortcut run the stale mirror copy of the launcher, and a handful of strays turned up. The list is in the private notes, waiting for a go-ahead. The Windows boxes are still to look at.
 	- Opened: 20260924-113215
 
 - 🔘 Take shcl 3.0.0-beta.1 from crates.io once it is published, and drop the git patch in `Cargo.toml`.
@@ -2243,6 +2243,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 #### Done - Features and enhancements
 
 - ✅ Pipeline and installer review 20260924
+	- ✅ Prove the builds are reproducible: two checkouts in different places, same checksum. Then say so in the README.
+		- Reproduced: the Linux builds matched, but both Windows builds differed in the link time the linker writes into the PE header.
+		- Fixed: the Windows linkers leave the link time out. `cicd/utility/repro-check.bash` builds a commit in two folders and compares.
+		- Verified: identical for Linux x86_64 and ARM64 and Windows x86_64 and ARM64. The README says so, and that another system or linker can still differ.
+		- Opened: 20260924-115032
+		- Closed: 20260924-185501
 	- ✅ Package icons. The setup `.exe` has the stock NSIS icon and no version details. The `.deb` and `.rpm` launcher uses a generic terminal icon.
 		- Note: also settle whether packages carry the wallpaper pack.
 		- Decided: 20260924, packages do not carry the wallpaper pack.

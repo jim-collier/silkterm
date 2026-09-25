@@ -349,6 +349,8 @@ cargo run --release
 
 That's the whole of it for a native build. [build.md](build.md) covers the cross-builds (Windows, and ARM64 for both) which all run from an x86_64 Linux box.
 
+Release builds are reproducible on the same system and toolchain. A commit built in two different folders gives byte-identical binaries for all four published targets, since neither the folder nor the time of the build goes into them. [`cicd/utility/repro-check.bash`](cicd/utility/repro-check.bash) checks that the way the pipeline builds a release. A build on another distribution or with another linker can still differ.
+
 ### Set up development environment
 
 [prerequisites.md](prerequisites.md) lists what each platform needs, down to the package names and the one-time toolchain setup. [build.md](build.md) covers the build and cross-build commands, and [contributing.md](contributing.md) covers the branch and review flow.
