@@ -94,6 +94,9 @@ import sys
 import time
 from datetime import datetime, timezone
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import mdtable  # noqa: E402
+
 APP = "silkterm-bench"
 PAYLOAD_VERSION = 1
 DATA_FILE = "results.jsonl"
@@ -997,7 +1000,7 @@ def _split_table(block):
 	lines = [ln.strip() for ln in block.splitlines() if ln.strip().startswith("|")]
 	if len(lines) < 2:
 		return None
-	grid = [[c.strip() for c in ln.strip("|").split("|")] for ln in lines]
+	grid = [mdtable.split_row(ln) for ln in lines]
 	return grid[0], grid[1], grid[2:]
 
 
@@ -1069,8 +1072,7 @@ def readme_table(existing, rows):
 		data[i] = cells
 
 	out = [README_BEGIN, ""]
-	for cells in [head, align] + data:
-		out.append("| " + " | ".join(cells) + " |")
+	out.extend(mdtable.render(head, align, data))
 	out.append("")
 	out.append(README_END)
 	return "\n".join(out)
