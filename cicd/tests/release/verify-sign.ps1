@@ -64,8 +64,8 @@ try {
 		if (-not $m.Success) { throw "setting `$$Name not found in $Installer" }
 		return $m.Groups[1].Value
 	}
-	$identity  = fSetting 'ReleaseSignIdentity'
-	$namespace = fSetting 'ReleaseSignNamespace'
+	$identity  = fSetting 'releaseSignIdentity'
+	$namespace = fSetting 'releaseSignNamespace'
 
 	$keyDir = Join-Path $work 'key'
 	$null = New-Item -ItemType Directory -Path $keyDir
@@ -90,9 +90,9 @@ try {
 	$sig = "$signed.sig"
 
 	$lifted = @(
-		"`$ReleaseSignPubkey    = '$pubkey'",
-		"`$ReleaseSignIdentity  = '$identity'",
-		"`$ReleaseSignNamespace = '$namespace'",
+		"`$releaseSignPubkey    = '$pubkey'",
+		"`$releaseSignIdentity  = '$identity'",
+		"`$releaseSignNamespace = '$namespace'",
 		"`$ownerRepo = '$(fSetting 'ownerRepo')'",
 		"`$dlBase  = '$($dl -replace "'", "''")'",
 		"`$webArgs = @{}",

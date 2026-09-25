@@ -29,6 +29,10 @@
 ##	                 over as one object; a -NonInteractive run fails with the -Yes
 ##	                 hint instead of quietly aborting; a system install from 32-bit
 ##	                 PowerShell goes to the 64-bit Program Files.
+##	  - 20260925 JC: Picks the highest version from the release list and skips
+##	                 drafts; an API error no longer reads as "no full release";
+##	                 upgrades over a running copy; a re-run puts back a missing
+##	                 shortcut, launcher or PATH entry.
 
 ##	Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
 ##	Licensed under The MIT License (MIT). Full text at:
@@ -47,7 +51,7 @@ param(
 
 ##	•••••••••••••••••••  Per-project settings - edit only these  ••••••••••••••••••
 
-$installerVersion = '1.2.0'
+$installerVersion = '1.3.0'
 $ownerRepo        = 'yottacore/silkterm'
 $appName          = 'SilkTerm'
 $exeName          = 'silkterm'
@@ -99,86 +103,6 @@ if ($PSVersionTable.PSVersion.Major -lt 5) {
 ##	Output helpers
 
 ##	fFail <message> [hint ...] - one error line, then any hints, then abort.
-##	The release signing key, as one allowed_signers line. Empty until a key is
-##	generated (see cicd/config.bash), and then the checksums file is only trusted
-##	when it carries a good signature by this key - which is what turns the check
-##	below from "the download was not corrupted" into "this came from the author".
-$ReleaseSignPubkey    = ''
-$ReleaseSignIdentity  = 'releases@silkterm'
-$ReleaseSignNamespace = 'silkterm-release'
-
-##	Verify the checksums file against the pinned key. Everything else is covered
-##	by the checksums, so this one signature covers the whole release. ssh-keygen
-##	ships with Windows 10 1803 and later.
-function fVerifySignature {
-	param(
-		[Parameter(Mandatory)][string]$Dir,
-		[Parameter(Mandatory)][string]$Sums,
-		[Parameter(Mandatory)][string]$Tag
-	)
-
-	if (-not $ReleaseSignPubkey) {
-		Write-Host 'Note: this release is not signed; the download is checked against its checksums only.'
-		return
-	}
-	$sshKeygen = Get-Command ssh-keygen -ErrorAction SilentlyContinue
-	if (-not $sshKeygen) {
-		fFail 'ssh-keygen not found, and this release is signed' @(
-			'Add the OpenSSH client (Settings > Apps > Optional features) and re-run.'
-		)
-	}
-	$sigPath = Join-Path $Dir "$Sums.sig"
-	try { Invoke-WebRequest -Uri "$dlBase/$Tag/$Sums.sig" -OutFile $sigPath @webArgs }
-	catch {
-		fFail "release $Tag carries no signature ($Sums.sig)" @(
-			'This installer only accepts signed releases.',
-			"Release page: https://github.com/$ownerRepo/releases/tag/$Tag"
-		)
-	}
-	$signers = Join-Path $Dir 'allowed_signers'
-	Set-Content -LiteralPath $signers -Value "$ReleaseSignIdentity $ReleaseSignPubkey" -Encoding ascii
-	$sumsPath = Join-Path $Dir $Sums
-	##	The message goes in on stdin and has to be the file's own bytes, and how
-	##	that is done differs by platform. On Windows, Start-Process hands the file
-	##	itself to the child as its stdin, which is also the one way the Windows
-	##	OpenSSH reads a pipe reliably: written and closed before it has started
-	##	up, a pipe never reads as ended there. Elsewhere Start-Process copies the
-	##	file as text with a newline of its own on the end, so the bytes go down
-	##	a pipe by hand. Every argument is quoted because the string is passed
-	##	as-is, and 5.1 has no ArgumentList.
-	$verifyArgs = '-Y verify -f "{0}" -I {1} -n {2} -s "{3}"' -f `
-		$signers, $ReleaseSignIdentity, $ReleaseSignNamespace, $sigPath
-	if ($onWindows) {
-		$out = Join-Path $Dir 'verify.out'
-		$err = Join-Path $Dir 'verify.err'
-		$proc = Start-Process -FilePath $sshKeygen.Source -ArgumentList $verifyArgs -NoNewWindow -Wait -PassThru `
-			-RedirectStandardInput $sumsPath -RedirectStandardOutput $out -RedirectStandardError $err
-	} else {
-		$psi = New-Object System.Diagnostics.ProcessStartInfo
-		$psi.FileName  = $sshKeygen.Source
-		$psi.Arguments = $verifyArgs
-		$psi.UseShellExecute        = $false
-		$psi.CreateNoWindow         = $true
-		$psi.RedirectStandardInput  = $true
-		$psi.RedirectStandardOutput = $true
-		$psi.RedirectStandardError  = $true
-		$proc = [System.Diagnostics.Process]::Start($psi)
-		$message = [System.IO.File]::ReadAllBytes($sumsPath)
-		$proc.StandardInput.BaseStream.Write($message, 0, $message.Length)
-		$proc.StandardInput.Close()
-		$null = $proc.StandardOutput.ReadToEnd()
-		$null = $proc.StandardError.ReadToEnd()
-		$proc.WaitForExit()
-	}
-	if ($proc.ExitCode -ne 0) {
-		fFail 'the release signature does not verify - NOT installing' @(
-			'The checksums file was not signed by the release key.',
-			'Do not use this download; report it.'
-		)
-	}
-	Write-Host 'Signature OK.'
-}
-
 function fFail {
 	param([string]$Message, [string[]]$Hints = @())
 	Write-Host ''
@@ -272,6 +196,8 @@ if (-not $onWindows -or $PSVersionTable.PSVersion.Major -lt 6) {
 }
 
 
+##	Network + hashing
+
 ##	-UseBasicParsing keeps 5.1 off the Internet Explorer engine, which throws
 ##	outright when IE has never been launched on the machine. 7 dropped the
 ##	parameter's meaning but still accepts it, so only 5.1 needs it passed.
@@ -287,6 +213,146 @@ function fApi {
 	return Invoke-RestMethod -Uri $Url -Headers $headers @webArgs
 }
 
+##	The release signing key, as one allowed_signers line. Empty until a key is
+##	generated (see cicd/config.bash), and then the checksums file is only trusted
+##	when it carries a good signature by this key - which is what turns the check
+##	below from "the download was not corrupted" into "this came from the author".
+$releaseSignPubkey    = ''
+$releaseSignIdentity  = 'releases@silkterm'
+$releaseSignNamespace = 'silkterm-release'
+
+##	Verify the checksums file against the pinned key. Everything else is covered
+##	by the checksums, so this one signature covers the whole release. ssh-keygen
+##	ships with Windows 10 1803 and later.
+function fVerifySignature {
+	param(
+		[Parameter(Mandatory)][string]$Dir,
+		[Parameter(Mandatory)][string]$Sums,
+		[Parameter(Mandatory)][string]$Tag
+	)
+
+	if (-not $releaseSignPubkey) {
+		Write-Host 'Note: this release is not signed; the download is checked against its checksums only.'
+		return
+	}
+	$sshKeygen = Get-Command ssh-keygen -ErrorAction SilentlyContinue
+	if (-not $sshKeygen) {
+		fFail 'ssh-keygen not found, and this release is signed' @(
+			'Add the OpenSSH client (Settings > Apps > Optional features) and re-run.'
+		)
+	}
+	$sigPath = Join-Path $Dir "$Sums.sig"
+	try { Invoke-WebRequest -Uri "$dlBase/$Tag/$Sums.sig" -OutFile $sigPath @webArgs }
+	catch {
+		fFail "release $Tag carries no signature ($Sums.sig)" @(
+			'This installer only accepts signed releases.',
+			"Release page: https://github.com/$ownerRepo/releases/tag/$Tag"
+		)
+	}
+	$signers = Join-Path $Dir 'allowed_signers'
+	Set-Content -LiteralPath $signers -Value "$releaseSignIdentity $releaseSignPubkey" -Encoding ascii
+	$sumsPath = Join-Path $Dir $Sums
+	##	The message goes in on stdin and has to be the file's own bytes, and how
+	##	that is done differs by platform. On Windows, Start-Process hands the file
+	##	itself to the child as its stdin, which is also the one way the Windows
+	##	OpenSSH reads a pipe reliably: written and closed before it has started
+	##	up, a pipe never reads as ended there. Elsewhere Start-Process copies the
+	##	file as text with a newline of its own on the end, so the bytes go down
+	##	a pipe by hand. Every argument is quoted because the string is passed
+	##	as-is, and 5.1 has no ArgumentList.
+	$verifyArgs = '-Y verify -f "{0}" -I {1} -n {2} -s "{3}"' -f `
+		$signers, $releaseSignIdentity, $releaseSignNamespace, $sigPath
+	if ($onWindows) {
+		$out = Join-Path $Dir 'verify.out'
+		$err = Join-Path $Dir 'verify.err'
+		$proc = Start-Process -FilePath $sshKeygen.Source -ArgumentList $verifyArgs -NoNewWindow -Wait -PassThru `
+			-RedirectStandardInput $sumsPath -RedirectStandardOutput $out -RedirectStandardError $err
+	} else {
+		$psi = New-Object System.Diagnostics.ProcessStartInfo
+		$psi.FileName  = $sshKeygen.Source
+		$psi.Arguments = $verifyArgs
+		$psi.UseShellExecute        = $false
+		$psi.CreateNoWindow         = $true
+		$psi.RedirectStandardInput  = $true
+		$psi.RedirectStandardOutput = $true
+		$psi.RedirectStandardError  = $true
+		$proc = [System.Diagnostics.Process]::Start($psi)
+		$message = [System.IO.File]::ReadAllBytes($sumsPath)
+		$proc.StandardInput.BaseStream.Write($message, 0, $message.Length)
+		$proc.StandardInput.Close()
+		$null = $proc.StandardOutput.ReadToEnd()
+		$null = $proc.StandardError.ReadToEnd()
+		$proc.WaitForExit()
+	}
+	if ($proc.ExitCode -ne 0) {
+		fFail 'the release signature does not verify - NOT installing' @(
+			'The checksums file was not signed by the release key.',
+			'Do not use this download; report it.'
+		)
+	}
+	Write-Host 'Signature OK.'
+}
+
+##	fFieldCmp <a> <b> - -1, 0 or 1 for one dotted field. Numbers compare as
+##	numbers and sort below words. Two words with the same letters and a trailing
+##	number compare by that number, so beta10 is above beta3.
+function fFieldCmp {
+	param([string]$A, [string]$B)
+	$aNum = $A -match '^[0-9]+$'
+	$bNum = $B -match '^[0-9]+$'
+	if ($aNum -and $bNum) { return [Math]::Sign(([decimal]$A).CompareTo([decimal]$B)) }
+	if ($aNum) { return -1 }
+	if ($bNum) { return 1 }
+	if ($A -match '^([^0-9]*)([0-9]+)$') { $aStem = $Matches[1]; $aTail = $Matches[2] } else { $aStem = $null; $aTail = $null }
+	if ($B -match '^([^0-9]*)([0-9]+)$') { $bStem = $Matches[1]; $bTail = $Matches[2] } else { $bStem = $null; $bTail = $null }
+	if ($null -ne $aTail -and $null -ne $bTail -and $aStem -ceq $bStem) { return fFieldCmp $aTail $bTail }
+	return [Math]::Sign([string]::CompareOrdinal($A, $B))
+}
+
+##	fListCmp <a> <b> <missing> - dotted lists, field by field. <missing> is what
+##	a list that runs out first counts as: -1 for a pre-release, where fewer
+##	fields sort lower, or 0 for the core, where 1.0 is 1.0.0.
+function fListCmp {
+	param([string]$A, [string]$B, [int]$Missing)
+	$aParts = @($A -split '\.')
+	$bParts = @($B -split '\.')
+	$count = [Math]::Max($aParts.Count, $bParts.Count)
+	for ($i = 0; $i -lt $count; $i++) {
+		if ($i -ge $aParts.Count) { if ($Missing -eq 0) { $x = '0' } else { return -1 } } else { $x = $aParts[$i] }
+		if ($i -ge $bParts.Count) { if ($Missing -eq 0) { $y = '0' } else { return 1 } } else { $y = $bParts[$i] }
+		$c = fFieldCmp $x $y
+		if ($c -ne 0) { return $c }
+	}
+	return 0
+}
+
+##	fNewer <a> <b> - true when tag <a> is a higher version than <b>, in semver
+##	order: 1.0.0-alpha.2 is below 1.0.0, where plain version sorts put it above.
+function fNewer {
+	param([string]$A, [string]$B)
+	$aCore, $aPre = (($A -replace '^v', '') -replace '\+.*$', '') -split '-', 2
+	$bCore, $bPre = (($B -replace '^v', '') -replace '\+.*$', '') -split '-', 2
+	$c = fListCmp $aCore $bCore 0
+	if ($c -ne 0) { return ($c -gt 0) }
+	##	Same core: a release is above any of its pre-releases.
+	if (-not $aPre) { return [bool]$bPre }
+	if (-not $bPre) { return $false }
+	return ((fListCmp $aPre $bPre -1) -gt 0)
+}
+
+##	fPickTag <releases> <stable|dev> - the highest version in an API release
+##	list, skipping drafts, and pre-releases too for stable. $null if none.
+function fPickTag {
+	param($Releases, [string]$Want)
+	$best = $null
+	foreach ($rel in @($Releases)) {
+		if ($rel.draft) { continue }
+		if ($Want -eq 'stable' -and $rel.prerelease) { continue }
+		if ($null -eq $best -or (fNewer $rel.tag_name $best)) { $best = [string]$rel.tag_name }
+	}
+	return $best
+}
+
 ##	Exec= is read twice: the desktop-entry string rules first, then the Exec
 ##	quoting rules on top. So a backslash in the path ends up as four, a quote,
 ##	backtick or '$' as two-plus-itself, and a literal '%' has to be doubled or it
@@ -296,6 +362,16 @@ function fDesktopExec {
 	$s = $Path -replace '([\\"`$])', '\$1'
 	$s = $s -replace '\\', '\\'
 	return ($s -replace '%', '%%')
+}
+
+##	fPathNote <dir> <file> - how to run it when <dir> is not on PATH (Linux, macOS).
+function fPathNote {
+	param([string]$Dir, [string]$File)
+	if (":$($env:PATH):" -like "*:$Dir`:*") { return }
+	Write-Host ''
+	Write-Host "Note: $Dir is not on your PATH, so '$exeName' won't be found by name yet."
+	Write-Host "  Add it with:  echo 'export PATH=`"$Dir`:`$PATH`"' >> ~/.profile"
+	Write-Host "  Until then, run it in full:  $File"
 }
 
 
@@ -340,38 +416,39 @@ function fMain {
 		)
 	}
 
-	##	Resolve the release tag. "latest" deliberately EXCLUDES pre-releases, so
-	##	stable asks for it first and only then falls back to the newest of any
-	##	kind - which is also what makes a project with only betas installable.
+	##	Resolve the release tag: the highest version in the release list, drafts
+	##	skipped. Stable wants a full release, and takes the newest pre-release
+	##	only when the list holds none, which is what makes a project with only
+	##	betas installable. A failed call is an error, never "no release".
 	Write-Host "Looking up the newest $release release of $appName ..."
-	$tag = $null
-	$apiError = ''
-	if ($release -eq 'stable') {
-		try { $tag = (fApi "$apiBase/releases/latest").tag_name }
-		catch {
-			$apiError = fInnerMessage $_
-			Write-Host 'No full release published yet; using the newest pre-release instead.'
-			$release = 'dev'
-		}
-	}
-	if ($release -eq 'dev' -and -not $tag) {
-		try {
-			##	5.1 passes the array on as one object, so collect it before wrapping.
-			$rels = fApi "$apiBase/releases?per_page=10"
-			$rels = @($rels)
-			if ($rels.Count -gt 0) { $tag = $rels[0].tag_name }
-		} catch { $apiError = fInnerMessage $_ }
-	}
-	if (-not $tag) {
-		if ($apiError -match 'rate limit') {
+	try {
+		##	5.1 passes the array on as one object, so collect it before wrapping.
+		$rels = fApi "$apiBase/releases?per_page=100"
+		$rels = @($rels)
+	} catch {
+		$apiError = fInnerMessage $_
+		$apiBody = if ($_.ErrorDetails) { $_.ErrorDetails.Message } else { '' }
+		if ("$apiError $apiBody" -match 'rate limit') {
 			fFail "GitHub's API rate limit is exhausted for this IP" @(
 				'Wait an hour, or set $env:GITHUB_TOKEN to a personal access token and re-run.'
 			)
 		}
-		fFail "could not find a release at github.com/$ownerRepo" @(
-			'Either none is published yet (build it from source - see the README),',
-			'or github.com is unreachable from here (check your network or proxy).',
+		fFail "could not read the release list from github.com/$ownerRepo" @(
+			'Check your network or proxy, and that the repository still exists.',
 			"Detail: $apiError"
+		)
+	}
+	$tag = fPickTag $rels $release
+	if (-not $tag -and $release -eq 'stable') {
+		$tag = fPickTag $rels 'dev'
+		if ($tag) {
+			Write-Host 'No full release published yet; using the newest pre-release instead.'
+			$release = 'dev'
+		}
+	}
+	if (-not $tag) {
+		fFail "github.com/$ownerRepo has no release published yet" @(
+			"Building from source: https://github.com/$ownerRepo#build-it-yourself"
 		)
 	}
 	$version = $tag -replace '^v', ''
@@ -461,7 +538,9 @@ function fMain {
 		}
 		if ($menuEntry -ne 1 -or $onMac) { $menuDir = ''; $appDir = '' }
 
-		##	Already current? Then say so and stop - no prompt, no download.
+		##	Already current? Then only the pieces that went missing are left to
+		##	do, and with none missing, say so and stop - no prompt, no download.
+		##	A piece that exists is left as it is, since it may have been edited.
 		##	A file that cannot be READ (locked by a running copy) must not throw
 		##	here: fall through unresolved and let the copy fail with a message
 		##	that actually says what to do about it.
@@ -470,9 +549,16 @@ function fMain {
 			try { $installedSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $destFile).Hash.ToLower() }
 			catch { $installedSha = '' }
 		}
-		if ($installedSha -eq $wantSha) {
+		$needBinary = $installedSha -ne $wantSha
+		$menuFile = if ($menuDir) { Join-Path $menuDir "$appName.lnk" } else { '' }
+		$appFile = if ($appDir) { Join-Path $appDir "$exeName.desktop" } else { '' }
+		$needMenu = [bool]$menuFile -and ($needBinary -or -not (Test-Path -LiteralPath $menuFile))
+		$needApp = [bool]$appFile -and ($needBinary -or -not (Test-Path -LiteralPath $appFile))
+		$needPath = $onWindows -and -not (fOnWindowsPath $destDir $pathScope)
+		if (-not ($needBinary -or $needMenu -or $needApp -or $needPath)) {
 			Write-Host ''
 			Write-Host "Already up to date: $destFile is $tag. Nothing to do."
+			if (-not $onWindows) { fPathNote $destDir $destFile }
 			Write-Host ''
 			return
 		}
@@ -480,14 +566,18 @@ function fMain {
 		##	The plan
 		Write-Host ''
 		Write-Host 'Plan:'
-		Write-Host "  Program:  $appName $tag ($release)"
-		Write-Host "  Platform: $osToken-$archToken"
-		Write-Host "  Download: $dlBase/$tag/$asset"
-		Write-Host "  Verify:   sha256 against $sums"
-		Write-Host "  Install:  $destFile"
-		if ($menuDir) { Write-Host "  Shortcut: $menuDir\$appName.lnk" }
-		if ($appDir)  { Write-Host "  Launcher: $appDir/$exeName.desktop" }
-		if ($onWindows) { Write-Host "  PATH:     $destDir added to the $pathScope PATH" }
+		if ($needBinary) {
+			Write-Host "  Program:  $appName $tag ($release)"
+			Write-Host "  Platform: $osToken-$archToken"
+			Write-Host "  Download: $dlBase/$tag/$asset"
+			Write-Host "  Verify:   sha256 against $sums"
+			Write-Host "  Install:  $destFile"
+		} else {
+			Write-Host "  Program:  $destFile is already $tag"
+		}
+		if ($needMenu) { Write-Host "  Shortcut: $menuFile" }
+		if ($needApp)  { Write-Host "  Launcher: $appFile" }
+		if ($needPath) { Write-Host "  PATH:     $destDir added to the $pathScope PATH" }
 		Write-Host ''
 		if (-not $Yes) {
 			##	Read-Host hands back an empty COLLECTION at end-of-input, and
@@ -516,41 +606,66 @@ function fMain {
 			Write-Host ''
 		}
 
-		##	Download + verify
-		Write-Host "Downloading $asset ..."
-		$assetPath = Join-Path $tmpDir $asset
-		try { Invoke-WebRequest -Uri "$dlBase/$tag/$asset" -OutFile $assetPath @webArgs }
-		catch {
-			fFail 'download failed' @(
-				'The release lists this asset, so this is most likely a network problem.',
-				"URL: $dlBase/$tag/$asset",
-				"Detail: $(fInnerMessage $_)"
-			)
-		}
-		$haveSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $assetPath).Hash.ToLower()
-		if ($haveSha -ne $wantSha) {
-			fFail 'checksum mismatch - NOT installing' @(
-				"expected $wantSha",
-				"got      $haveSha",
-				'The download was corrupted or tampered with. Try again; if it repeats, report it.'
-			)
-		}
-		Write-Host 'Checksum OK.'
+		if ($needBinary) {
+			##	Download + verify
+			Write-Host "Downloading $asset ..."
+			$assetPath = Join-Path $tmpDir $asset
+			try { Invoke-WebRequest -Uri "$dlBase/$tag/$asset" -OutFile $assetPath @webArgs }
+			catch {
+				fFail 'download failed' @(
+					'The release lists this asset, so this is most likely a network problem.',
+					"URL: $dlBase/$tag/$asset",
+					"Detail: $(fInnerMessage $_)"
+				)
+			}
+			$haveSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $assetPath).Hash.ToLower()
+			if ($haveSha -ne $wantSha) {
+				fFail 'checksum mismatch - NOT installing' @(
+					"expected $wantSha",
+					"got      $haveSha",
+					'The download was corrupted or tampered with. Try again; if it repeats, report it.'
+				)
+			}
+			Write-Host 'Checksum OK.'
 
-		##	Install
-		Write-Host ''
-		Write-Host 'Installing ...'
-		try { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
-		catch { fFileError $_ "could not create $destDir" $destDir }
-		try { Copy-Item -LiteralPath $assetPath -Destination $destFile -Force }
-		catch { fFileError $_ "could not write $destFile" $destFile }
-		if (-not $onWindows) { & chmod 0755 $destFile }
+			##	Install. Land beside the target and rename into place, as
+			##	install.bash does, so a running copy does not stop an upgrade.
+			##	Linux refuses to write over a running program ("text file busy")
+			##	but lets a rename replace it. Windows refuses both, but lets the
+			##	running file itself be renamed out of the way; the old copy is
+			##	then removed on the next run, once nothing has it open.
+			Write-Host ''
+			Write-Host 'Installing ...'
+			try { New-Item -ItemType Directory -Force -Path $destDir | Out-Null }
+			catch { fFileError $_ "could not create $destDir" $destDir }
+			$staged = Join-Path $destDir (".$exeName-new-" + [System.IO.Path]::GetRandomFileName())
+			try { Copy-Item -LiteralPath $assetPath -Destination $staged }
+			catch { fFileError $_ "could not write to $destDir" $staged }
+			try {
+				if ($onWindows) {
+					Get-ChildItem -LiteralPath $destDir -Filter "$exeName.exe.old-*" -Force -ErrorAction SilentlyContinue |
+						ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+					if (Test-Path -LiteralPath $destFile) {
+						try { [System.IO.File]::Delete($destFile) }
+						catch { [System.IO.File]::Move($destFile, "$destFile.old-" + [System.IO.Path]::GetRandomFileName()) }
+					}
+					[System.IO.File]::Move($staged, $destFile)
+				} else {
+					& chmod 0755 $staged
+					& mv -f $staged $destFile
+					if ($LASTEXITCODE -ne 0) { throw "mv exited $LASTEXITCODE" }
+				}
+			} catch {
+				Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue
+				fFileError $_ "could not replace $destFile" $destFile
+			}
+		}
 
 		##	Start Menu shortcut (Windows)
-		if ($menuDir) {
+		if ($needMenu) {
 			try {
 				$shell = New-Object -ComObject WScript.Shell
-				$lnk = $shell.CreateShortcut((Join-Path $menuDir "$appName.lnk"))
+				$lnk = $shell.CreateShortcut($menuFile)
 				$lnk.TargetPath = $destFile
 				$lnk.WorkingDirectory = $destDir
 				$lnk.Description = $appComment
@@ -561,7 +676,7 @@ function fMain {
 		}
 
 		##	Freedesktop launcher (Linux)
-		if ($appDir) {
+		if ($needApp) {
 			try {
 				New-Item -ItemType Directory -Force -Path $appDir | Out-Null
 				@(
@@ -570,30 +685,54 @@ function fMain {
 					('Exec="' + (fDesktopExec $destFile) + '"'),
 					"Icon=$desktopIcon", 'Terminal=false', "Categories=$desktopCategories",
 					"Keywords=$desktopKeywords", 'StartupNotify=true'
-				) | Set-Content -LiteralPath (Join-Path $appDir "$exeName.desktop")
+				) | Set-Content -LiteralPath $appFile
 			} catch {
 				Write-Host "Note: could not write the desktop launcher to $appDir - $appName itself installed fine."
 			}
 		}
 
 		##	PATH
-		if ($onWindows) {
-			fAddToWindowsPath $destDir $pathScope
-		} else {
-			if (":$($env:PATH):" -notlike "*:$destDir`:*") {
-				Write-Host ''
-				Write-Host "Note: $destDir is not on your PATH, so '$exeName' won't be found by name yet."
-				Write-Host "  Add it with:  echo 'export PATH=`"$destDir`:`$PATH`"' >> ~/.profile"
-				Write-Host "  Until then, run it in full:  $destFile"
-			}
-		}
+		if ($needPath) { fAddToWindowsPath $destDir $pathScope }
+		if (-not $onWindows) { fPathNote $destDir $destFile }
 
 		Write-Host ''
-		Write-Host "Installed $appName $tag to $destFile"
+		if ($needBinary) { Write-Host "Installed $appName $tag to $destFile" }
+		else { Write-Host "Put back what was missing for $appName $tag" }
 		Write-Host ''
 	} finally {
 		Remove-Item -Recurse -Force -LiteralPath $tmpDir -ErrorAction SilentlyContinue
 	}
+}
+
+
+##	Windows PATH
+
+##	fPathKey <scope> <writable> - the registry key holding that scope's PATH.
+function fPathKey {
+	param([string]$Scope, [bool]$Writable)
+	if ($Scope -eq 'Machine') {
+		$root = [Microsoft.Win32.Registry]::LocalMachine
+		$sub = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
+	} else {
+		$root = [Microsoft.Win32.Registry]::CurrentUser
+		$sub = 'Environment'
+	}
+	$key = $root.OpenSubKey($sub, $Writable)
+	if (-not $key) { throw "cannot open HKEY\$sub" }
+	return $key
+}
+
+##	True when the persistent PATH of that scope already names the folder. A
+##	PATH that cannot be read counts as missing, so the install tries and says.
+function fOnWindowsPath {
+	param([string]$Dir, [string]$Scope)
+	try {
+		$key = fPathKey $Scope $false
+		try {
+			$raw = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+			return (($raw -split ';') -contains $Dir)
+		} finally { $key.Close() }
+	} catch { return $false }
 }
 
 ##	Append to the persistent PATH via the registry rather than via
@@ -603,15 +742,7 @@ function fMain {
 function fAddToWindowsPath {
 	param([string]$Dir, [string]$Scope)
 	try {
-		if ($Scope -eq 'Machine') {
-			$root = [Microsoft.Win32.Registry]::LocalMachine
-			$sub = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment'
-		} else {
-			$root = [Microsoft.Win32.Registry]::CurrentUser
-			$sub = 'Environment'
-		}
-		$key = $root.OpenSubKey($sub, $true)
-		if (-not $key) { throw "cannot open HKEY\$sub for writing" }
+		$key = fPathKey $Scope $true
 		try {
 			$raw = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
 			$kind = if ($raw) { $key.GetValueKind('Path') } else { [Microsoft.Win32.RegistryValueKind]::ExpandString }
@@ -635,7 +766,6 @@ function fAddToWindowsPath {
 	}
 }
 
-
 ##	A registry write alone reaches nothing until the next sign-in. Explorer, which
 ##	starts everything from the Start menu, reloads its environment only when told,
 ##	and that is the message SetEnvironmentVariable and setx both send after their
@@ -655,6 +785,7 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wP
 		Write-Host "  A console opened from the Start menu may not find it until you sign out and in again."
 	}
 }
+
 
 ##	Script entry point. The `& { }` is what keeps StrictMode off the caller's
 ##	shell - it applies to this block and everything it calls, and lapses here.

@@ -42,52 +42,93 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
-## The stand-in release: a program that records that it ran, plus the checksums
-## file the installer verifies it against.
+## A stand-in release: for each version, a program that records that it ran
+## and a line naming its version, plus the checksums file the installer
+## verifies it against. The release list the API serves is written per case.
+## fReleaseElf makes each program a copy of sleep instead, since only a running
+## binary, not a script, makes a copy over it fail with "text file busy".
+fRelease() {
+	local dir="$1" ver; shift
+	mkdir -p "${dir}"
+	for ver in "$@"; do
+		printf '#!/bin/sh\n#ver %s\nprintf ran > "${HOME}/ran.txt"\n' "${ver}" > "${dir}/silkterm-${ver}-linux-x86_64"
+		( cd "${dir}" && sha256sum "silkterm-${ver}-linux-x86_64" > "silkterm-${ver}-sha256sums.txt" )
+	done
+}
+fReleaseElf() {
+	local dir="$1" ver; shift
+	mkdir -p "${dir}"
+	for ver in "$@"; do
+		{ cat "$(command -v sleep)"; printf '\n#ver %s\n' "${ver}"; } > "${dir}/silkterm-${ver}-linux-x86_64"
+		( cd "${dir}" && sha256sum "silkterm-${ver}-linux-x86_64" > "silkterm-${ver}-sha256sums.txt" )
+	done
+}
 relDir="${work}/release"
-mkdir -p "${relDir}"
-printf '#!/bin/sh\nprintf ran > "${HOME}/ran.txt"\n' > "${relDir}/silkterm-9.9.9-linux-x86_64"
-( cd "${relDir}" && sha256sum silkterm-9.9.9-linux-x86_64 > silkterm-9.9.9-sha256sums.txt )
+fRelease "${relDir}" 9.9.9
+printf '[{"tag_name":"v9.9.9","draft":false,"prerelease":false}]\n' > "${relDir}/releases.json"
 
-## A curl that serves it. Takes the URL and an -o, ignores the rest, and notes
+## A curl that serves it. Takes the URL, -o and -w, ignores the rest, and notes
 ## each --config so the token check can see the file was still passed that way.
+## STUB_API_CODE is the status the API answers with.
 stubDir="${work}/stub"
 mkdir -p "${stubDir}"
 cat > "${stubDir}/curl" <<'STUB'
 #!/usr/bin/env bash
-out=""; url=""
+out=""; url=""; fmt=""
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		-o)        out="$2"; shift 2 ;;
+		-w)        fmt="$2"; shift 2 ;;
 		--config)  echo "config $2" >>"${STUB_LOG}"; shift 2 ;;
 		https://*) url="$1"; shift ;;
 		*)         shift ;;
 	esac
 done
+code=200
 fServe() {
 	case "${url}" in
-		*/releases/latest|*/releases\?*) printf '{"tag_name":"v9.9.9"}\n' ;;
+		*/releases\?*) code="${STUB_API_CODE:-200}"; cat "${STUB_DIR}/releases.json" ;;
 		*) cat "${STUB_DIR}/${url##*/}" ;;
 	esac
 }
 if [ -n "${out}" ]; then fServe >"${out}"; else fServe; fi
+[ -z "${fmt}" ] || printf '%s' "${code}"
 STUB
 chmod +x "${stubDir}/curl"
 
-## Run the installer in a home and temp folder of its own. $1 is the home.
+## Run an installer in a home and temp folder of its own. $1 is the home, the
+## rest are extra environment, and what it printed goes to out.log there.
+## INSTALLER is bash or ps1, and STUB_DIR, STUB_API_CODE and INSTALL_ARGS pick
+## the case. Returns the installer's status; install.ps1 run as a script block
+## has none, so there an "Error:" line is the failure.
+pwshDir="$(dirname "$(readlink -f "$(command -v pwsh 2>/dev/null || echo /nonexistent)")")"
 fInstall() {
-	local home="$1"; shift
+	local home="$1" rc=0; shift
+	local -a args=() run=()
+	read -r -a args <<<"${INSTALL_ARGS:-}"
+	if [ "${INSTALLER:-bash}" = "ps1" ]; then
+		run=(pwsh -NoProfile -NonInteractive -File "${meDir}/stubrun.ps1" -Installer "${root}/install.ps1")
+	else
+		run=(bash "${root}/install.bash" --yes)
+	fi
 	mkdir -p "${home}" "${home}/.tmp"
-	env -i PATH="${stubDir}:/usr/bin:/bin" HOME="${home}" TMPDIR="${home}/.tmp" \
-		STUB_DIR="${relDir}" STUB_LOG="${home}/.tmp/calls.log" "$@" \
-		bash "${root}/install.bash" --yes >/dev/null 2>&1
+	env -i PATH="${stubDir}:/usr/bin:/bin:${pwshDir}" HOME="${home}" TMPDIR="${home}/.tmp" \
+		STUB_DIR="${STUB_DIR:-${relDir}}" STUB_API_CODE="${STUB_API_CODE:-200}" \
+		STUB_LOG="${home}/.tmp/calls.log" "$@" \
+		"${run[@]}" "${args[@]}" >"${home}/out.log" 2>&1 || rc=$?
+	if [ "${rc}" = "0" ] && grep -q '^Error:' "${home}/out.log"; then rc=1; fi
+	return "${rc}"
 }
+fInstalled(){ grep -aqFx "#ver ${2}" "${1}/.local/bin/silkterm" 2>/dev/null; }
+fSaid(){ grep -qF -- "${2}" "${1}/out.log"; }
+fNotSaid(){ ! grep -qF -- "${2}" "${1}/out.log"; }
+fSaidRe(){ grep -qE -- "${2}" "${1}/out.log"; }
 
 ## The token used to be written into a fresh 0700 folder per API call, and the
 ## cleanup found nothing to remove because the function that made it ran in a
 ## command substitution.
 tokenHome="${work}/tokenhome"
-fInstall "${tokenHome}" GITHUB_TOKEN="sekrit-token-42"
+fInstall "${tokenHome}" GITHUB_TOKEN="sekrit-token-42" || true
 fCheck "the token file does not outlast the run" \
 	test -z "$(find "${tokenHome}/.tmp" -type f -not -name calls.log 2>/dev/null)"
 fCheck "and the token was still passed in a file, not on a command line" \
@@ -116,7 +157,7 @@ fCheck "install.bash escapes Exec the way both rule sets read it" test "${bad}" 
 ## A menu launcher from a home holding a space. The desktop entry format splits
 ## Exec at spaces, so an unquoted path gives an entry the desktop cannot load.
 spacedHome="${work}/home dir"
-fInstall "${spacedHome}"
+fInstall "${spacedHome}" || true
 entry="${spacedHome}/.local/share/applications/silkterm.desktop"
 if command -v desktop-file-validate >/dev/null 2>&1; then
 	fCheck "the launcher written from a spaced home is a valid entry" \
@@ -131,6 +172,87 @@ if command -v gio >/dev/null 2>&1; then
 	fCheck "and it starts the installed program" test -e "${spacedHome}/ran.txt"
 else
 	echo "  skip gio launch (not installed)"
+fi
+
+## The cases both installers have to get right, run once for each. $1 is bash
+## or ps1.
+fCases() {
+	local kind="$1" h caseDir rc pid
+	local INSTALLER="${kind}"
+	export INSTALLER
+	## Which release: the highest version, not the first listed, with drafts
+	## skipped and 1.0.0 above its own pre-releases.
+	caseDir="${work}/${kind}-rel-order"
+	fRelease "${caseDir}" 9.9.9 9.9.9-alpha.2 9.9.8 10.0.0
+	printf '%s\n' '[{"tag_name":"v9.9.9-alpha.2","draft":false,"prerelease":true},{"tag_name":"v10.0.0","draft":true,"prerelease":false},{"tag_name":"v9.9.8","draft":false,"prerelease":false},{"tag_name":"v9.9.9","draft":false,"prerelease":false}]' > "${caseDir}/releases.json"
+	h="${work}/${kind}-order-stable"
+	STUB_DIR="${caseDir}" fInstall "${h}" || true
+	fCheck "${kind}: stable takes the highest full release, skipping a draft" fInstalled "${h}" 9.9.9
+	h="${work}/${kind}-order-dev"
+	STUB_DIR="${caseDir}" INSTALL_ARGS="--release dev" fInstall "${h}" || true
+	fCheck "${kind}: dev puts 1.0.0 above 1.0.0-alpha.2" fInstalled "${h}" 9.9.9
+
+	## Only pre-releases: stable says so and takes the newest, beta10 over beta3.
+	caseDir="${work}/${kind}-rel-pre"
+	fRelease "${caseDir}" 9.9.9-beta3 9.9.9-beta10
+	printf '%s\n' '[{"tag_name":"v9.9.9-beta3","draft":false,"prerelease":true},{"tag_name":"v9.9.9-beta10","draft":false,"prerelease":true}]' > "${caseDir}/releases.json"
+	h="${work}/${kind}-pre-only"
+	STUB_DIR="${caseDir}" fInstall "${h}" || true
+	fCheck "${kind}: with no full release, stable takes the newest pre-release" fInstalled "${h}" 9.9.9-beta10
+	fCheck "${kind}: and says it did" fSaid "${h}" "No full release published yet"
+
+	## An API failure is an error, never "no full release".
+	caseDir="${work}/${kind}-rel-500"
+	mkdir -p "${caseDir}"
+	printf '{"message":"Server Error"}\n' > "${caseDir}/releases.json"
+	h="${work}/${kind}-api-500"
+	rc=0; STUB_DIR="${caseDir}" STUB_API_CODE=500 fInstall "${h}" || rc=$?
+	fCheck "${kind}: a failed API call stops the install" test "${rc}" -ne 0
+	fCheck "${kind}: and is not read as no full release" fNotSaid "${h}" "No full release"
+	fCheck "${kind}: and names the status" fSaidRe "${h}" "Detail:.*500"
+
+	caseDir="${work}/${kind}-rel-403"
+	mkdir -p "${caseDir}"
+	printf '{"message":"API rate limit exceeded for 192.0.2.1."}\n' > "${caseDir}/releases.json"
+	h="${work}/${kind}-api-403"
+	rc=0; STUB_DIR="${caseDir}" STUB_API_CODE=403 fInstall "${h}" || rc=$?
+	fCheck "${kind}: a rate-limited API call stops the install" test "${rc}" -ne 0
+	fCheck "${kind}: and gives the rate limit hint" fSaid "${h}" "rate limit is exhausted"
+
+	## A re-run with the program current puts back a launcher that went missing,
+	## and leaves the program alone.
+	h="${work}/${kind}-rerun"
+	fInstall "${h}" || true
+	rm -f "${h}/.local/share/applications/silkterm.desktop"
+	touch -d '2001-01-01' "${h}/.local/bin/silkterm"
+	rc=0; fInstall "${h}" || rc=$?
+	fCheck "${kind}: a re-run puts back a missing launcher" test -e "${h}/.local/share/applications/silkterm.desktop"
+	fCheck "${kind}: without installing the program again" test "$(stat -c %Y "${h}/.local/bin/silkterm")" = "$(date -d '2001-01-01' +%s)"
+	fCheck "${kind}: and says so" fSaid "${h}" "Put back what was missing"
+	rc=0; fInstall "${h}" || rc=$?
+	fCheck "${kind}: with nothing missing, a re-run does nothing" fSaid "${h}" "Already up to date"
+
+	## An upgrade over a running copy. A copy over it fails on Linux.
+	caseDir="${work}/${kind}-rel-busy"
+	fReleaseElf "${caseDir}" 9.9.8 9.9.9
+	printf '[{"tag_name":"v9.9.8","draft":false,"prerelease":false}]\n' > "${caseDir}/releases.json"
+	h="${work}/${kind}-busy"
+	STUB_DIR="${caseDir}" fInstall "${h}" || true
+	"${h}/.local/bin/silkterm" 30 &
+	pid=$!
+	printf '[{"tag_name":"v9.9.9","draft":false,"prerelease":false}]\n' > "${caseDir}/releases.json"
+	rc=0; STUB_DIR="${caseDir}" fInstall "${h}" || rc=$?
+	kill "${pid}" 2>/dev/null || true
+	wait "${pid}" 2>/dev/null || true
+	fCheck "${kind}: an upgrade goes over a running copy" test "${rc}" -eq 0
+	fCheck "${kind}: and installs the new one" fInstalled "${h}" 9.9.9
+	fCheck "${kind}: leaving nothing staged behind" test -z "$(find "${h}/.local/bin" -name '.silkterm*' 2>/dev/null)"
+}
+fCases bash
+if command -v pwsh >/dev/null 2>&1; then
+	fCases ps1
+else
+	echo "  skip install.ps1 cases (no pwsh)"
 fi
 
 ## install.ps1 writes the same entry, and its Exec goes through the same rule.
@@ -221,3 +343,5 @@ echo "all passed"
 ##	History:
 ##		- 20260908 JC: Created.
 ##		- 20260917 JC: The rig's display: taken, stale and shared.
+##		- 20260925 JC: Which release is picked, API failures, and a re-run that
+##		               puts back a missing launcher.

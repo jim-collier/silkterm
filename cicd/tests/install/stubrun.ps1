@@ -1,0 +1,44 @@
+#!/usr/bin/env pwsh
+
+##	- Purpose:
+##		Run install.ps1 for real against a stand-in release, the way the one-liner
+##		does: its text as a script block. The two web cmdlets are replaced by
+##		functions of the same name, which the block finds first. They serve the
+##		folder in STUB_DIR, and the API answers with STUB_API_CODE.
+##	- Syntax: stubrun.ps1 -Installer <path to install.ps1> [installer options]
+##	- History: At bottom of file.
+
+##	Copyright © 2026 Jim Collier [ID: 2უNაɘ«҂թȹɤξπ๙¿ձϖ]
+##	SPDX-License-Identifier: GPL-2.0-or-later
+
+param(
+	[Parameter(Mandatory)][string]$Installer,
+	[Parameter(ValueFromRemainingArguments)][string[]]$Rest
+)
+
+function Invoke-RestMethod {
+	param($Uri, $Headers, [switch]$UseBasicParsing)
+	$code = if ($env:STUB_API_CODE) { [int]$env:STUB_API_CODE } else { 200 }
+	$body = [System.IO.File]::ReadAllText((Join-Path $env:STUB_DIR 'releases.json'))
+	if ($code -ge 300) {
+		##	What pwsh 7 throws for an HTTP error, body in ErrorDetails.
+		$resp = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode]$code)
+		$ex = [Microsoft.PowerShell.Commands.HttpResponseException]::new("Response status code does not indicate success: $code.", $resp)
+		$err = [System.Management.Automation.ErrorRecord]::new($ex, 'WebCmdletWebResponseException', 'InvalidOperation', $Uri)
+		$err.ErrorDetails = [System.Management.Automation.ErrorDetails]::new($body)
+		throw $err
+	}
+	return ($body | ConvertFrom-Json)
+}
+
+function Invoke-WebRequest {
+	param($Uri, $OutFile, [switch]$UseBasicParsing)
+	Copy-Item -LiteralPath (Join-Path $env:STUB_DIR ($Uri -replace '^.*/', '')) -Destination $OutFile -ErrorAction Stop
+}
+
+$options = @{ Yes = $true }
+for ($i = 0; $i -lt @($Rest).Count; $i += 2) { $options[$Rest[$i].TrimStart('-')] = $Rest[$i + 1] }
+& ([scriptblock]::Create([System.IO.File]::ReadAllText($Installer))) @options
+
+##	History:
+##		- 20260925 JC: Created.
