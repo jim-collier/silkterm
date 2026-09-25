@@ -99,10 +99,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 
 ### Features and enhancements
 
-- 🔘 Pipeline and installer review 20260924
-	- 🔘 Prove the builds are reproducible: two checkouts in different places, same checksum. Then say so in the README.
-		- Opened: 20260924-115032
-
 - 🔘 Other tables still use trailing pipes and unpadded columns: the rest of `README.md`, `cicd/tests/scroll/README.md`, `utility/include/showdown-readme.md`, and `wallpaper-attribution.md`, which `wallpaper-gallery.bash` writes.
 	- Opened: 20260924-175940
 
@@ -2247,6 +2243,12 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 #### Done - Features and enhancements
 
 - ✅ Pipeline and installer review 20260924
+	- ✅ Prove the builds are reproducible: two checkouts in different places, same checksum. Then say so in the README.
+		- Reproduced: the Linux builds matched, but both Windows builds differed in the link time the linker writes into the PE header.
+		- Fixed: the Windows linkers leave the link time out. `cicd/utility/repro-check.bash` builds a commit in two folders and compares.
+		- Verified: identical for Linux x86_64 and ARM64 and Windows x86_64 and ARM64. The README says so, and that another system or linker can still differ.
+		- Opened: 20260924-115032
+		- Closed: 20260924-185501
 	- ✅ Package icons. The setup `.exe` has the stock NSIS icon and no version details. The `.deb` and `.rpm` launcher uses a generic terminal icon.
 		- Note: also settle whether packages carry the wallpaper pack.
 		- Decided: 20260924, packages do not carry the wallpaper pack.
