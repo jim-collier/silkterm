@@ -106,7 +106,7 @@ try {
 	fCheck 'the next upgrade removes the old copy' ((fInstalled '9.9.10') -and -not (Get-ChildItem -LiteralPath $destDir -Filter 'silkterm.exe.old-*' -Force))
 
 	##	A re-run with the program current puts back what went missing.
-	Remove-Item -LiteralPath $lnk
+	Remove-Item -LiteralPath $lnk -ErrorAction SilentlyContinue
 	$key.SetValue('Path', ((([string]$key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')) -split ';' | Where-Object { $_ -ne $destDir }) -join ';'), $key.GetValueKind('Path'))
 	$before = (Get-Item -LiteralPath $destFile).LastWriteTimeUtc
 	$out = fInstall
