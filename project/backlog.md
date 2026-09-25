@@ -99,11 +99,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 - 🔘 Pipeline and installer review 20260924
 	- 🔘 Prove the builds are reproducible: two checkouts in different places, same checksum. Then say so in the README.
 		- Opened: 20260924-115032
-	- 🔘 Package icons. The setup `.exe` has the stock NSIS icon and no version details. The `.deb` and `.rpm` launcher uses a generic terminal icon.
-		- Note: also settle whether packages carry the wallpaper pack.
-		- Opened: 20260924-115032
-	- 🔘 Route remote `git` and `gh` calls in the pipeline through `gitsby raw`, with plain `git` and `gh` where it is missing.
-		- Opened: 20260924-115032
 
 - 🔘 Other tables still use trailing pipes and unpadded columns: the rest of `README.md`, `cicd/tests/scroll/README.md`, `utility/include/showdown-readme.md`, and `wallpaper-attribution.md`, which `wallpaper-gallery.bash` writes.
 	- Opened: 20260924-175940
@@ -2248,6 +2243,19 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 #### Done - Features and enhancements
 
 - ✅ Pipeline and installer review 20260924
+	- ✅ Package icons. The setup `.exe` has the stock NSIS icon and no version details. The `.deb` and `.rpm` launcher uses a generic terminal icon.
+		- Note: also settle whether packages carry the wallpaper pack.
+		- Decided: 20260924, packages do not carry the wallpaper pack.
+		- Done: the setup `.exe` has the program's icon and a version block like the program's. The `.deb` and `.rpm` install the program's icon in seven sizes, and the launcher names it.
+		- Verified: the packaging test checks the installer's icon and version and that the Linux icons match `icon.ico`, and fails on the old template. The installer was also built by `cicd-win.ps1` on vm925w, where Properties shows the version and copyright.
+		- Opened: 20260924-115032
+		- Closed: 20260924-180638
+	- ✅ Route remote `git` and `gh` calls in the pipeline through `gitsby raw`, with plain `git` and `gh` where it is missing.
+		- Done: the remote sync in both pipelines, the Windows publish, and the push and release in `release.bash`. On Windows only `gitsby.exe` is used, since the script form does not pass arguments through intact.
+		- Left alone: `n8git_backup-and-publish`, which is copied between projects. Its pull and push stay plain `git`.
+		- Verified: a release test with stand-ins checks both routes, and `gitsby raw git` passes arguments and exit codes through on this box and on vm925w.
+		- Opened: 20260924-115032
+		- Closed: 20260924-180638
 	- ✅ The showdown table generators write trailing pipes, `---` rows and unpadded columns.
 		- Done: both writers lay the table out through one shared module. Number columns stay right-aligned, and the README table was laid out again once.
 		- Verified: the showdown test checks the layout after each writer, and fails on the old ones.
