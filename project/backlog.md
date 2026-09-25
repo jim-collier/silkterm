@@ -78,9 +78,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 		- Note: 20260924, main also lacks the later installer fixes under Done: version order, API errors, the running-copy upgrade and the re-run repair.
 		- Opened: 20260924-115032
 
-- 🔘 A wine run of the Windows build registers file types on the desktop. Six menu entries were left pointing at a wine folder that no longer exists, so those types open nothing. Wine runs should turn off its menu builder.
-	- Opened: 20260924-181200
-
 - 🔬 Check the display-scale fixes on two monitors at different scales.
 	- Covers the Settings dialog, maximized as well, and the About and notice boxes. The fixes are under Done.
 	- Opened: 20260919-153000
@@ -389,6 +386,14 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Done
 
 #### Done - Bugs
+
+- ✅ A wine run of the Windows build registers file types on the desktop. Six menu entries were left pointing at a wine folder that no longer exists, so those types open nothing. Wine runs should turn off its menu builder.
+	- Fixed: the wine launcher turns the menu builder off for the prefix boot and the run, and keeps any override already set.
+	- Pinned by: `cicd/tests/wine/run.bash`, run by cicd. It fails on the old launcher.
+	- Swept: that launcher is the only script that calls wine.
+	- Note: the six stale entries from earlier runs are still on the desktop. Removing them is a desktop cleanup, not a repo change.
+	- Opened: 20260924-181200
+	- Closed: 20260924-194728
 
 - ✅ A save from Settings moves the lines of a commented-out section under the setting above it.
 	- `# rotate:` with `# enabled: true` indented under it, placed after another setting, comes back with `# enabled: true` above `# rotate:` and indented under that setting. Uncommented later, the values read as part of the wrong setting and do nothing.
