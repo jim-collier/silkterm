@@ -228,7 +228,7 @@ DOGFOOD_ICON="source/assets/logo.png"
 ##
 ## The private key never goes in the repo. To set one up once:
 ##   ssh-keygen -t ed25519 -C releases@silkterm -f ~/.ssh/silkterm-release
-## then put the CONTENTS of ~/.ssh/silkterm-release.pub into RELEASE_SIGN_PUBKEY
+## then put the CONTENTS of ~/.ssh/silkterm-release.pub into releaseSignPubkey
 ## in install.bash and install.ps1, and point this at the private half. Empty
 ## means the release goes out unsigned, and release.bash says so.
 RELEASE_SIGN_KEY="${SILKTERM_RELEASE_KEY:-}"

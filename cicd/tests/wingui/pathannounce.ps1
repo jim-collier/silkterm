@@ -13,7 +13,7 @@ if (-not (fSessionUsable)) { fSkip "console session is locked - the Run box cann
 ##	install.ps1's own functions, lifted as they stand. run.bash sends the file.
 $src = Join-Path $PSScriptRoot "install.ps1"
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($src, [ref]$null, [ref]$null)
-foreach ($name in 'fAddToWindowsPath', 'fAnnounceEnvironment', 'fInnerMessage') {
+foreach ($name in 'fAddToWindowsPath', 'fPathKey', 'fAnnounceEnvironment', 'fInnerMessage') {
 	$fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
 	if ($fn) { Invoke-Expression $fn.Extent.Text }
 }

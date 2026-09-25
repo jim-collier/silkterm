@@ -117,11 +117,9 @@ else
 	echo "next: git push origin main && git push origin ${tag}"
 fi
 ## A semver version carrying a pre-release suffix (the '-' in 1.0.0-beta2) is
-## marked as one on the release page too. That is not cosmetic: the API's
-## "latest" excludes pre-releases, and both installers ask for latest FIRST and
-## only then fall back to the newest release of any kind. Publishing a beta
-## unmarked makes it the stable answer, so every install.bash/ps1 run takes a
-## beta as the release build and the fallback never runs.
+## marked as one on the release page too. That is not cosmetic: both installers
+## go by that mark, and a stable install takes a pre-release only when no full
+## release exists. Publishing a beta unmarked makes it the stable answer.
 prerelease=()
 if [[ "$ver" == *-* ]]; then prerelease=(--prerelease); fi
 

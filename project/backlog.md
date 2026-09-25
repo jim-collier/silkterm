@@ -76,11 +76,20 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- 🔘 The one-liners run the installers on main, which still lack the 09-17 fixes and the 5.1 fix below.
 		- Note: held for the RC1 release.
 		- Opened: 20260924-115032
-	- 🔘 `install.ps1` cannot upgrade over a running copy. The copy fails on a locked file on Windows and a busy one on Linux. `install.bash` already stages and renames.
+	- 🔬 `install.ps1` cannot upgrade over a running copy. The copy fails on a locked file on Windows and a busy one on Linux. `install.bash` already stages and renames.
+		- Fixed: it copies beside the program and renames into place. On Windows the running file is renamed out of the way first, and the old copy is removed on the next run.
+		- Verified: on Linux, an upgrade over a running copy installs and leaves nothing staged. The old installer fails the same test.
+		- Note: not yet run on Windows.
 		- Opened: 20260924-115032
-	- 🔘 Both installers fall back from stable to the newest pre-release on any API failure, not only when no release exists. A network blip or a bad token prints "No full release published yet". The bash rate-limit hint never shows, since `curl -f` drops the error body.
+	- 🔬 Both installers fall back from stable to the newest pre-release on any API failure, not only when no release exists. A network blip or a bad token prints "No full release published yet". The bash rate-limit hint never shows, since `curl -f` drops the error body.
+		- Fixed: both read the release list once. A failed call stops with its status, and a rate limit gets the token hint. The fallback runs only when the list holds no full release.
+		- Verified: on Linux, for both installers, with a 500 and a rate-limited 403.
+		- Note: `install.ps1` not yet run on Windows.
 		- Opened: 20260924-115032
-	- 🔘 A re-run with the binary already current stops before it checks the launcher, the Start Menu shortcut and PATH, so a missing piece is not put back.
+	- 🔬 A re-run with the binary already current stops before it checks the launcher, the Start Menu shortcut and PATH, so a missing piece is not put back.
+		- Fixed: a re-run puts back only what is missing, after the same plan and prompt. A piece that exists is left alone, since it may have been edited.
+		- Verified: on Linux, for both installers, with the launcher removed.
+		- Note: the shortcut and PATH halves are not yet run on Windows.
 		- Opened: 20260924-115032
 	- 🔘 Windows cicd run logs in `cicd/artifacts/lint-win` are never rotated.
 		- Opened: 20260924-115032
@@ -107,8 +116,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 ### Features and enhancements
 
 - 🔘 Pipeline and installer review 20260924
-	- 🔘 The installers take the first release the API lists. Sort by version instead, with `1.0.0-alpha.2` below `1.0.0`, and skip drafts.
-		- Opened: 20260924-115032
 	- 🔘 Prove the builds are reproducible: two checkouts in different places, same checksum. Then say so in the README.
 		- Opened: 20260924-115032
 	- 🔘 `--version` prints `SilkTerm 1.0.0-beta3 (build xxxxx)`. Make it `SilkTerm v1.0.0-beta3 build xxxxx` with the copyright line under it.
@@ -124,8 +131,6 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- 🔘 Lint the PowerShell scripts in the pipeline too.
 		- Opened: 20260924-115032
 	- 🔘 The showdown table generators write trailing pipes, `---` rows and unpadded columns.
-		- Opened: 20260924-115032
-	- 🔘 Give the two installers matching names for the same settings, and the same spacing between sections.
 		- Opened: 20260924-115032
 
 - 🔘 t2nsn - old stray versions of executables and launchers: Find and move old GFS versions, and trash any out-of-place stray executables and scripts. Update '.desktop' files to run the correct bash script, launcher chain minimized or hidden, and use the icon from the 'latest version' symlink.
@@ -2238,6 +2243,17 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - Features and enhancements
+
+- ✅ Pipeline and installer review 20260924
+	- ✅ The installers take the first release the API lists. Sort by version instead, with `1.0.0-alpha.2` below `1.0.0`, and skip drafts.
+		- Done: semver order, drafts skipped. A trailing number compares as a number, so beta10 is above beta3.
+		- Verified: on Linux for both installers, and live against the real release list.
+		- Opened: 20260924-115032
+		- Closed: 20260924-172529
+	- ✅ Give the two installers matching names for the same settings, and the same spacing between sections.
+		- Done: `menuEntry` and the `releaseSign` settings are spelled the same in both, and so are the section breaks and messages.
+		- Opened: 20260924-115032
+		- Closed: 20260924-172529
 
 - ✅ New menu item (right-click and view):
 	- Next wallpaper
