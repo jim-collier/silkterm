@@ -108,6 +108,23 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 - 🔘 After October and/or when updated silkterm has run on all hosts: Remove code that migrates and/or updates old config files.
 	- Opened: 20260924-113215
 
+- **Stop here to work on releasing v1.0.0 with Windows and macOS store releases**.
+
+- 🔘 "Old CRT mode" (boolean that might overrides - but not change - some theme settings):
+	- Sub-settings
+	- "Electron gun scan lines", that look authentic. (Need to research why those exist, and how they work - are they static? Do they follow text?)
+		- A slider from 0 to 100%, with the default being very subte.
+	- Color: Mono white, mono green, mono amber, CGA, EGA, modern (latter uses existing theme setting).
+		- Dropdown box. Default EGA.
+	- Tube bulge: As if looking at an early rounded tube. (A fish-eye view effect.)
+		- A slider from 0 to 100%, with the default being very subte.
+	- Vignette:
+		- A slider from 0 to 100%, with the default being very subte.
+	- Frame
+		- If not "[none]", replaces window decorations with a simulated CRT frame front bezel.
+		- Dropdown box: [none], "1964 IBM 2260", "1977 Hazeltine 1500", "1977 Commodore PET", "1983 IBM 5153", "1983 Commodore 1702", "1986 Apple II", "1987 IBM 8513", "1996 Sony Multiscan CPD-200SX", "NEC MultiSync 95", "1999 ViewSonic E771", "2003 Dell E773c", "ViewSonic P225F", "Brazil", "Sci-Fi 1", "Sci-Fi 2"
+			- With preview
+
 - 🔘 Rolling epic "GPU FX": Take more advantage of fundamental nature of underlying GPU terminal (all with non-GPU fallbacks - including no feature at all if necessary):
 	- Note: These effects should come in "prepackaged effects" that can be applied to similar other types of on-screen elements.
 		- Ideally as packaged plug-ins (think shader kits or something that be traded online and dropped into a directory for auto-discovery).
