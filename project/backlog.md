@@ -90,6 +90,11 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Example: `window:` with `margin` two tabs in and a stray line one tab in. The added window settings go in at one tab, and the stray line becomes a window setting.
 	- Opened: 20260925-073415
 
+- 🔘 The wallpaper heading repair test fails on a junk file where `wallpaper.rotate` is written three times.
+	- It reads as written more than once before and after the repair, so it loads the same. Only the count goes from 3 to 2, since the repair folds two `wallpaper:` blocks. The test compares the count too.
+	- Reproduced: `SILK_FUZZ_SEED=107671` on `a_wallpaper_repair_changes_nothing_else`, on dev before the shcl bump as well.
+	- Opened: 20260925-183900
+
 ### Features and enhancements
 
 - ✋ Save settings by editing only the lines that changed, so a file with a line that cannot be read still takes the window size, menu switches and new shells.
@@ -98,6 +103,7 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Note: 20260924, shcl 3.0 still counts a line it cannot place as lost and has no save that edits single lines. So this is no longer waiting on shcl.
 	- Decided: 20260924, stays held for now.
 	- Note: 20260925, shcl now keeps a stray line indented with spaces as written, so a save goes through beside one. A tab-indented line that steps back to a depth nothing uses is still dropped, and a save still refuses over it.
+	- Note: 20260925, saves now use shcl's new line-keeping save, so lines nobody changed are written back as they were. A file with a dropped tab-indented line still gets the whole-file save from shcl, which deletes that line, so the refusal stays.
 	- Opened: 20260918
 
 - **Stop here to work on releasing RC1**.
@@ -2274,6 +2280,15 @@ Issues opened by automated code reviews should be grouped under a main bullet wi
 	- Closed: 20260723-190021
 
 #### Done - Features and enhancements
+
+- ✅ Integrate and test the latest shcl 3.0.0-beta.1 build from the local shcl repo.
+	- Done: now on shcl's dev at f2a8ad2. Every test passed on the bump alone.
+	- Changed: Settings, the shell list, the window size and the rating all save through shcl's line-keeping save. Quotes, indents and dotted lines nobody changed stay as they were.
+	- Note: where shcl cannot keep the lines, as with a block written twice, it still writes the whole file the old way. The save and rating checks now cover both.
+	- Note: unchanged by this build: a tab-indented line that steps back to a depth nothing uses is still dropped, and a save still refuses over it.
+	- Pinned by: `a_save_writes_only_the_lines_it_changed` and the kept-quotes case in `a_rating_is_refused_where_a_launch_step_reads_the_layout`, both watched red with the old save put back.
+	- Opened: 20260925-181500
+	- Closed: 20260925-183900
 
 - ✅ Integrate and test the latest shcl 3.0.0-beta.1 build from shcl's dev branch.
 	- Done: now on shcl's dev at 30d3672. The settings dialog file needed no conversion.
