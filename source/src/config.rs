@@ -1109,9 +1109,20 @@ pub fn keep_session_on_apply(live: &Settings, opened: &Settings, edited: &mut Se
 fn read_doc(path: &std::path::Path) -> Option<shcl::Document> {
 	let text = std::fs::read_to_string(path).ok()?;
 	// a launch that found the file busy left it as 2.x wrote it
-	Some(shcl::Document::parse(
-		&from_shcl2_text(&text).unwrap_or(text),
-	))
+	Some(parse_kept(&from_shcl2_text(&text).unwrap_or(text)))
+}
+
+// A parse whose save writes back every line no edit touched, as it was typed.
+// Only Strict can refuse a file, so the Err arm never runs.
+fn parse_kept(text: &str) -> shcl::Document {
+	shcl::Document::parse_keep_lines(text, shcl::Strictness::Standard)
+		.unwrap_or_else(|e| e.document)
+}
+
+// What a save writes. shcl falls back to the canonical form where it cannot keep
+// the lines, and always for a file that lost one, so the refusal still stands.
+fn saved_text(doc: &shcl::Document) -> String {
+	doc.to_text_keep_lines().0
 }
 
 // One classified line of a config text, with its full nested path resolved from
@@ -1451,7 +1462,7 @@ fn unreadable_lines(doc: &shcl::Document) -> Vec<usize> {
 	lines
 }
 
-// The same gate and text as shcl's own save, through the writer above, which
+// The same gate and text as shcl's save_file_keep_lines, through the writer above, which
 // can put the file back when a replace took it.
 #[must_use]
 fn write_doc(path: &std::path::Path, doc: &shcl::Document) -> bool {
@@ -1472,7 +1483,7 @@ fn write_doc(path: &std::path::Path, doc: &shcl::Document) -> bool {
 		}
 		.to_string())
 	} else {
-		write_config_atomic(path, &doc.to_canonical())
+		write_config_atomic(path, &saved_text(doc))
 	};
 	if let Err(e) = written {
 		eprintln!("{APP_NAME}: could not save config {}: {e}", path.display());
@@ -4150,11 +4161,11 @@ fn adopted_shell_doc(doc: &shcl::Document) -> Option<shcl::Document> {
 // The adoption as text, for `next_launch_text`. A file with a line that cannot be
 // read is left alone, as the save is refused there.
 fn adopted_shell_text(text: &str) -> Option<String> {
-	let doc = shcl::Document::parse(text);
+	let doc = parse_kept(text);
 	if doc.lost_count() > 0 {
 		return None;
 	}
-	adopted_shell_doc(&doc).map(|doc| doc.to_canonical())
+	adopted_shell_doc(&doc).map(|doc| saved_text(&doc))
 }
 
 // The list with `wanted` at the front. An entry already running that shell moves;
@@ -4722,7 +4733,7 @@ fn with_rating_lines_through(
 			lines.check_next_run.map(RatingValue::Flag),
 		),
 	];
-	let before = shcl::Document::parse(text);
+	let before = parse_kept(text);
 	let migrated = migrated_parse(text, steps);
 	let loaded = migrated.as_ref().unwrap_or(&before);
 	// A file that reads clean is never said to have a line that cannot be read.
@@ -4764,9 +4775,9 @@ fn placed_rating_lines(text: &str, spelled: &[(&str, String)]) -> Option<String>
 	Some(joined)
 }
 
-// What the dialog's save leaves: shcl's own setters over the parse, then its
-// canonical text. Only for a file that lost nothing, since the canonical text of
-// any other deletes the line it lost.
+// What the dialog's save leaves: shcl's own setters over the parse, then the
+// text its save writes. Only for a file that lost nothing, since that save falls
+// back to the canonical text there, which deletes the line it lost.
 fn saved_rating(before: &shcl::Document, wanted: &[(&str, Option<RatingValue>)]) -> Option<String> {
 	let mut doc = before.clone();
 	for (leaf, value) in wanted {
@@ -4780,7 +4791,7 @@ fn saved_rating(before: &shcl::Document, wanted: &[(&str, Option<RatingValue>)])
 			return None;
 		}
 	}
-	Some(doc.to_canonical())
+	Some(saved_text(&doc))
 }
 
 // The parse a launch makes of this text, or None where the launch's rewrites
@@ -7722,8 +7733,9 @@ mod tests {
 		);
 	}
 
-	// With no performance block the rating gets the save's text, which requotes
-	// values nobody changed, and no load reads the difference. Each file is
+	// With no performance block the rating gets the save's text, which requoted
+	// values nobody changed where it fell back to the canonical form, and no load
+	// reads the difference. Each file is
 	// written again just before the rating, since a load adds the block and the
 	// line writer would then never reach the save's text.
 	#[test]
@@ -7765,12 +7777,12 @@ mod tests {
 			),
 		];
 		for (what, text, other) in files {
-			let mut saved = shcl::Document::parse(text);
+			let mut saved = parse_kept(text);
 			assert!(saved.set_string("performance.profile", "high"), "{what}");
 			assert!(saved.set_string("performance.rated_hardware", ID), "{what}");
 			assert_eq!(
 				with_rating_lines(text, &lines).as_deref(),
-				Ok(saved.to_canonical().as_str()),
+				Ok(saved_text(&saved).as_str()),
 				"{what}"
 			);
 
@@ -7970,7 +7982,13 @@ mod tests {
 			rated_hardware: Some("0123456789abcdef"),
 			check_next_run: None,
 		};
-		let text = "font:\n\tfamily: 'Old Mono'\n";
+		// the save keeps the quotes of a file it can keep line by line
+		let single = "font:\n\tfamily: 'Old Mono'\n";
+		let out = with_rating_lines_through(single, &lines, &[reads_quotes]).expect("kept");
+		assert!(out.contains("'Old Mono'"), "{out}");
+		// `font` twice is folded into one block, so the save falls back to the
+		// canonical form
+		let text = "font:\n\tfamily: 'Old Mono'\nwindow:\n\tcolumns: 90\nfont:\n\tsize: 13\n";
 		let plain = with_rating_lines_through(text, &lines, &[]).expect("no step, so it is kept");
 		assert!(
 			plain.contains("\"Old Mono\""),
@@ -8748,6 +8766,28 @@ mod tests {
 		let mut doc = shcl::Document::parse(text);
 		assert!(doc.set_int("wallpaper.blur", 4));
 		assert_eq!(doc.to_canonical(), text.replace("blur: 3", "blur: 4"));
+	}
+
+	// Quotes, a space indent and a dotted line nobody changed stay as typed.
+	#[test]
+	fn a_save_writes_only_the_lines_it_changed() {
+		let dir = std::env::temp_dir().join(format!("silkterm_keeplines_{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&dir);
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("config.shcl");
+		let body = "font:\n\tfamily: 'Cascadia Mono'\n\tsize: \"12\"\nwindow:\n\tcolumns: 90\ncolors:\n    background: \"#112233\"\nscroll.speed: 3\n";
+		// stamped as a launch leaves it, or the read converts it first
+		let text = &from_shcl2_text(body).unwrap();
+		assert!(text.starts_with(body));
+		std::fs::write(&path, text).unwrap();
+		let mut doc = read_doc(&path).unwrap();
+		assert!(doc.set_int("window.columns", 100));
+		assert!(write_doc(&path, &doc));
+		assert_eq!(
+			std::fs::read_to_string(&path).unwrap(),
+			text.replace("columns: 90", "columns: 100")
+		);
+		let _ = std::fs::remove_dir_all(&dir);
 	}
 
 	// #136 convention: explanatory comments use '## '; commented-out (disabled)
@@ -10478,9 +10518,9 @@ mod tests {
 		use super::super::{
 			CONFIG_REMOVED, CONFIG_RENAMES, LEGACY_KEYS, RatingLines, SUPERSEDED_FONT_STACKS,
 			adopt_default_shell, config_complaints, convert_legacy_config, default_config,
-			disabled_text, line_setting_key, migrate_config_text, next_launch_text, read_raw,
-			resolve, reverted_text, setting_groups, setting_lines, walk_settings,
-			with_rating_lines, with_shcl_banner,
+			disabled_text, line_setting_key, migrate_config_text, next_launch_text, parse_kept,
+			read_raw, resolve, reverted_text, saved_text, setting_groups, setting_lines,
+			walk_settings, with_rating_lines, with_shcl_banner,
 		};
 		use crate::fuzz;
 
@@ -10631,14 +10671,15 @@ mod tests {
 			shcl::Document::parse(&migrate_config_text(&text).unwrap_or(text))
 		}
 
-		// A save tidies quotes and indentation, and the launch after it loads every
+		// A save keeps the lines it can and falls back to the canonical form, which
+		// tidies quotes and indentation. After either, the next launch loads every
 		// setting the save did not write as the launch before it would have. Cases
 		// come from the generator only: a mutated file reaches a line indented under
 		// a key that holds a value, which shcl and the walk read differently, and
 		// this does not change that.
 		fn save_check(case: &[u8]) {
 			let text = String::from_utf8_lossy(case).into_owned();
-			let raw = shcl::Document::parse(&text);
+			let raw = parse_kept(&text);
 			if raw.lost_count() > 0 {
 				return;
 			}
@@ -10646,12 +10687,16 @@ mod tests {
 			if !doc.set_float("font.size", 15.5) {
 				return;
 			}
-			let saved = doc.to_canonical();
-			let raw_saved = shcl::Document::parse(&saved);
-			let (then, now) = (next_load(&text), next_load(&saved));
+			save_check_as(&text, &raw, &doc.to_canonical());
+			save_check_as(&text, &raw, &saved_text(&doc));
+		}
+
+		fn save_check_as(text: &str, raw: &shcl::Document, saved: &str) {
+			let raw_saved = shcl::Document::parse(saved);
+			let (then, now) = (next_load(text), next_load(saved));
 			// a path none of the four holds reads the same everywhere
 			let mut paths: Vec<String> = Vec::new();
-			for doc in [&raw, &raw_saved, &then, &now] {
+			for doc in [raw, &raw_saved, &then, &now] {
 				for path in doc.paths() {
 					if !paths.contains(&path) {
 						paths.push(path);
@@ -10663,7 +10708,7 @@ mod tests {
 					continue;
 				}
 				let read = |doc: &shcl::Document| (doc.get_string(&path), doc.count(&path));
-				if read(&raw) != read(&raw_saved) {
+				if read(raw) != read(&raw_saved) {
 					continue;
 				}
 				assert_eq!(
